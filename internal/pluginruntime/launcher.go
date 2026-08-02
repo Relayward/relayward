@@ -13,7 +13,7 @@ import (
 const (
 	pluginMemoryLimit    = 512 << 20
 	pluginOpenFilesLimit = 2048
-	pluginProcessLimit   = 64
+	pluginProcessLimit   = 256
 )
 
 func RunLimitedPlugin(args []string) error {
