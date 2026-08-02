@@ -47,3 +47,19 @@ go run ./cmd/relayward admin reset-totp -data ./data
 ```
 
 The approved product scope and implementation sequence are maintained in the Relayward workspace plan. This repository does not provide compatibility with 3x-ui or the previous xui-stack databases.
+
+## Docker Compose
+
+Relayward publishes one Linux AMD64 image to `ghcr.io/relayward/relayward`. Copy `compose.yaml` and `.env.example` to the deployment directory, rename `.env.example` to `.env`, and set `RELAYWARD_VERSION` to the release being deployed. Start the service with:
+
+```bash
+docker compose pull
+docker compose up -d
+docker compose exec relayward relayward healthcheck
+```
+
+The example binds `127.0.0.1:8080` by default. Terminate HTTPS at a reverse proxy and forward all paths, including WebSocket upgrades, to that address. Do not expose the plain HTTP port directly to the Internet. Production session cookies are always marked secure.
+
+All databases, the instance encryption key, plugin artifacts, plugin state, and event archives live in the `relayward-data` volume. Back up and restore that volume as one unit. Stop the container or use a storage snapshot that preserves a point-in-time consistent volume.
+
+To upgrade, change `RELAYWARD_VERSION`, then run `docker compose pull && docker compose up -d`. To roll back the center, restore the previous version value and recreate the container. Database migrations are forward-only, so retain a matching volume snapshot before upgrading across released versions.

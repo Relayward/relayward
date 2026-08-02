@@ -41,6 +41,12 @@ func main() {
 				os.Exit(1)
 			}
 			return
+		case "healthcheck":
+			if err := runHealthcheck(os.Args[2:]); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				os.Exit(1)
+			}
+			return
 		case "serve":
 			if err := serve(os.Args[2:], logger); err != nil {
 				logger.Error("Relayward stopped", "error", err)
@@ -53,6 +59,39 @@ func main() {
 		logger.Error("Relayward stopped", "error", err)
 		os.Exit(1)
 	}
+}
+
+func runHealthcheck(args []string) error {
+	flags := flag.NewFlagSet("relayward healthcheck", flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+	target := flags.String("url", "http://127.0.0.1:8080/healthz", "health endpoint URL")
+	if err := flags.Parse(args); err != nil {
+		return fmt.Errorf("parse healthcheck flags: %w", err)
+	}
+	if flags.NArg() != 0 {
+		return fmt.Errorf("unexpected healthcheck argument %q", flags.Arg(0))
+	}
+	client := &http.Client{
+		Timeout: 3 * time.Second,
+		Transport: &http.Transport{
+			Proxy:             nil,
+			DisableKeepAlives: true,
+		},
+	}
+	request, err := http.NewRequest(http.MethodGet, *target, nil)
+	if err != nil {
+		return fmt.Errorf("create healthcheck request: %w", err)
+	}
+	response, err := client.Do(request)
+	if err != nil {
+		return fmt.Errorf("Relayward healthcheck failed: %w", err)
+	}
+	defer response.Body.Close()
+	_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 4096))
+	if response.StatusCode != http.StatusOK {
+		return fmt.Errorf("Relayward healthcheck returned HTTP %d", response.StatusCode)
+	}
+	return nil
 }
 
 func serve(args []string, logger *slog.Logger) error {

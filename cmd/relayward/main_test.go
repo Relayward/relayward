@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -53,5 +55,23 @@ func TestRunAdminResetTOTP(t *testing.T) {
 	}
 	if _, err := database.Secret(context.Background(), "administrator", "1", "totp"); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("Secret() error = %v, want ErrNotFound", err)
+	}
+}
+
+func TestRunHealthcheck(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+	if err := runHealthcheck([]string{"-url", server.URL}); err != nil {
+		t.Fatalf("runHealthcheck() error = %v", err)
+	}
+
+	unavailable := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer unavailable.Close()
+	if err := runHealthcheck([]string{"-url", unavailable.URL}); err == nil {
+		t.Fatal("runHealthcheck() accepted an unavailable endpoint")
 	}
 }
