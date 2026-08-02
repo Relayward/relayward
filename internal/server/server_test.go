@@ -8,6 +8,7 @@ import (
 	"encoding/base32"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -641,6 +642,69 @@ func TestAgentRegistrationControlAndDuplicateSession(t *testing.T) {
 	disabledAckPayload, err := agentv1.DecodeEnvelopePayload[agentv1.HeartbeatAck](disabledAck)
 	if err != nil || disabledAckPayload.MessageID != disabledHeartbeat.ID {
 		t.Fatalf("disabled node heartbeat acknowledgement = %+v, %v", disabledAckPayload, err)
+	}
+
+	withoutCSRF := performRequest(handler, http.MethodDelete, "/api/v1/nodes/"+node.ID+"/agent-credential", nil, nil, sessionCookie)
+	if withoutCSRF.Code != http.StatusForbidden {
+		t.Fatalf("credential revocation without CSRF status = %d", withoutCSRF.Code)
+	}
+	revoke := performRequest(handler, http.MethodDelete, "/api/v1/nodes/"+node.ID+"/agent-credential", nil,
+		map[string]string{"X-CSRF-Token": csrfCookie.Value}, sessionCookie)
+	if revoke.Code != http.StatusOK {
+		t.Fatalf("credential revocation status = %d, body = %s", revoke.Code, revoke.Body.String())
+	}
+	var revokedNode nodeResponse
+	decodeResponse(t, revoke, &revokedNode)
+	if revokedNode.RegisteredAt != nil || revokedNode.AgentVersion != "" || len(revokedNode.Capabilities) != 0 {
+		t.Fatalf("revoked node response = %+v", revokedNode)
+	}
+	if err := second.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
+		t.Fatalf("set revoked session deadline: %v", err)
+	}
+	if _, _, err := second.ReadMessage(); err == nil {
+		t.Fatal("revoked Agent session remained open")
+	}
+	if _, err := database.AuthenticateAgent(context.Background(), node.ID, auth.TokenHash(identity.Credential)); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("AuthenticateAgent() revoked credential error = %v", err)
+	}
+	secondRevoke := performRequest(handler, http.MethodDelete, "/api/v1/nodes/"+node.ID+"/agent-credential", nil,
+		map[string]string{"X-CSRF-Token": csrfCookie.Value}, sessionCookie)
+	if secondRevoke.Code != http.StatusConflict {
+		t.Fatalf("second credential revocation status = %d, body = %s", secondRevoke.Code, secondRevoke.Body.String())
+	}
+
+	enableBody := []byte(`{"name":"Edge","public_address":"","enabled":true}`)
+	enabled := performRequest(handler, http.MethodPut, "/api/v1/nodes/"+node.ID, enableBody, headers, sessionCookie)
+	if enabled.Code != http.StatusOK {
+		t.Fatalf("enable revoked node status = %d, body = %s", enabled.Code, enabled.Body.String())
+	}
+	var enabledNode nodeResponse
+	decodeResponse(t, enabled, &enabledNode)
+	if enabledNode.AgentStatus != "pending" {
+		t.Fatalf("enabled revoked node response = %+v", enabledNode)
+	}
+	reregisterTokenRequest := performRequest(handler, http.MethodPost, "/api/v1/nodes/"+node.ID+"/registration-tokens", nil,
+		map[string]string{"X-CSRF-Token": csrfCookie.Value}, sessionCookie)
+	var reregisterToken struct {
+		Value string `json:"token"`
+	}
+	decodeResponse(t, reregisterTokenRequest, &reregisterToken)
+	reregisterBody, err := json.Marshal(agentv1.RegisterRequest{
+		APIVersion: agentv1.APIVersion, Token: reregisterToken.Value, AgentVersion: "0.1.2",
+		Hostname: "edge-one", OS: "linux", Arch: "amd64", Capabilities: []string{"control.heartbeat"},
+	})
+	if err != nil {
+		t.Fatalf("marshal Agent reregistration request: %v", err)
+	}
+	reregister := performRequest(handler, http.MethodPost, "/api/v1/agent/register", reregisterBody,
+		map[string]string{"Content-Type": "application/json"})
+	if reregister.Code != http.StatusCreated {
+		t.Fatalf("Agent reregistration status = %d, body = %s", reregister.Code, reregister.Body.String())
+	}
+	audit := performRequest(handler, http.MethodGet, "/api/v1/audit", nil, nil, sessionCookie)
+	if audit.Code != http.StatusOK || !strings.Contains(audit.Body.String(), "node.credential.revoke") ||
+		!strings.Contains(audit.Body.String(), "node.reregister") {
+		t.Fatalf("credential lifecycle audit status = %d, body = %s", audit.Code, audit.Body.String())
 	}
 }
 

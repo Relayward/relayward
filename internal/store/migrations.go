@@ -364,6 +364,13 @@ ALTER TABLE subscription_render_cache ADD COLUMN input_sha256 TEXT NOT NULL DEFA
     CHECK (input_sha256 = '' OR length(input_sha256) = 64);
 `,
 	},
+	{
+		version: 10,
+		sql: `
+ALTER TABLE nodes ADD COLUMN registration_count INTEGER NOT NULL DEFAULT 0 CHECK (registration_count >= 0);
+UPDATE nodes SET registration_count = 1 WHERE registered_at IS NOT NULL;
+`,
+	},
 }
 
 func migrate(ctx context.Context, db *sql.DB) error {

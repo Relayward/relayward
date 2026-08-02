@@ -37,12 +37,21 @@ RETURNING node_id`, unixTime(now), registration.TokenHash, unixTime(now)).Scan(&
 	if err != nil {
 		return Node{}, fmt.Errorf("consume Agent registration token: %w", err)
 	}
+	var hadCredential bool
+	var registrationCount uint64
+	if err := tx.QueryRowContext(ctx, `
+SELECT credential_hash IS NOT NULL, registration_count FROM nodes WHERE id = ?`, nodeID).Scan(&hadCredential, &registrationCount); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return Node{}, ErrNotFound
+		}
+		return Node{}, fmt.Errorf("read Agent registration state: %w", err)
+	}
 	capabilities, err := json.Marshal(registration.Capabilities)
 	if err != nil {
 		return Node{}, fmt.Errorf("encode Agent capabilities: %w", err)
 	}
 	result, err := tx.ExecContext(ctx, `
-UPDATE nodes SET credential_hash = ?, registered_at = ?, last_seen_at = NULL,
+UPDATE nodes SET credential_hash = ?, registered_at = ?, last_seen_at = NULL, registration_count = registration_count + 1,
     hostname = ?, agent_version = ?, agent_os = ?, agent_arch = ?, agent_capabilities_json = ?, updated_at = ?
 WHERE id = ? AND enabled = 1`, registration.CredentialHash, unixTime(now), registration.Hostname,
 		registration.AgentVersion, registration.OS, registration.Arch, string(capabilities), unixTime(now), nodeID)
@@ -56,8 +65,14 @@ WHERE id = ? AND enabled = 1`, registration.CredentialHash, unixTime(now), regis
 	if registered != 1 {
 		return Node{}, ErrNotFound
 	}
+	action := "node.register"
+	if hadCredential {
+		action = "node.credential.rotate"
+	} else if registrationCount > 0 {
+		action = "node.reregister"
+	}
 	if err := appendAuditTx(ctx, tx, AuditEntry{
-		OccurredAt: now, ActorType: "agent", ActorID: nodeID, Action: "node.register",
+		OccurredAt: now, ActorType: "agent", ActorID: nodeID, Action: action,
 		TargetType: "node", TargetID: nodeID, Outcome: "success",
 		Metadata: map[string]any{"agent_version": registration.AgentVersion, "os": registration.OS, "arch": registration.Arch},
 	}); err != nil {

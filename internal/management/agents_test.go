@@ -83,6 +83,28 @@ func TestRequestAgentUpdateValidationAndLifecycle(t *testing.T) {
 	}
 }
 
+func TestRevokeNodeCredential(t *testing.T) {
+	service := newTestService(t)
+	ctx := context.Background()
+	now := time.Date(2026, time.August, 2, 12, 0, 0, 0, time.UTC)
+	service.now = func() time.Time { return now }
+	node := registerManagedAgent(t, service, "Revoked", []string{agentv1.CapabilityControlHeartbeat})
+
+	revoked, err := service.RevokeNodeCredential(ctx, node.ID)
+	if err != nil {
+		t.Fatalf("RevokeNodeCredential() error = %v", err)
+	}
+	if revoked.RegisteredAt != nil || revoked.CredentialHash != nil || revoked.AgentVersion != "" || len(revoked.Capabilities) != 0 {
+		t.Fatalf("revoked node = %+v", revoked)
+	}
+	if _, err := service.RevokeNodeCredential(ctx, node.ID); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("second RevokeNodeCredential() error = %v", err)
+	}
+	if _, err := service.RevokeNodeCredential(ctx, "not-a-uuid"); fieldName(err) != "node_id" {
+		t.Fatalf("RevokeNodeCredential() invalid ID error = %v", err)
+	}
+}
+
 func registerManagedAgent(t *testing.T, service *Service, name string, capabilities []string) store.Node {
 	t.Helper()
 	ctx := context.Background()

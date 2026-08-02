@@ -129,6 +129,17 @@ func (server *Server) deleteNode(w http.ResponseWriter, request *http.Request, _
 	w.WriteHeader(http.StatusNoContent)
 }
 
+func (server *Server) revokeNodeCredential(w http.ResponseWriter, request *http.Request, _ auth.Authenticated) {
+	nodeID := request.PathValue("node_id")
+	value, err := server.management.RevokeNodeCredential(request.Context(), nodeID)
+	if err != nil {
+		server.resourceError(w, request, err, "Node credential")
+		return
+	}
+	server.agentSessions.disconnect(nodeID)
+	writeJSON(w, http.StatusOK, server.nodeView(value))
+}
+
 func (server *Server) createNodeRegistrationToken(w http.ResponseWriter, request *http.Request, _ auth.Authenticated) {
 	value, err := server.management.CreateRegistrationToken(request.Context(), request.PathValue("node_id"))
 	if err != nil {

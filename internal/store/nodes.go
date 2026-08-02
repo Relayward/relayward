@@ -124,6 +124,48 @@ func (store *Store) DeleteNode(ctx context.Context, id string, now time.Time) er
 	return store.deleteEntity(ctx, "nodes", "node", id, "node.delete", now)
 }
 
+func (store *Store) RevokeNodeCredential(ctx context.Context, id string, now time.Time) error {
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin node credential revocation: %w", err)
+	}
+	defer tx.Rollback()
+
+	result, err := tx.ExecContext(ctx, `
+UPDATE nodes SET credential_hash = NULL, registered_at = NULL, last_seen_at = NULL,
+    hostname = '', agent_version = '', agent_os = '', agent_arch = '',
+    agent_capabilities_json = '[]', agent_started_at_ns = NULL, updated_at = ?
+WHERE id = ? AND credential_hash IS NOT NULL`, unixTime(now), id)
+	if err != nil {
+		return fmt.Errorf("revoke node credential: %w", err)
+	}
+	revoked, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("read node credential revocation result: %w", err)
+	}
+	if revoked != 1 {
+		exists, err := existsTx(ctx, tx, "nodes", id)
+		if err != nil {
+			return err
+		}
+		if exists {
+			return ErrConflict
+		}
+		return ErrNotFound
+	}
+	if _, err := tx.ExecContext(ctx, `
+UPDATE node_registration_tokens SET used_at = ? WHERE node_id = ? AND used_at IS NULL`, unixTime(now), id); err != nil {
+		return fmt.Errorf("invalidate node registration tokens after credential revocation: %w", err)
+	}
+	if err := appendAuditTx(ctx, tx, AuditEntry{
+		OccurredAt: now, ActorType: "administrator", ActorID: "1", Action: "node.credential.revoke",
+		TargetType: "node", TargetID: id, Outcome: "success",
+	}); err != nil {
+		return err
+	}
+	return commit(tx, "node credential revocation")
+}
+
 func (store *Store) CreateNodeRegistrationToken(ctx context.Context, nodeID string, tokenHash []byte, expiresAt, now time.Time) error {
 	tx, err := store.db.BeginTx(ctx, nil)
 	if err != nil {

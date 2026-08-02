@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { APIError, getLatestAgentUpdate, reconcileNodePlugin, requestAgentUpdate, type AgentUpdate } from "./api";
+import { APIError, getLatestAgentUpdate, reconcileNodePlugin, requestAgentUpdate, revokeNodeCredential, type AgentUpdate } from "./api";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -45,6 +45,24 @@ describe("Agent update API", () => {
     }, 404)));
 
     await expect(getLatestAgentUpdate("node-id")).resolves.toBeNull();
+  });
+});
+
+describe("Node credential API", () => {
+  it("revokes the credential with the CSRF token", async () => {
+    const node = { id: "node/id", registered_at: null };
+    const fetchMock = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(
+      async () => jsonResponse(node, 200),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("document", { cookie: "relayward_csrf=csrf-token" });
+
+    await expect(revokeNodeCredential("node/id")).resolves.toEqual(node);
+    const [path, init] = fetchMock.mock.calls[0];
+    const headers = new Headers(init?.headers);
+    expect(path).toBe("/api/v1/nodes/node%2Fid/agent-credential");
+    expect(init?.method).toBe("DELETE");
+    expect(headers.get("X-CSRF-Token")).toBe("csrf-token");
   });
 });
 

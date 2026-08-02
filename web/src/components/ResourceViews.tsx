@@ -1,5 +1,5 @@
 import { type FormEvent, type ReactNode, useEffect, useState } from "react";
-import { KeyRound, Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
+import { KeyRound, Pencil, Plus, RefreshCw, ShieldX, Trash2 } from "lucide-react";
 
 import {
   APIError,
@@ -12,6 +12,7 @@ import {
   listNodes,
   listUsers,
   requestAgentUpdate,
+  revokeNodeCredential,
   updateNode,
   updateUser,
   type AgentUpdate,
@@ -30,6 +31,7 @@ export function NodesView() {
   const [error, setError] = useState<string>();
   const [editing, setEditing] = useState<Node | "new">();
   const [deleting, setDeleting] = useState<Node>();
+  const [revoking, setRevoking] = useState<Node>();
   const [token, setToken] = useState<NodeRegistrationToken>();
   const [tokenNode, setTokenNode] = useState<Node>();
   const [updatingNodeID, setUpdatingNodeID] = useState<string>();
@@ -92,6 +94,13 @@ export function NodesView() {
                 disabled={agentUpdateUnavailable(node) !== undefined}
                 onClick={() => setUpdatingNodeID(node.id)}
               ><RefreshCw size={17} /></IconAction>
+              <IconAction
+                label="Revoke Agent credential"
+                title={node.registered_at === null ? "No active Agent credential" : undefined}
+                danger
+                disabled={node.registered_at === null}
+                onClick={() => setRevoking(node)}
+              ><ShieldX size={17} /></IconAction>
               <IconAction label="Edit node" onClick={() => setEditing(node)}><Pencil size={17} /></IconAction>
               <IconAction label="Delete node" danger onClick={() => setDeleting(node)}><Trash2 size={17} /></IconAction>
             </td>
@@ -109,14 +118,28 @@ export function NodesView() {
         />
       ) : null}
       {deleting ? (
-        <ConfirmDelete
+        <ConfirmAction
           title="Delete node"
           name={deleting.name}
+          action="Delete"
           onClose={() => setDeleting(undefined)}
           onConfirm={async () => {
             await deleteNode(deleting.id);
             setItems((current) => current.filter((item) => item.id !== deleting.id));
             setDeleting(undefined);
+          }}
+        />
+      ) : null}
+      {revoking ? (
+        <ConfirmAction
+          title="Revoke Agent credential"
+          name={revoking.name}
+          action="Revoke"
+          onClose={() => setRevoking(undefined)}
+          onConfirm={async () => {
+            const node = await revokeNodeCredential(revoking.id);
+            setItems((current) => current.map((item) => item.id === node.id ? node : item).sort(byName));
+            setRevoking(undefined);
           }}
         />
       ) : null}
@@ -179,9 +202,10 @@ export function UsersView() {
         />
       ) : null}
       {deleting ? (
-        <ConfirmDelete
+        <ConfirmAction
           title="Delete user"
           name={deleting.display_name}
+          action="Delete"
           onClose={() => setDeleting(undefined)}
           onConfirm={async () => {
             await deleteUser(deleting.id);
@@ -301,7 +325,7 @@ function DialogActions({ busy, onClose, submitLabel }: { busy: boolean; onClose:
   );
 }
 
-function ConfirmDelete({ title, name, onClose, onConfirm }: { title: string; name: string; onClose: () => void; onConfirm: () => Promise<void> }) {
+function ConfirmAction({ title, name, action, onClose, onConfirm }: { title: string; name: string; action: string; onClose: () => void; onConfirm: () => Promise<void> }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   async function confirm() {
@@ -320,7 +344,7 @@ function ConfirmDelete({ title, name, onClose, onConfirm }: { title: string; nam
       <FormError message={error} />
       <div className="dialog-actions">
         <button className="quiet-button" onClick={onClose} type="button">Cancel</button>
-        <button className="danger-button" disabled={busy} onClick={confirm} type="button">{busy ? "Deleting..." : "Delete"}</button>
+        <button className="danger-button" disabled={busy} onClick={confirm} type="button">{busy ? "Working..." : action}</button>
       </div>
     </Modal>
   );

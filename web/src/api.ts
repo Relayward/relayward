@@ -424,6 +424,10 @@ export async function deleteNode(id: string): Promise<void> {
   return request(`/api/v1/nodes/${encodeURIComponent(id)}`, { method: "DELETE" });
 }
 
+export async function revokeNodeCredential(id: string): Promise<Node> {
+  return request(`/api/v1/nodes/${encodeURIComponent(id)}/agent-credential`, { method: "DELETE" });
+}
+
 export async function createNodeRegistrationToken(id: string): Promise<NodeRegistrationToken> {
   return request(`/api/v1/nodes/${encodeURIComponent(id)}/registration-tokens`, { method: "POST" });
 }

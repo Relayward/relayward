@@ -97,6 +97,16 @@ func (service *Service) DeleteNode(ctx context.Context, id string) error {
 	return service.store.DeleteNode(ctx, id, service.currentTime())
 }
 
+func (service *Service) RevokeNodeCredential(ctx context.Context, id string) (store.Node, error) {
+	if err := validateID("node_id", id); err != nil {
+		return store.Node{}, err
+	}
+	if err := service.store.RevokeNodeCredential(ctx, id, service.currentTime()); err != nil {
+		return store.Node{}, err
+	}
+	return service.store.NodeByID(ctx, id)
+}
+
 func (service *Service) CreateRegistrationToken(ctx context.Context, nodeID string) (RegistrationToken, error) {
 	if err := validateID("node_id", nodeID); err != nil {
 		return RegistrationToken{}, err
