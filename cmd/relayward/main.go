@@ -160,7 +160,15 @@ func serve(args []string, logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	eventProcessor, err := eventprocessor.New(events, database, logger)
+	artifacts, err := pluginartifact.Open(filepath.Join(absoluteDataDir, "plugins"))
+	if err != nil {
+		return err
+	}
+	pluginSupervisor, err := pluginruntime.New(database, artifacts, logger)
+	if err != nil {
+		return err
+	}
+	eventProcessor, err := eventprocessor.New(events, database, pluginSupervisor, logger)
 	if err != nil {
 		return err
 	}
@@ -168,14 +176,6 @@ func serve(args []string, logger *slog.Logger) error {
 		Directory: filepath.Join(absoluteDataDir, "event-archive"), HotRetention: *eventHotRetention,
 		ArchiveRetention: *eventArchiveRetention,
 	})
-	if err != nil {
-		return err
-	}
-	artifacts, err := pluginartifact.Open(filepath.Join(absoluteDataDir, "plugins"))
-	if err != nil {
-		return err
-	}
-	pluginSupervisor, err := pluginruntime.New(database, artifacts, logger)
 	if err != nil {
 		return err
 	}

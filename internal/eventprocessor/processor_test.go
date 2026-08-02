@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	agentv1 "github.com/Relayward/relayward-sdk/agent/v1"
+	centerpluginv1 "github.com/Relayward/relayward-sdk/centerplugin/v1"
 	policyv1 "github.com/Relayward/relayward-sdk/policy/v1"
 	"github.com/klauspost/compress/zstd"
 
@@ -63,7 +65,7 @@ func TestProcessorConsumesTrafficAndPolicyIndependently(t *testing.T) {
 	if _, err := events.Ingest(ctx, processorNodeID, batch, now); err != nil {
 		t.Fatalf("Ingest() error = %v", err)
 	}
-	processor, err := New(events, business, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	processor, err := New(events, business, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
@@ -114,7 +116,7 @@ func TestProcessorRecordsConsumerFailureWithoutBlockingOtherCursors(t *testing.T
 	}, now); err != nil {
 		t.Fatalf("Ingest() error = %v", err)
 	}
-	processor, err := New(events, business, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	processor, err := New(events, business, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
@@ -147,6 +149,95 @@ func TestProcessorRecordsConsumerFailureWithoutBlockingOtherCursors(t *testing.T
 	retried, _ := events.ConsumerState(ctx, AccessConsumerID)
 	if retried.ConsecutiveFailures != 2 || retried.FailedEventRowID == nil || *retried.FailedEventRowID != 1 {
 		t.Fatalf("retried access consumer state = %+v", retried)
+	}
+}
+
+type featureConsumerStub struct {
+	ids      []string
+	failures map[string]error
+	batches  map[string][][]eventstore.StoredEvent
+}
+
+func (stub *featureConsumerStub) FeatureConsumerIDs(context.Context) ([]string, error) {
+	return append([]string(nil), stub.ids...), nil
+}
+
+func (stub *featureConsumerStub) ConsumeFeatureEvents(_ context.Context, consumerID string, batch []eventstore.StoredEvent) error {
+	cloned := append([]eventstore.StoredEvent(nil), batch...)
+	stub.batches[consumerID] = append(stub.batches[consumerID], cloned)
+	return stub.failures[consumerID]
+}
+
+func TestProcessorDeliversIndependentFeaturePluginBatches(t *testing.T) {
+	ctx := context.Background()
+	directory := t.TempDir()
+	business, err := store.Open(ctx, filepath.Join(directory, "relayward.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer business.Close()
+	events, err := eventstore.Open(ctx, filepath.Join(directory, "events.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer events.Close()
+	now := time.Date(2026, time.August, 2, 12, 0, 0, 0, time.UTC)
+	first, _ := agentv1.NewEvent(processorNodeID, processorStreamID, 1, "system.test", now, map[string]int{"value": 1})
+	second, _ := agentv1.NewEvent(processorNodeID, processorStreamID, 2, "system.test", now.Add(time.Second), map[string]int{"value": 2})
+	if _, err := events.Ingest(ctx, processorNodeID, agentv1.EventBatch{
+		APIVersion: agentv1.APIVersion, NodeID: processorNodeID, StreamID: processorStreamID,
+		FirstSequence: 1, LastSequence: 2, Events: []agentv1.Event{first, second},
+	}, now.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	const successful = "feature.io.relayward.success.events.v1"
+	const failing = "feature.io.relayward.failure.events.v1"
+	features := &featureConsumerStub{
+		ids: []string{successful, failing}, failures: map[string]error{failing: errors.New("plugin unavailable")},
+		batches: make(map[string][][]eventstore.StoredEvent),
+	}
+	processor, err := New(events, business, features, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	processor.now = func() time.Time { return now.Add(2 * time.Minute) }
+	if err := processor.RunOnce(ctx); err == nil {
+		t.Fatal("RunOnce() accepted a failed feature consumer")
+	}
+	if len(features.batches[successful]) != 1 || len(features.batches[successful][0]) != 2 {
+		t.Fatalf("successful feature batches = %+v", features.batches[successful])
+	}
+	successState, err := events.ConsumerState(ctx, successful)
+	if err != nil || successState.LastEventRowID != 2 || successState.ConsecutiveFailures != 0 {
+		t.Fatalf("successful feature state = %+v, %v", successState, err)
+	}
+	failureState, err := events.ConsumerState(ctx, failing)
+	if err != nil || failureState.LastEventRowID != 0 || failureState.ConsecutiveFailures != 1 ||
+		failureState.FailedEventRowID == nil || *failureState.FailedEventRowID != 1 {
+		t.Fatalf("failed feature state = %+v, %v", failureState, err)
+	}
+	for _, consumerID := range ConsumerIDs {
+		state, stateErr := events.ConsumerState(ctx, consumerID)
+		if stateErr != nil || state.LastEventRowID != 2 {
+			t.Fatalf("standard consumer %s = %+v, %v", consumerID, state, stateErr)
+		}
+	}
+	if err := processor.RunOnce(ctx); err != nil {
+		t.Fatalf("RunOnce() during feature retry delay error = %v", err)
+	}
+	if len(features.batches[failing]) != 1 {
+		t.Fatalf("failed feature retried before delay: %d batches", len(features.batches[failing]))
+	}
+}
+
+func TestFeatureBatchPrefixRespectsPayloadLimit(t *testing.T) {
+	batch := make([]eventstore.StoredEvent, 4)
+	for index := range batch {
+		batch[index].Event.Payload = make([]byte, centerpluginv1.MaximumEventPayloadBytes)
+	}
+	prefix := featureBatchPrefix(batch)
+	if len(prefix) != 3 {
+		t.Fatalf("featureBatchPrefix() length = %d, want 3", len(prefix))
 	}
 }
 

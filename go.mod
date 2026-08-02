@@ -3,7 +3,7 @@ module github.com/Relayward/relayward
 go 1.26.0
 
 require (
-	github.com/Relayward/relayward-sdk v0.0.0-20260802150043-969062d1e71b
+	github.com/Relayward/relayward-sdk v0.0.0-20260802154724-539f92117e87
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
 	github.com/klauspost/compress v1.18.4

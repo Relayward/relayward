@@ -13,10 +13,12 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	agentv1 "github.com/Relayward/relayward-sdk/agent/v1"
 	centerpluginv1 "github.com/Relayward/relayward-sdk/centerplugin/v1"
 	"github.com/Relayward/relayward-sdk/manifest"
 	"github.com/Relayward/relayward-sdk/protocol"
 
+	"github.com/Relayward/relayward/internal/eventstore"
 	"github.com/Relayward/relayward/internal/pluginartifact"
 	"github.com/Relayward/relayward/internal/store"
 )
@@ -33,7 +35,8 @@ func TestSupervisorRunsRealPluginHostUIAndRestoresPreviousVersion(t *testing.T) 
 		t.Fatal(err)
 	}
 	now := time.Now().UTC()
-	if err := database.CreateNode(t.Context(), store.Node{ID: "node-1", Name: "Edge", Enabled: true}, now); err != nil {
+	nodeID := "10000000-0000-4000-8000-000000000001"
+	if err := database.CreateNode(t.Context(), store.Node{ID: nodeID, Name: "Edge", Enabled: true}, now); err != nil {
 		t.Fatal(err)
 	}
 	version := installTestExecutable(t, artifacts, "1.2.3")
@@ -62,6 +65,22 @@ func TestSupervisorRunsRealPluginHostUIAndRestoresPreviousVersion(t *testing.T) 
 	raw, err := supervisor.InvokeUI(t.Context(), version.PluginID, "nodes.summary", []byte(`{}`))
 	if err != nil || string(raw) != `{"count":1}` {
 		t.Fatalf("InvokeUI() = %s, %v", raw, err)
+	}
+	consumerIDs, err := supervisor.FeatureConsumerIDs(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(consumerIDs) != 1 || consumerIDs[0] != featureConsumerID(version.PluginID) {
+		t.Fatalf("FeatureConsumerIDs() = %v", consumerIDs)
+	}
+	event, err := agentv1.NewEvent(nodeID, "0123456789abcdef0123456789abcdef", 1, "system.test", now, map[string]string{"state": "ready"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := supervisor.ConsumeFeatureEvents(t.Context(), consumerIDs[0], []eventstore.StoredEvent{{
+		RowID: 1, NodeID: nodeID, Event: event, ReceivedAt: now.Add(time.Second),
+	}}); err != nil {
+		t.Fatalf("ConsumeFeatureEvents() error = %v", err)
 	}
 	recovered, err := database.PluginInstallationByID(t.Context(), version.PluginID)
 	if err != nil || recovered.State != "active" || recovered.Health != "healthy" || recovered.RestartCount != 2 {
@@ -173,14 +192,62 @@ func TestHostRequiresDeclaredPermission(t *testing.T) {
 	}
 }
 
-type hostDatabaseStub struct {
-	pluginID string
-	nodeID   string
-	services []store.PluginService
+func TestFeatureConsumersRequireFeatureKindAndPermission(t *testing.T) {
+	feature := &pluginActor{version: &store.PluginVersion{
+		PluginID: "io.relayward.feature", Version: "2.0.0", Manifest: manifest.Manifest{Kind: manifest.KindFeature},
+		ApprovedPermissions: []string{centerpluginv1.PermissionEventsRead},
+	}}
+	runtimePlugin := &pluginActor{version: &store.PluginVersion{
+		PluginID: "io.relayward.runtime", Manifest: manifest.Manifest{Kind: manifest.KindRuntime},
+		ApprovedPermissions: []string{centerpluginv1.PermissionEventsRead},
+	}}
+	missingPermission := &pluginActor{version: &store.PluginVersion{
+		PluginID: "io.relayward.no-events", Manifest: manifest.Manifest{Kind: manifest.KindFeature},
+	}}
+	database := &hostDatabaseStub{installations: []store.PluginInstallation{
+		{PluginID: "io.relayward.feature", Kind: string(manifest.KindFeature), ActiveVersion: "1.0.0", State: "active",
+			Manifest: manifest.Manifest{Kind: manifest.KindFeature, Version: "1.0.0"}, ApprovedPermissions: []string{centerpluginv1.PermissionEventsRead}},
+		{PluginID: "io.relayward.runtime", Kind: string(manifest.KindRuntime), ActiveVersion: "1.0.0", State: "active",
+			Manifest: manifest.Manifest{Kind: manifest.KindRuntime, Version: "1.0.0"}, ApprovedPermissions: []string{centerpluginv1.PermissionEventsRead}},
+		{PluginID: "io.relayward.no-events", Kind: string(manifest.KindFeature), ActiveVersion: "1.0.0", State: "active",
+			Manifest: manifest.Manifest{Kind: manifest.KindFeature, Version: "1.0.0"}},
+	}}
+	supervisor := &Supervisor{database: database, actors: map[string]*pluginActor{
+		"io.relayward.feature": feature, "io.relayward.runtime": runtimePlugin,
+		"io.relayward.no-events": missingPermission,
+	}}
+	consumerIDs, err := supervisor.FeatureConsumerIDs(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(consumerIDs) != 1 || consumerIDs[0] != featureConsumerID("io.relayward.feature") {
+		t.Fatalf("FeatureConsumerIDs() = %v", consumerIDs)
+	}
+	if err := supervisor.ConsumeFeatureEvents(t.Context(), consumerIDs[0], nil); err == nil {
+		t.Fatal("ConsumeFeatureEvents() accepted an uncommitted process version")
+	}
+	if _, err := featurePluginID("standard.access.v1"); err == nil {
+		t.Fatal("featurePluginID() accepted a standard consumer ID")
+	}
 }
 
-func (*hostDatabaseStub) ListPluginInstallations(context.Context) ([]store.PluginInstallation, error) {
-	return nil, nil
+type hostDatabaseStub struct {
+	pluginID      string
+	nodeID        string
+	services      []store.PluginService
+	installations []store.PluginInstallation
+}
+
+func (database *hostDatabaseStub) ListPluginInstallations(context.Context) ([]store.PluginInstallation, error) {
+	return append([]store.PluginInstallation(nil), database.installations...), nil
+}
+func (database *hostDatabaseStub) PluginInstallationByID(_ context.Context, pluginID string) (store.PluginInstallation, error) {
+	for _, installation := range database.installations {
+		if installation.PluginID == pluginID {
+			return installation, nil
+		}
+	}
+	return store.PluginInstallation{}, store.ErrNotFound
 }
 func (*hostDatabaseStub) PluginVersionByID(context.Context, string, string) (store.PluginVersion, error) {
 	return store.PluginVersion{}, store.ErrNotFound
@@ -245,7 +312,10 @@ func installTestExecutable(t *testing.T, artifacts *pluginartifact.Store, versio
 	pluginManifest := manifest.Manifest{
 		APIVersion: "relayward.plugin/v1", ID: "io.relayward.contract-test", Name: "Contract test",
 		Version: version, Kind: manifest.KindFeature, Requires: manifest.Requirements{ControlAPI: 1},
-		Permissions: []manifest.Permission{{Name: centerpluginv1.PermissionNodesRead, Reason: "Exercise node access."}},
+		Permissions: []manifest.Permission{
+			{Name: centerpluginv1.PermissionEventsRead, Reason: "Exercise event consumption."},
+			{Name: centerpluginv1.PermissionNodesRead, Reason: "Exercise node access."},
+		},
 		Artifacts: []manifest.Artifact{{
 			Role: manifest.ArtifactCenter, File: "center", Size: int64(len(raw)),
 			SHA256: hex.EncodeToString(digest[:]), OS: "linux", Arch: "amd64",
@@ -253,7 +323,8 @@ func installTestExecutable(t *testing.T, artifacts *pluginartifact.Store, versio
 	}
 	return store.PluginVersion{
 		PluginID: pluginManifest.ID, Version: version, ReleaseID: 10, ReleaseTag: "v" + version,
-		Manifest: pluginManifest, ApprovedPermissions: []string{centerpluginv1.PermissionNodesRead}, CenterAssetID: 2,
+		Manifest:            pluginManifest,
+		ApprovedPermissions: []string{centerpluginv1.PermissionEventsRead, centerpluginv1.PermissionNodesRead}, CenterAssetID: 2,
 	}
 }
 

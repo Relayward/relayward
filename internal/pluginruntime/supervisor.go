@@ -26,6 +26,7 @@ var ErrPluginUnavailable = errors.New("center plugin is unavailable")
 
 type database interface {
 	ListPluginInstallations(context.Context) ([]store.PluginInstallation, error)
+	PluginInstallationByID(context.Context, string) (store.PluginInstallation, error)
 	PluginVersionByID(context.Context, string, string) (store.PluginVersion, error)
 	ListNodes(context.Context) ([]store.Node, error)
 	ReplacePluginServices(context.Context, string, string, []store.PluginService, time.Time) error
