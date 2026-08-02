@@ -15,6 +15,7 @@ import (
 	"github.com/Relayward/relayward-sdk/manifest"
 	"github.com/google/uuid"
 
+	"github.com/Relayward/relayward/internal/githubrelease"
 	"github.com/Relayward/relayward/internal/secretbox"
 	"github.com/Relayward/relayward/internal/store"
 )
@@ -112,7 +113,7 @@ func (service *Service) ReconcileNodePlugin(ctx context.Context, nodeID, pluginI
 		if !ok {
 			return store.NodePluginInstance{}, invalid("plugin_id", "does not provide a node artifact")
 		}
-		downloadURL, err := publicReleaseAssetURL(installation.Repository, reconcile.Version, artifact.File)
+		downloadURL, err := service.nodePluginArtifactURL(ctx, installation, artifact)
 		if err != nil {
 			return store.NodePluginInstance{}, fmt.Errorf("resolve node plugin artifact: %w", err)
 		}
@@ -184,6 +185,43 @@ func (service *Service) ReconcileNodePlugin(ctx context.Context, nodeID, pluginI
 	return service.store.ApplyNodePluginDesired(
 		ctx, desired, configurationCiphertext, commandID, command, commandCiphertext, now,
 	)
+}
+
+func (service *Service) nodePluginArtifactURL(ctx context.Context, installation store.PluginInstallation, artifact manifest.Artifact) (string, error) {
+	ciphertext, err := service.store.Secret(
+		ctx, store.PluginInstallationSecretOwnerType, installation.PluginID, store.PluginInstallationGitHubToken,
+	)
+	if errors.Is(err, store.ErrNotFound) {
+		return publicReleaseAssetURL(installation.Repository, installation.ActiveVersion, artifact.File)
+	}
+	if err != nil {
+		return "", err
+	}
+	if service.pluginReleases == nil || service.secrets == nil || !service.secrets.Available() {
+		return "", secretbox.ErrUnavailable
+	}
+	plaintext, err := service.secrets.Decrypt(
+		store.PluginInstallationSecretOwnerType, installation.PluginID, store.PluginInstallationGitHubToken, ciphertext,
+	)
+	if err != nil {
+		return "", fmt.Errorf("decrypt GitHub token: %w", err)
+	}
+	version, err := service.store.PluginVersionByID(ctx, installation.PluginID, installation.ActiveVersion)
+	if err != nil {
+		return "", err
+	}
+	if version.NodeAssetID == nil {
+		return "", errors.New("installed plugin version does not contain a node asset ID")
+	}
+	repository, err := githubrelease.ParseRepository(installation.Repository)
+	if err != nil {
+		return "", err
+	}
+	downloadURL, err := service.pluginReleases.ResolveAssetURL(ctx, repository, *version.NodeAssetID, string(plaintext))
+	if err != nil {
+		return "", translateGitHubReleaseError(err)
+	}
+	return downloadURL, nil
 }
 
 func (service *Service) decryptNodePluginConfiguration(ctx context.Context, nodeID, pluginID string) (json.RawMessage, error) {

@@ -16,7 +16,7 @@ import { Field, FormError } from "./AuthScreen";
 import { AuditView } from "./AuditView";
 import { AuthorizationsView } from "./AuthorizationView";
 import { Modal } from "./Modal";
-import { PluginInstancesView } from "./PluginInstancesView";
+import { PluginsView } from "./PluginsView";
 import { NodesView, UsersView } from "./ResourceViews";
 
 interface DashboardProps {
@@ -83,7 +83,7 @@ export function Dashboard({ session, system, onLogout, onSessionChange, onSessio
         <main className="dashboard-main">
           {view === "system" ? <SystemView system={system} session={session} /> : null}
           {view === "nodes" ? <NodesView /> : null}
-          {view === "plugins" ? <PluginInstancesView /> : null}
+          {view === "plugins" ? <PluginsView onNavigate={(target) => setView(target)} /> : null}
           {view === "users" ? <UsersView /> : null}
           {view === "authorizations" ? <AuthorizationsView /> : null}
           {view === "audit" ? <AuditView /> : null}

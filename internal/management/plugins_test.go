@@ -140,6 +140,50 @@ func TestNodePluginReconcileValidationAndSecretsGate(t *testing.T) {
 	service.secrets = availableSecrets
 }
 
+func TestNodePluginReconcileResolvesPrivateReleaseAsset(t *testing.T) {
+	service := newTestService(t)
+	ctx := context.Background()
+	now := time.Date(2026, time.August, 2, 15, 0, 0, 0, time.UTC)
+	service.now = func() time.Time { return now }
+	node := registerManagedAgent(t, service, "Private plugin node", []string{
+		agentv1.CapabilityControlCommands, agentv1.CapabilityPluginSupervision,
+	})
+	pluginManifest := managedRuntimeManifest()
+	release := managedRelease(pluginManifest)
+	releases := &releaseClientStub{
+		release: release, resolvedURL: "https://release-assets.githubusercontent.com/private-node-asset",
+	}
+	if err := service.ConfigurePluginLifecycle(releases, &artifactStoreStub{}, &pluginRuntimeStub{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.InstallPluginRelease(ctx, PluginReleaseInput{
+		Repository: "https://github.com/Relayward/test-plugin", Version: pluginManifest.Version,
+		GitHubToken: "private-token",
+	}); err != nil {
+		t.Fatalf("InstallPluginRelease() error = %v", err)
+	}
+	if _, err := service.ReconcileNodePlugin(ctx, node.ID, pluginManifest.ID, NodePluginInput{
+		DesiredState: agentv1.PluginStateRunning, Version: pluginManifest.Version,
+		Configuration: json.RawMessage(`{"enabled":true}`),
+	}); err != nil {
+		t.Fatalf("ReconcileNodePlugin() error = %v", err)
+	}
+	command, err := service.NextAgentCommand(ctx, node.ID, now.Add(time.Second))
+	if err != nil {
+		t.Fatalf("NextAgentCommand() error = %v", err)
+	}
+	reconcile, err := agentv1.DecodePluginReconcileCommand(command.Request)
+	if err != nil {
+		t.Fatalf("DecodePluginReconcileCommand() error = %v", err)
+	}
+	if reconcile.Artifact == nil || reconcile.Artifact.DownloadURL != releases.resolvedURL {
+		t.Fatalf("private plugin command artifact = %+v", reconcile.Artifact)
+	}
+	if releases.resolvedRepository != release.Repository || releases.resolvedAssetID != 3 || releases.resolvedToken != "private-token" {
+		t.Fatalf("ResolveAssetURL() = repository %+v, asset %d, token %q", releases.resolvedRepository, releases.resolvedAssetID, releases.resolvedToken)
+	}
+}
+
 func TestPublicReleaseAssetURL(t *testing.T) {
 	value, err := publicReleaseAssetURL("https://github.com/Relayward/plugin.git", "1.2.3", "node linux")
 	if err != nil || value != "https://github.com/Relayward/plugin/releases/download/v1.2.3/node%20linux" {

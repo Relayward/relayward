@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/url"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -18,22 +19,31 @@ import (
 )
 
 const (
-	NodePluginSecretOwnerType     = "node_plugin_instance"
-	NodePluginConfigurationSecret = "desired_configuration"
+	NodePluginSecretOwnerType         = "node_plugin_instance"
+	NodePluginConfigurationSecret     = "desired_configuration"
+	PluginInstallationSecretOwnerType = "plugin_installation"
+	PluginInstallationGitHubToken     = "github_token"
 )
 
 var githubRepositoryPartPattern = regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)
 
 type PluginInstallation struct {
-	PluginID       string
-	Repository     string
-	Kind           string
-	DesiredVersion string
-	ActiveVersion  string
-	Manifest       manifest.Manifest
-	State          string
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
+	PluginID            string
+	Repository          string
+	Kind                string
+	DesiredVersion      string
+	ActiveVersion       string
+	PreviousVersion     string
+	Manifest            manifest.Manifest
+	ApprovedPermissions []string
+	ReleaseID           int64
+	State               string
+	Health              string
+	RestartCount        uint64
+	LastProblem         *protocol.Problem
+	LastStartedAt       *time.Time
+	CreatedAt           time.Time
+	UpdatedAt           time.Time
 }
 
 func (store *Store) CreatePluginInstallation(ctx context.Context, value PluginInstallation, now time.Time) error {
@@ -49,7 +59,7 @@ func (store *Store) CreatePluginInstallation(ctx context.Context, value PluginIn
 		return err
 	}
 	switch value.State {
-	case "pending", "active", "failed":
+	case "pending", "installing", "active", "failed":
 	default:
 		return fmt.Errorf("unsupported plugin installation state %q", value.State)
 	}
@@ -61,6 +71,17 @@ func (store *Store) CreatePluginInstallation(ctx context.Context, value PluginIn
 	if err != nil {
 		return fmt.Errorf("encode plugin permissions: %w", err)
 	}
+	if err := validateApprovedPermissions(value.Manifest, value.ApprovedPermissions); err != nil {
+		return err
+	}
+	approvedPermissionsJSON, err := json.Marshal(value.ApprovedPermissions)
+	if err != nil {
+		return fmt.Errorf("encode approved plugin permissions: %w", err)
+	}
+	health := value.Health
+	if health == "" {
+		health = "unknown"
+	}
 	tx, err := store.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin plugin installation creation: %w", err)
@@ -69,10 +90,11 @@ func (store *Store) CreatePluginInstallation(ctx context.Context, value PluginIn
 	result, err := tx.ExecContext(ctx, `
 INSERT INTO plugin_installations(
     plugin_id, repository, kind, desired_version, active_version, manifest_json,
-    permissions_json, state, created_at, updated_at
-) VALUES (?, ?, ?, ?, NULLIF(?, ''), ?, ?, ?, ?, ?)
+    permissions_json, approved_permissions_json, state, health, created_at, updated_at
+) VALUES (?, ?, ?, ?, NULLIF(?, ''), ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT DO NOTHING`, value.PluginID, value.Repository, value.Kind, value.DesiredVersion,
-		value.ActiveVersion, string(manifestJSON), string(permissionsJSON), value.State, unixTime(now), unixTime(now))
+		value.ActiveVersion, string(manifestJSON), string(permissionsJSON), string(approvedPermissionsJSON),
+		value.State, health, unixTime(now), unixTime(now))
 	if err != nil {
 		return fmt.Errorf("insert plugin installation: %w", err)
 	}
@@ -163,31 +185,101 @@ func NodePluginSecretOwnerID(nodeID, pluginID string) string {
 }
 
 func (store *Store) PluginInstallationByID(ctx context.Context, pluginID string) (PluginInstallation, error) {
-	var value PluginInstallation
-	var activeVersion sql.NullString
-	var raw []byte
-	var createdAt, updatedAt int64
-	err := store.db.QueryRowContext(ctx, `
-SELECT plugin_id, repository, kind, desired_version, active_version, manifest_json, state, created_at, updated_at
-FROM plugin_installations WHERE plugin_id = ?`, pluginID).Scan(
-		&value.PluginID, &value.Repository, &value.Kind, &value.DesiredVersion, &activeVersion,
-		&raw, &value.State, &createdAt, &updatedAt,
-	)
-	if errors.Is(err, sql.ErrNoRows) {
-		return PluginInstallation{}, ErrNotFound
+	return scanPluginInstallation(store.db.QueryRowContext(ctx, pluginInstallationSelect+`
+WHERE plugin_id = ?`, pluginID))
+}
+
+func (store *Store) PluginInstallationByRepository(ctx context.Context, repository string) (PluginInstallation, error) {
+	if err := validatePluginRepository(repository); err != nil {
+		return PluginInstallation{}, err
 	}
+	return scanPluginInstallation(store.db.QueryRowContext(ctx, pluginInstallationSelect+`
+WHERE repository = ?`, repository))
+}
+
+func (store *Store) ListPluginInstallations(ctx context.Context) ([]PluginInstallation, error) {
+	rows, err := store.db.QueryContext(ctx, pluginInstallationSelect+`
+ORDER BY json_extract(manifest_json, '$.name') COLLATE NOCASE, plugin_id`)
 	if err != nil {
-		return PluginInstallation{}, fmt.Errorf("read plugin installation: %w", err)
+		return nil, fmt.Errorf("list plugin installations: %w", err)
 	}
-	decoded, err := manifest.Decode(bytes.NewReader(raw))
+	defer rows.Close()
+	values := make([]PluginInstallation, 0)
+	for rows.Next() {
+		value, err := scanPluginInstallation(rows)
+		if err != nil {
+			return nil, err
+		}
+		values = append(values, value)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate plugin installations: %w", err)
+	}
+	return values, nil
+}
+
+const pluginInstallationSelect = `
+SELECT plugin_id, repository, kind, desired_version, active_version, previous_version,
+       manifest_json, approved_permissions_json, release_id, state, health, restart_count,
+       last_problem_json, last_started_at, created_at, updated_at
+FROM plugin_installations `
+
+func scanPluginInstallation(row rowScanner) (PluginInstallation, error) {
+	var value PluginInstallation
+	var activeVersion, previousVersion, problem sql.NullString
+	var manifestJSON, approvedJSON []byte
+	var restartCount int64
+	var lastStartedAt sql.NullInt64
+	var createdAt, updatedAt int64
+	if err := row.Scan(
+		&value.PluginID, &value.Repository, &value.Kind, &value.DesiredVersion, &activeVersion, &previousVersion,
+		&manifestJSON, &approvedJSON, &value.ReleaseID, &value.State, &value.Health, &restartCount,
+		&problem, &lastStartedAt, &createdAt, &updatedAt,
+	); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return PluginInstallation{}, ErrNotFound
+		}
+		return PluginInstallation{}, fmt.Errorf("scan plugin installation: %w", err)
+	}
+	decoded, err := manifest.Decode(bytes.NewReader(manifestJSON))
 	if err != nil {
 		return PluginInstallation{}, fmt.Errorf("decode installed plugin manifest: %w", err)
 	}
+	if err := json.Unmarshal(approvedJSON, &value.ApprovedPermissions); err != nil {
+		return PluginInstallation{}, fmt.Errorf("decode approved plugin permissions: %w", err)
+	}
+	if problem.Valid {
+		var decodedProblem protocol.Problem
+		if err := json.Unmarshal([]byte(problem.String), &decodedProblem); err != nil {
+			return PluginInstallation{}, fmt.Errorf("decode plugin problem: %w", err)
+		}
+		value.LastProblem = &decodedProblem
+	}
 	value.ActiveVersion = activeVersion.String
+	value.PreviousVersion = previousVersion.String
 	value.Manifest = decoded
+	value.RestartCount = uint64(restartCount)
+	value.LastStartedAt = nullableTime(lastStartedAt)
 	value.CreatedAt = fromUnix(createdAt)
 	value.UpdatedAt = fromUnix(updatedAt)
 	return value, nil
+}
+
+func validateApprovedPermissions(value manifest.Manifest, approved []string) error {
+	wanted := make([]string, len(value.Permissions))
+	for index, permission := range value.Permissions {
+		wanted[index] = permission.Name
+	}
+	sort.Strings(wanted)
+	if !sort.StringsAreSorted(approved) || len(wanted) != len(approved) {
+		return errors.New("approved permissions must exactly match the sorted manifest permissions")
+	}
+	for index := range wanted {
+		if wanted[index] != approved[index] {
+			return errors.New("approved permissions must exactly match the sorted manifest permissions")
+		}
+	}
+	return nil
 }
 
 func (store *Store) ListNodePluginInstances(ctx context.Context) ([]NodePluginInstance, error) {

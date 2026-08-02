@@ -276,6 +276,39 @@ BEGIN
 END;
 `,
 	},
+	{
+		version: 7,
+		sql: `
+ALTER TABLE plugin_installations ADD COLUMN approved_permissions_json TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(approved_permissions_json));
+ALTER TABLE plugin_installations ADD COLUMN previous_version TEXT;
+ALTER TABLE plugin_installations ADD COLUMN release_id INTEGER NOT NULL DEFAULT 0 CHECK (release_id >= 0);
+ALTER TABLE plugin_installations ADD COLUMN health TEXT NOT NULL DEFAULT 'unknown';
+ALTER TABLE plugin_installations ADD COLUMN restart_count INTEGER NOT NULL DEFAULT 0 CHECK (restart_count >= 0);
+ALTER TABLE plugin_installations ADD COLUMN last_problem_json TEXT CHECK (last_problem_json IS NULL OR json_valid(last_problem_json));
+ALTER TABLE plugin_installations ADD COLUMN last_started_at INTEGER;
+
+CREATE TABLE plugin_versions (
+    plugin_id TEXT NOT NULL REFERENCES plugin_installations(plugin_id) ON DELETE CASCADE,
+    version TEXT NOT NULL,
+    release_id INTEGER NOT NULL CHECK (release_id > 0),
+    release_tag TEXT NOT NULL,
+    manifest_json TEXT NOT NULL CHECK (json_valid(manifest_json)),
+    approved_permissions_json TEXT NOT NULL CHECK (json_valid(approved_permissions_json)),
+    center_asset_id INTEGER NOT NULL CHECK (center_asset_id > 0),
+    node_asset_id INTEGER CHECK (node_asset_id IS NULL OR node_asset_id > 0),
+    ui_asset_id INTEGER CHECK (ui_asset_id IS NULL OR ui_asset_id > 0),
+    installed_at INTEGER NOT NULL,
+    PRIMARY KEY (plugin_id, version)
+);
+
+CREATE TRIGGER plugin_installation_secret_cleanup
+AFTER DELETE ON plugin_installations
+BEGIN
+    DELETE FROM secrets
+    WHERE owner_type = 'plugin_installation' AND owner_id = OLD.plugin_id;
+END;
+`,
+	},
 }
 
 func migrate(ctx context.Context, db *sql.DB) error {

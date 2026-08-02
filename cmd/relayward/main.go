@@ -17,7 +17,10 @@ import (
 	"github.com/Relayward/relayward/internal/auth"
 	"github.com/Relayward/relayward/internal/buildinfo"
 	"github.com/Relayward/relayward/internal/eventstore"
+	"github.com/Relayward/relayward/internal/githubrelease"
 	"github.com/Relayward/relayward/internal/management"
+	"github.com/Relayward/relayward/internal/pluginartifact"
+	"github.com/Relayward/relayward/internal/pluginruntime"
 	"github.com/Relayward/relayward/internal/secretbox"
 	"github.com/Relayward/relayward/internal/server"
 	"github.com/Relayward/relayward/internal/store"
@@ -98,6 +101,30 @@ func serve(args []string, logger *slog.Logger) error {
 		return err
 	}
 	manager := management.NewService(database, secrets)
+	artifacts, err := pluginartifact.Open(filepath.Join(absoluteDataDir, "plugins"))
+	if err != nil {
+		return err
+	}
+	pluginSupervisor, err := pluginruntime.New(database, artifacts, logger)
+	if err != nil {
+		return err
+	}
+	if err := manager.ConfigurePluginLifecycle(githubrelease.NewClient(nil), artifacts, pluginSupervisor); err != nil {
+		return err
+	}
+
+	signalContext, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+	if err := pluginSupervisor.Start(signalContext); err != nil {
+		return fmt.Errorf("start center plugin supervisor: %w", err)
+	}
+	defer func() {
+		closeContext, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		if err := pluginSupervisor.Close(closeContext); err != nil {
+			logger.Error("center plugin shutdown failed", "error", err)
+		}
+	}()
 
 	httpServer := &http.Server{
 		Addr: *listen,
@@ -118,8 +145,6 @@ func serve(args []string, logger *slog.Logger) error {
 		MaxHeaderBytes:    1 << 20,
 	}
 
-	signalContext, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
 	shutdownDone := make(chan struct{})
 	go func() {
 		defer close(shutdownDone)

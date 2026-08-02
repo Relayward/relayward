@@ -99,6 +99,75 @@ export interface NodePluginInput {
   configuration?: Record<string, unknown>;
 }
 
+export interface PluginPermission {
+  name: string;
+  reason: string;
+}
+
+export interface PluginArtifact {
+  role: "center" | "node" | "ui";
+  file: string;
+  size: number;
+  sha256: string;
+  os?: string;
+  arch?: string;
+}
+
+export interface PluginManifest {
+  api_version: "relayward.plugin/v1";
+  id: string;
+  name: string;
+  version: string;
+  kind: "runtime" | "feature";
+  requires: {
+    control_api: number;
+    agent_api?: number;
+    ui_api?: number;
+  };
+  permissions: PluginPermission[];
+  artifacts: PluginArtifact[];
+}
+
+export interface PluginReleaseCandidate {
+  repository: string;
+  release_id: number;
+  tag: string;
+  manifest: PluginManifest;
+  update: boolean;
+}
+
+export interface PluginInstallation {
+  plugin_id: string;
+  repository: string;
+  kind: "runtime" | "feature";
+  desired_version: string;
+  active_version: string;
+  previous_version?: string;
+  manifest: PluginManifest;
+  approved_permissions: string[];
+  release_id: number;
+  state: "pending" | "installing" | "active" | "failed";
+  health: "healthy" | "unhealthy" | "unknown";
+  restart_count: number;
+  last_problem?: Problem;
+  last_started_at?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PluginReleaseInput {
+  repository: string;
+  version: string;
+  github_token?: string;
+  approved_permissions?: string[];
+}
+
+export interface PluginUpgradeInput {
+  version: string;
+  github_token?: string;
+  approved_permissions: string[];
+}
+
 export interface User {
   id: string;
   display_name: string;
@@ -197,7 +266,7 @@ interface FieldViolation {
   description: string;
 }
 
-interface Problem {
+export interface Problem {
   code: string;
   message: string;
   retryable: boolean;
@@ -313,6 +382,37 @@ export async function reconcileNodePlugin(nodeID: string, pluginID: string, inpu
   return request(`/api/v1/nodes/${encodeURIComponent(nodeID)}/plugins/${encodeURIComponent(pluginID)}`, {
     method: "PUT",
     body: JSON.stringify(input),
+  });
+}
+
+export async function inspectPluginRelease(input: Omit<PluginReleaseInput, "approved_permissions">): Promise<PluginReleaseCandidate> {
+  return request("/api/v1/plugins/inspect", { method: "POST", body: JSON.stringify(input) });
+}
+
+export async function listPluginInstallations(): Promise<PluginInstallation[]> {
+  const response = await request<{ items: PluginInstallation[] }>("/api/v1/plugins");
+  return response.items;
+}
+
+export async function installPlugin(input: PluginReleaseInput): Promise<PluginInstallation> {
+  return request("/api/v1/plugins", { method: "POST", body: JSON.stringify(input) });
+}
+
+export async function upgradePlugin(pluginID: string, input: PluginUpgradeInput): Promise<PluginInstallation> {
+  return request(`/api/v1/plugins/${encodeURIComponent(pluginID)}/upgrade`, {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export async function uninstallPlugin(pluginID: string): Promise<void> {
+  return request(`/api/v1/plugins/${encodeURIComponent(pluginID)}`, { method: "DELETE" });
+}
+
+export async function invokePluginUI<T>(pluginID: string, method: string, parameters: Record<string, unknown>): Promise<T> {
+  return request(`/api/v1/plugins/${encodeURIComponent(pluginID)}/ui/${encodeURIComponent(method)}`, {
+    method: "POST",
+    body: JSON.stringify(parameters),
   });
 }
 

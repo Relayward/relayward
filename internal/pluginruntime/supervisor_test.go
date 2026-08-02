@@ -1,0 +1,222 @@
+package pluginruntime
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
+	centerpluginv1 "github.com/Relayward/relayward-sdk/centerplugin/v1"
+	"github.com/Relayward/relayward-sdk/manifest"
+
+	"github.com/Relayward/relayward/internal/pluginartifact"
+	"github.com/Relayward/relayward/internal/store"
+)
+
+func TestSupervisorRunsRealPluginHostUIAndRestoresPreviousVersion(t *testing.T) {
+	root := shortRuntimeRoot(t)
+	database, err := store.Open(t.Context(), filepath.Join(root, "relayward.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	artifacts, err := pluginartifact.Open(filepath.Join(root, "plugins"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	if err := database.CreateNode(t.Context(), store.Node{ID: "node-1", Name: "Edge", Enabled: true}, now); err != nil {
+		t.Fatal(err)
+	}
+	version := installTestExecutable(t, artifacts, "1.2.3")
+	installation := store.PluginInstallation{
+		PluginID: version.PluginID, Repository: "https://github.com/Relayward/contract-plugin",
+		Kind: string(version.Manifest.Kind), DesiredVersion: version.Version,
+		ActiveVersion: version.Version, Manifest: version.Manifest,
+	}
+	if _, err := database.CommitPluginRelease(t.Context(), installation, version, nil, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.RecordPluginRuntimeStatus(t.Context(), version.PluginID, "failed", "unhealthy", 2, nil, now.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	supervisor, err := New(database, artifacts, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	supervisor.healthInterval = 20 * time.Millisecond
+	t.Setenv("RELAYWARD_TEST_SECRET", "must-not-be-inherited")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := supervisor.Start(ctx); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	raw, err := supervisor.InvokeUI(t.Context(), version.PluginID, "nodes.summary", []byte(`{}`))
+	if err != nil || string(raw) != `{"count":1}` {
+		t.Fatalf("InvokeUI() = %s, %v", raw, err)
+	}
+	recovered, err := database.PluginInstallationByID(t.Context(), version.PluginID)
+	if err != nil || recovered.State != "active" || recovered.Health != "healthy" || recovered.RestartCount != 2 {
+		t.Fatalf("recovered installation = %+v, %v", recovered, err)
+	}
+
+	incompatible := installTestExecutable(t, artifacts, "1.2.4")
+	switchContext, switchCancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer switchCancel()
+	if err := supervisor.Switch(switchContext, incompatible); err == nil || !strings.Contains(err.Error(), "identity") {
+		t.Fatalf("Switch() identity mismatch error = %v", err)
+	}
+	raw, err = supervisor.InvokeUI(t.Context(), version.PluginID, "nodes.summary", []byte(`{}`))
+	if err != nil || string(raw) != `{"count":1}` {
+		t.Fatalf("InvokeUI() after rollback = %s, %v", raw, err)
+	}
+	closeContext, closeCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer closeCancel()
+	if err := supervisor.Close(closeContext); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+}
+
+func TestSupervisorRetriesPreviousVersionAfterImmediateRestoreFailure(t *testing.T) {
+	root := shortRuntimeRoot(t)
+	database, err := store.Open(t.Context(), filepath.Join(root, "relayward.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	artifacts, err := pluginartifact.Open(filepath.Join(root, "plugins"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	previous := installTestExecutable(t, artifacts, "1.2.3")
+	installation := store.PluginInstallation{
+		PluginID: previous.PluginID, Repository: "https://github.com/Relayward/contract-plugin",
+		Kind: string(previous.Manifest.Kind), DesiredVersion: previous.Version,
+		ActiveVersion: previous.Version, Manifest: previous.Manifest,
+	}
+	if _, err := database.CommitPluginRelease(t.Context(), installation, previous, nil, now); err != nil {
+		t.Fatal(err)
+	}
+	supervisor, err := New(database, artifacts, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	supervisor.healthInterval = 20 * time.Millisecond
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := supervisor.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		closeContext, closeCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer closeCancel()
+		_ = supervisor.Close(closeContext)
+	}()
+
+	previousPaths, err := artifacts.Paths(previous.PluginID, previous.Version)
+	if err != nil {
+		t.Fatal(err)
+	}
+	original, err := os.ReadFile(previousPaths.Executable)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(previousPaths.Executable, previousPaths.Executable+".running"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(previousPaths.Executable, []byte("broken"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	incompatible := installTestExecutable(t, artifacts, "1.2.4")
+	switchContext, switchCancel := context.WithTimeout(t.Context(), 10*time.Second)
+	err = supervisor.Switch(switchContext, incompatible)
+	switchCancel()
+	if err == nil || !strings.Contains(err.Error(), "restore previous center plugin") {
+		t.Fatalf("Switch() restore error = %v", err)
+	}
+	if err := os.Remove(previousPaths.Executable); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(previousPaths.Executable, original, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		raw, invokeErr := supervisor.InvokeUI(t.Context(), previous.PluginID, "nodes.summary", []byte(`{}`))
+		if invokeErr == nil && string(raw) == `{"count":0}` {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("previous plugin did not recover: response = %s, error = %v", raw, invokeErr)
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+}
+
+func TestHostRequiresDeclaredPermission(t *testing.T) {
+	root := shortRuntimeRoot(t)
+	database, _ := store.Open(t.Context(), filepath.Join(root, "relayward.db"))
+	defer database.Close()
+	host := newHostService(database, nil)
+	if _, err := host.ListNodes(t.Context(), &centerpluginv1.ListNodesRequest{}); status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("ListNodes() permission error = %v", err)
+	}
+}
+
+func installTestExecutable(t *testing.T, artifacts *pluginartifact.Store, version string) store.PluginVersion {
+	t.Helper()
+	source, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := sha256.Sum256(raw)
+	paths, err := artifacts.Paths("io.relayward.contract-test", version)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(paths.Root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(paths.Root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(paths.Executable, raw, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	pluginManifest := manifest.Manifest{
+		APIVersion: "relayward.plugin/v1", ID: "io.relayward.contract-test", Name: "Contract test",
+		Version: version, Kind: manifest.KindFeature, Requires: manifest.Requirements{ControlAPI: 1},
+		Permissions: []manifest.Permission{{Name: centerpluginv1.PermissionNodesRead, Reason: "Exercise node access."}},
+		Artifacts: []manifest.Artifact{{
+			Role: manifest.ArtifactCenter, File: "center", Size: int64(len(raw)),
+			SHA256: hex.EncodeToString(digest[:]), OS: "linux", Arch: "amd64",
+		}},
+	}
+	return store.PluginVersion{
+		PluginID: pluginManifest.ID, Version: version, ReleaseID: 10, ReleaseTag: "v" + version,
+		Manifest: pluginManifest, ApprovedPermissions: []string{centerpluginv1.PermissionNodesRead}, CenterAssetID: 2,
+	}
+}
+
+func shortRuntimeRoot(t *testing.T) string {
+	t.Helper()
+	root, err := os.MkdirTemp("", "rwc-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	return root
+}

@@ -1,11 +1,15 @@
 import { type FormEvent, useEffect, useState } from "react";
-import { Settings2 } from "lucide-react";
+import { Plus, Settings2 } from "lucide-react";
 
 import {
   APIError,
+  listNodes,
+  listPluginInstallations,
   listNodePluginInstances,
   reconcileNodePlugin,
+  type Node,
   type NodePluginInstance,
+  type PluginInstallation,
   type PluginState,
 } from "../api";
 import { FormError } from "./AuthScreen";
@@ -13,19 +17,27 @@ import { Modal } from "./Modal";
 
 type DesiredState = Exclude<PluginState, "failed">;
 
-export function PluginInstancesView() {
+export function PluginInstancesView({ embedded = false }: { embedded?: boolean }) {
   const [items, setItems] = useState<NodePluginInstance[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string>();
   const [editing, setEditing] = useState<NodePluginInstance>();
+  const [creating, setCreating] = useState(false);
+  const [nodes, setNodes] = useState<Node[]>([]);
+  const [plugins, setPlugins] = useState<PluginInstallation[]>([]);
 
   useEffect(() => {
     let active = true;
     const refresh = async () => {
       try {
-        const values = await listNodePluginInstances();
+        const [values, nodeValues, pluginValues] = await Promise.all([
+          listNodePluginInstances(), listNodes(), listPluginInstallations(),
+        ]);
         if (active) {
           setItems(values);
+          setNodes(nodeValues.filter((node) => node.enabled && node.registered_at !== null &&
+            node.capabilities.includes("control.commands") && node.capabilities.includes("plugin.supervision")));
+          setPlugins(pluginValues.filter((plugin) => plugin.kind === "runtime" && plugin.state === "active"));
           setError(undefined);
         }
       } catch (cause) {
@@ -43,11 +55,20 @@ export function PluginInstancesView() {
   }, []);
 
   return (
-    <section aria-labelledby="plugins-title">
-      <div className="section-heading">
-        <div><p className="eyebrow">Runtime</p><h1 id="plugins-title">Node plugins</h1></div>
-      </div>
-      <FormError message={error} />
+    <section aria-labelledby={embedded ? "node-plugin-instances-title" : "plugins-title"}>
+      {embedded ? <h2 className="visually-hidden" id="node-plugin-instances-title">Node plugin instances</h2> : (
+        <div className="section-heading">
+          <div><p className="eyebrow">Runtime</p><h1 id="plugins-title">Node plugins</h1></div>
+        </div>
+      )}
+      {embedded ? (
+        <div className="subsection-actions">
+          <FormError message={error} />
+          <button className="primary-button compact button-with-icon" onClick={() => setCreating(true)} type="button">
+            <Plus size={17} />Configure plugin
+          </button>
+        </div>
+      ) : <FormError message={error} />}
       <div className="table-frame">
         <table className="resource-table plugin-table">
           <thead><tr><th>Plugin</th><th>Node</th><th>Desired</th><th>Actual</th><th>Generation</th><th>Health</th><th>Version</th><th>Delivery</th><th>Actions</th></tr></thead>
@@ -89,7 +110,99 @@ export function PluginInstancesView() {
           }}
         />
       ) : null}
+      {creating ? (
+        <NewPluginConfigurationDialog
+          nodes={nodes}
+          plugins={plugins}
+          existing={items}
+          onClose={() => setCreating(false)}
+          onSaved={(created) => {
+            setItems((current) => [...current, created].sort((left, right) =>
+              left.plugin_name.localeCompare(right.plugin_name) || left.node_name.localeCompare(right.node_name)));
+            setCreating(false);
+          }}
+        />
+      ) : null}
     </section>
+  );
+}
+
+function NewPluginConfigurationDialog({ nodes, plugins, existing, onClose, onSaved }: {
+  nodes: Node[];
+  plugins: PluginInstallation[];
+  existing: NodePluginInstance[];
+  onClose: () => void;
+  onSaved: (value: NodePluginInstance) => void;
+}) {
+  const available = plugins.flatMap((plugin) => nodes
+    .filter((node) => !existing.some((item) => item.node_id === node.id && item.plugin_id === plugin.plugin_id))
+    .map((node) => ({ node, plugin })));
+  const [selection, setSelection] = useState(available[0] ? `${available[0].node.id}\n${available[0].plugin.plugin_id}` : "");
+  const [state, setState] = useState<Exclude<DesiredState, "absent">>("running");
+  const [configuration, setConfiguration] = useState("{}");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string>();
+
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    const selected = available.find((item) => `${item.node.id}\n${item.plugin.plugin_id}` === selection);
+    if (selected === undefined) {
+      setError("No compatible node and plugin combination is available.");
+      return;
+    }
+    const parsed = parseConfiguration(configuration);
+    if (parsed === undefined) {
+      setError("Configuration must be a JSON object.");
+      return;
+    }
+    setBusy(true);
+    setError(undefined);
+    try {
+      onSaved(await reconcileNodePlugin(selected.node.id, selected.plugin.plugin_id, {
+        desired_state: state,
+        version: selected.plugin.active_version,
+        configuration: parsed,
+      }));
+    } catch (cause) {
+      setError(errorMessage(cause));
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Modal title="Configure node plugin" onClose={onClose}>
+      <form onSubmit={submit}>
+        <div className="dialog-fields">
+          <label className="field">
+            <span>Plugin and node</span>
+            <select value={selection} onChange={(event) => setSelection(event.target.value)} disabled={available.length === 0}>
+              {available.length === 0 ? <option value="">No compatible targets</option> : null}
+              {available.map((item) => (
+                <option key={`${item.node.id}:${item.plugin.plugin_id}`} value={`${item.node.id}\n${item.plugin.plugin_id}`}>
+                  {item.plugin.manifest.name} on {item.node.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="field">
+            <span>Desired state</span>
+            <select value={state} onChange={(event) => setState(event.target.value as Exclude<DesiredState, "absent">)}>
+              <option value="running">Running</option>
+              <option value="stopped">Stopped</option>
+            </select>
+          </label>
+          <label className="field">
+            <span>Configuration</span>
+            <textarea value={configuration} onChange={(event) => setConfiguration(event.target.value)} rows={8} spellCheck={false} required />
+          </label>
+        </div>
+        <FormError message={error} />
+        <div className="dialog-actions">
+          <button className="quiet-button" onClick={onClose} type="button">Cancel</button>
+          <button className="primary-button compact" disabled={busy || available.length === 0} type="submit">{busy ? "Queuing..." : "Configure"}</button>
+        </div>
+      </form>
+    </Modal>
   );
 }
 
@@ -109,13 +222,8 @@ function PluginConfigurationDialog({ value, onClose, onSaved }: {
     setError(undefined);
     let parsed: Record<string, unknown> | undefined;
     if (state !== "absent" && configuration.trim() !== "") {
-      try {
-        const candidate: unknown = JSON.parse(configuration);
-        if (typeof candidate !== "object" || candidate === null || Array.isArray(candidate)) {
-          throw new Error("configuration must be an object");
-        }
-        parsed = candidate as Record<string, unknown>;
-      } catch {
+      parsed = parseConfiguration(configuration);
+      if (parsed === undefined) {
         setError("Configuration must be a JSON object.");
         return;
       }
@@ -162,6 +270,16 @@ function PluginConfigurationDialog({ value, onClose, onSaved }: {
       </form>
     </Modal>
   );
+}
+
+function parseConfiguration(value: string): Record<string, unknown> | undefined {
+  try {
+    const candidate: unknown = JSON.parse(value);
+    if (typeof candidate !== "object" || candidate === null || Array.isArray(candidate)) return undefined;
+    return candidate as Record<string, unknown>;
+  } catch {
+    return undefined;
+  }
 }
 
 function StateStatus({ value }: { value: PluginState }) {

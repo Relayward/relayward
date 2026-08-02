@@ -1,6 +1,11 @@
 package management
 
-import "fmt"
+import (
+	"errors"
+	"fmt"
+)
+
+var ErrUpstreamUnavailable = errors.New("upstream service is unavailable")
 
 type FieldError struct {
 	Field       string

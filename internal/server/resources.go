@@ -239,6 +239,8 @@ func (server *Server) resourceError(w http.ResponseWriter, request *http.Request
 		writeProblem(w, http.StatusConflict, protocol.ErrorConflict, resource+" state changed before the operation completed.", true)
 	case errors.Is(err, secretbox.ErrUnavailable):
 		writeProblem(w, http.StatusServiceUnavailable, protocol.ErrorUnavailable, "Encrypted secrets are unavailable.", false)
+	case errors.Is(err, management.ErrUpstreamUnavailable):
+		writeProblem(w, http.StatusServiceUnavailable, protocol.ErrorUnavailable, resource+" is temporarily unavailable.", true)
 	default:
 		server.internalError(w, request, err)
 	}
