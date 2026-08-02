@@ -1,0 +1,7 @@
+/relayward
+/web/dist/
+/web/node_modules/
+*.db
+*.db-shm
+*.db-wal
+.env

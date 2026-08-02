@@ -1,0 +1,116 @@
+:root {
+  color: #1e2428;
+  background: #f4f6f7;
+  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+  font-synthesis: none;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+}
+
+.app-shell {
+  min-height: 100vh;
+}
+
+.topbar {
+  align-items: center;
+  background: #ffffff;
+  border-bottom: 1px solid #d8dddf;
+  display: flex;
+  height: 56px;
+  justify-content: space-between;
+  padding: 0 24px;
+}
+
+.environment {
+  color: #657177;
+  font-size: 13px;
+}
+
+main {
+  margin: 0 auto;
+  max-width: 960px;
+  padding: 32px 24px;
+}
+
+h1 {
+  font-size: 22px;
+  letter-spacing: 0;
+  margin: 0 0 24px;
+}
+
+.status-list {
+  background: #ffffff;
+  border: 1px solid #d8dddf;
+  border-radius: 6px;
+  margin: 0;
+}
+
+.status-list > div {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+  min-height: 52px;
+  padding: 0 16px;
+}
+
+.status-list > div + div {
+  border-top: 1px solid #e6e9ea;
+}
+
+dt {
+  color: #4f5a5f;
+}
+
+dd {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  margin: 0;
+}
+
+.status-dot {
+  border-radius: 50%;
+  height: 8px;
+  width: 8px;
+}
+
+.status-dot--loading {
+  background: #9a6700;
+}
+
+.status-dot--ready {
+  background: #238636;
+}
+
+.status-dot--error {
+  background: #cf222e;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    color: #edf1f2;
+    background: #161a1d;
+  }
+
+  .topbar,
+  .status-list {
+    background: #202529;
+    border-color: #394147;
+  }
+
+  .status-list > div + div {
+    border-color: #31383d;
+  }
+
+  dt,
+  .environment {
+    color: #aeb8bd;
+  }
+}
