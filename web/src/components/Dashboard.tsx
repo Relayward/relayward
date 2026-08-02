@@ -1,4 +1,5 @@
-import { type ReactNode, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
+import { Gauge, LogOut, Server, Shield, Users } from "lucide-react";
 import QRCode from "qrcode";
 
 import {
@@ -12,6 +13,8 @@ import {
 } from "../api";
 import type { SystemInfo } from "../system";
 import { Field, FormError } from "./AuthScreen";
+import { Modal } from "./Modal";
+import { NodesView, UsersView } from "./ResourceViews";
 
 interface DashboardProps {
   session: SessionInfo;
@@ -21,7 +24,7 @@ interface DashboardProps {
   onSessionRevoked: () => void;
 }
 
-type View = "system" | "security";
+type View = "system" | "nodes" | "users" | "security";
 
 export function Dashboard({ session, system, onLogout, onSessionChange, onSessionRevoked }: DashboardProps) {
   const [view, setView] = useState<View>("system");
@@ -61,18 +64,21 @@ export function Dashboard({ session, system, onLogout, onSessionChange, onSessio
         <div className="brand-lockup"><span className="brand-mark brand-mark--small">R</span><strong>Relayward</strong></div>
         <div className="header-actions">
           <span className="admin-name">{session.administrator.username}</span>
-          <button className="quiet-button" disabled={busy} onClick={signOut}>Sign out</button>
+          <button className="quiet-button button-with-icon" disabled={busy} onClick={signOut}><LogOut size={16} />Sign out</button>
         </div>
       </header>
       <div className="dashboard-body">
         <nav className="side-nav" aria-label="Administration">
-          <button className={view === "system" ? "active" : ""} onClick={() => setView("system")}>System</button>
-          <button className={view === "security" ? "active" : ""} onClick={() => setView("security")}>Security</button>
+          <button className={view === "system" ? "active" : ""} onClick={() => setView("system")}><Gauge size={17} />System</button>
+          <button className={view === "nodes" ? "active" : ""} onClick={() => setView("nodes")}><Server size={17} />Nodes</button>
+          <button className={view === "users" ? "active" : ""} onClick={() => setView("users")}><Users size={17} />Users</button>
+          <button className={view === "security" ? "active" : ""} onClick={() => setView("security")}><Shield size={17} />Security</button>
         </nav>
         <main className="dashboard-main">
-          {view === "system" ? (
-            <SystemView system={system} session={session} />
-          ) : (
+          {view === "system" ? <SystemView system={system} session={session} /> : null}
+          {view === "nodes" ? <NodesView /> : null}
+          {view === "users" ? <UsersView /> : null}
+          {view === "security" ? (
             <SecurityView
               session={session}
               busy={busy}
@@ -80,7 +86,7 @@ export function Dashboard({ session, system, onLogout, onSessionChange, onSessio
               onRegenerate={() => setSensitiveAction("regenerate")}
               onDisable={() => setSensitiveAction("disable")}
             />
-          )}
+          ) : null}
           <FormError message={error} />
         </main>
       </div>
@@ -276,19 +282,6 @@ function RecoveryCodesDialog({ codes, onClose }: { codes: string[]; onClose: () 
         <button className="primary-button compact" onClick={onClose}>Done</button>
       </div>
     </Modal>
-  );
-}
-
-function Modal({ title, children, onClose, dismissible = true }: { title: string; children: ReactNode; onClose: () => void; dismissible?: boolean }) {
-  return (
-    <div className="modal-backdrop" role="presentation" onMouseDown={(event) => {
-      if (dismissible && event.target === event.currentTarget) onClose();
-    }}>
-      <section className="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
-        <div className="modal-heading"><h2 id="modal-title">{title}</h2>{dismissible ? <button className="close-button" onClick={onClose} aria-label="Close">×</button> : null}</div>
-        {children}
-      </section>
-    </div>
   );
 }
 

@@ -20,6 +20,7 @@ import (
 
 	"github.com/Relayward/relayward-sdk/protocol"
 	"github.com/Relayward/relayward/internal/auth"
+	"github.com/Relayward/relayward/internal/management"
 	"github.com/Relayward/relayward/internal/secretbox"
 	"github.com/Relayward/relayward/internal/store"
 )
@@ -185,6 +186,84 @@ func TestTOTPHTTPFlow(t *testing.T) {
 	}
 }
 
+func TestNodeAndUserHTTPFlow(t *testing.T) {
+	handler, _ := newTestHandler(t)
+	sessionCookie, csrfCookie := setupCookies(t, handler)
+	jsonHeaders := map[string]string{"Content-Type": "application/json", "X-CSRF-Token": csrfCookie.Value}
+
+	unauthenticated := performRequest(handler, http.MethodGet, "/api/v1/nodes", nil, nil)
+	if unauthenticated.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated node list status = %d", unauthenticated.Code)
+	}
+	withoutCSRF := performRequest(handler, http.MethodPost, "/api/v1/nodes",
+		[]byte(`{"name":"Edge One"}`), map[string]string{"Content-Type": "application/json"}, sessionCookie)
+	if withoutCSRF.Code != http.StatusForbidden {
+		t.Fatalf("node creation without CSRF status = %d", withoutCSRF.Code)
+	}
+	createNode := performRequest(handler, http.MethodPost, "/api/v1/nodes",
+		[]byte(`{"name":"Edge One","public_address":"edge.example.com"}`), jsonHeaders, sessionCookie)
+	if createNode.Code != http.StatusCreated {
+		t.Fatalf("create node status = %d, body = %s", createNode.Code, createNode.Body.String())
+	}
+	var node nodeResponse
+	decodeResponse(t, createNode, &node)
+	if !node.Enabled || node.Name != "Edge One" {
+		t.Fatalf("created node = %+v", node)
+	}
+	duplicateNode := performRequest(handler, http.MethodPost, "/api/v1/nodes",
+		[]byte(`{"name":"edge one"}`), jsonHeaders, sessionCookie)
+	if duplicateNode.Code != http.StatusConflict {
+		t.Fatalf("duplicate node status = %d", duplicateNode.Code)
+	}
+	token := performRequest(handler, http.MethodPost, "/api/v1/nodes/"+node.ID+"/registration-tokens", nil,
+		map[string]string{"X-CSRF-Token": csrfCookie.Value}, sessionCookie)
+	if token.Code != http.StatusCreated {
+		t.Fatalf("registration token status = %d, body = %s", token.Code, token.Body.String())
+	}
+	var tokenBody map[string]any
+	decodeResponse(t, token, &tokenBody)
+	if value, ok := tokenBody["token"].(string); !ok || !strings.HasPrefix(value, "rwr_") {
+		t.Fatalf("registration token response = %+v", tokenBody)
+	}
+	updateNode := performRequest(handler, http.MethodPut, "/api/v1/nodes/"+node.ID,
+		[]byte(`{"name":"Edge Renamed","public_address":"","enabled":false}`), jsonHeaders, sessionCookie)
+	if updateNode.Code != http.StatusOK {
+		t.Fatalf("update node status = %d, body = %s", updateNode.Code, updateNode.Body.String())
+	}
+
+	invalidUser := performRequest(handler, http.MethodPost, "/api/v1/users",
+		[]byte(`{"display_name":"Alice","email":"not-an-email","telegram":null,"note":""}`), jsonHeaders, sessionCookie)
+	if invalidUser.Code != http.StatusBadRequest {
+		t.Fatalf("invalid user status = %d", invalidUser.Code)
+	}
+	var invalidProblem protocol.Problem
+	decodeResponse(t, invalidUser, &invalidProblem)
+	if len(invalidProblem.Violations) != 1 || invalidProblem.Violations[0].Field != "email" {
+		t.Fatalf("invalid user problem = %+v", invalidProblem)
+	}
+	createUser := performRequest(handler, http.MethodPost, "/api/v1/users",
+		[]byte(`{"display_name":"Alice","email":"alice@example.com","telegram":"@alice","note":"customer"}`), jsonHeaders, sessionCookie)
+	if createUser.Code != http.StatusCreated {
+		t.Fatalf("create user status = %d, body = %s", createUser.Code, createUser.Body.String())
+	}
+	var user userResponse
+	decodeResponse(t, createUser, &user)
+	listUsers := performRequest(handler, http.MethodGet, "/api/v1/users", nil, nil, sessionCookie)
+	if listUsers.Code != http.StatusOK || !strings.Contains(listUsers.Body.String(), user.ID) {
+		t.Fatalf("list users status = %d, body = %s", listUsers.Code, listUsers.Body.String())
+	}
+	deleteUser := performRequest(handler, http.MethodDelete, "/api/v1/users/"+user.ID, nil,
+		map[string]string{"X-CSRF-Token": csrfCookie.Value}, sessionCookie)
+	if deleteUser.Code != http.StatusNoContent {
+		t.Fatalf("delete user status = %d", deleteUser.Code)
+	}
+	deleteNode := performRequest(handler, http.MethodDelete, "/api/v1/nodes/"+node.ID, nil,
+		map[string]string{"X-CSRF-Token": csrfCookie.Value}, sessionCookie)
+	if deleteNode.Code != http.StatusNoContent {
+		t.Fatalf("delete node status = %d", deleteNode.Code)
+	}
+}
+
 func newTestHandler(t *testing.T) (http.Handler, *store.Store) {
 	t.Helper()
 	directory := t.TempDir()
@@ -202,7 +281,7 @@ func newTestHandler(t *testing.T) (http.Handler, *store.Store) {
 		t.Fatalf("auth.NewService() error = %v", err)
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	return New(Options{Version: "test", Store: database, Auth: authentication, Secrets: secrets, Logger: logger}), database
+	return New(Options{Version: "test", Store: database, Auth: authentication, Management: management.NewService(database), Secrets: secrets, Logger: logger}), database
 }
 
 func performRequest(handler http.Handler, method, path string, body []byte, headers map[string]string, cookies ...*http.Cookie) *httptest.ResponseRecorder {
@@ -234,6 +313,17 @@ func cookieByName(t *testing.T, cookies []*http.Cookie, name string) *http.Cooki
 	}
 	t.Fatalf("cookie %q not found", name)
 	return nil
+}
+
+func setupCookies(t *testing.T, handler http.Handler) (*http.Cookie, *http.Cookie) {
+	t.Helper()
+	setup := performRequest(handler, http.MethodPost, "/api/v1/setup",
+		[]byte(`{"username":"admin","password":"correct horse battery staple"}`),
+		map[string]string{"Content-Type": "application/json"})
+	if setup.Code != http.StatusCreated {
+		t.Fatalf("setup status = %d, body = %s", setup.Code, setup.Body.String())
+	}
+	return cookieByName(t, setup.Result().Cookies(), sessionCookieName), cookieByName(t, setup.Result().Cookies(), csrfCookieName)
 }
 
 func testTOTPCode(t *testing.T, secret string, now time.Time) string {

@@ -13,6 +13,7 @@ import (
 
 	"github.com/Relayward/relayward-sdk/protocol"
 	"github.com/Relayward/relayward/internal/auth"
+	"github.com/Relayward/relayward/internal/management"
 	"github.com/Relayward/relayward/internal/secretbox"
 	"github.com/Relayward/relayward/internal/store"
 )
@@ -27,6 +28,7 @@ type Options struct {
 	Version      string
 	Store        *store.Store
 	Auth         *auth.Service
+	Management   *management.Service
 	Secrets      *secretbox.Manager
 	Logger       *slog.Logger
 	SecureCookie bool
@@ -36,6 +38,7 @@ type Server struct {
 	version      string
 	store        *store.Store
 	auth         *auth.Service
+	management   *management.Service
 	secrets      *secretbox.Manager
 	logger       *slog.Logger
 	secureCookie bool
@@ -53,6 +56,7 @@ func New(options Options) http.Handler {
 		version:      options.Version,
 		store:        options.Store,
 		auth:         options.Auth,
+		management:   options.Management,
 		secrets:      options.Secrets,
 		logger:       options.Logger,
 		secureCookie: options.SecureCookie,
@@ -74,6 +78,17 @@ func New(options Options) http.Handler {
 	mux.HandleFunc("POST /api/v1/auth/totp/enable", server.withAuthentication(server.withCSRF(server.enableTOTP)))
 	mux.HandleFunc("POST /api/v1/auth/totp/disable", server.withAuthentication(server.withCSRF(server.disableTOTP)))
 	mux.HandleFunc("POST /api/v1/auth/recovery-codes/regenerate", server.withAuthentication(server.withCSRF(server.regenerateRecoveryCodes)))
+	mux.HandleFunc("GET /api/v1/nodes", server.withAuthentication(server.listNodes))
+	mux.HandleFunc("POST /api/v1/nodes", server.withAuthentication(server.withCSRF(server.createNode)))
+	mux.HandleFunc("GET /api/v1/nodes/{node_id}", server.withAuthentication(server.getNode))
+	mux.HandleFunc("PUT /api/v1/nodes/{node_id}", server.withAuthentication(server.withCSRF(server.updateNode)))
+	mux.HandleFunc("DELETE /api/v1/nodes/{node_id}", server.withAuthentication(server.withCSRF(server.deleteNode)))
+	mux.HandleFunc("POST /api/v1/nodes/{node_id}/registration-tokens", server.withAuthentication(server.withCSRF(server.createNodeRegistrationToken)))
+	mux.HandleFunc("GET /api/v1/users", server.withAuthentication(server.listUsers))
+	mux.HandleFunc("POST /api/v1/users", server.withAuthentication(server.withCSRF(server.createUser)))
+	mux.HandleFunc("GET /api/v1/users/{user_id}", server.withAuthentication(server.getUser))
+	mux.HandleFunc("PUT /api/v1/users/{user_id}", server.withAuthentication(server.withCSRF(server.updateUser)))
+	mux.HandleFunc("DELETE /api/v1/users/{user_id}", server.withAuthentication(server.withCSRF(server.deleteUser)))
 	return server.securityHeaders(mux)
 }
 

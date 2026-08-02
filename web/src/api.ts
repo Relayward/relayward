@@ -20,6 +20,45 @@ export interface RecoveryCodes {
   recovery_codes: string[];
 }
 
+export interface Node {
+  id: string;
+  name: string;
+  public_address: string;
+  enabled: boolean;
+  registered_at: string | null;
+  last_seen_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface NodeInput {
+  name: string;
+  public_address: string;
+  enabled: boolean;
+}
+
+export interface NodeRegistrationToken {
+  token: string;
+  expires_at: string;
+}
+
+export interface User {
+  id: string;
+  display_name: string;
+  email: string | null;
+  telegram: string | null;
+  note: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface UserInput {
+  display_name: string;
+  email: string | null;
+  telegram: string | null;
+  note: string;
+}
+
 interface FieldViolation {
   field: string;
   description: string;
@@ -93,6 +132,44 @@ export async function regenerateRecoveryCodes(password: string, secondFactor: st
     method: "POST",
     body: JSON.stringify({ password, second_factor: secondFactor }),
   });
+}
+
+export async function listNodes(): Promise<Node[]> {
+  const response = await request<{ items: Node[] }>("/api/v1/nodes");
+  return response.items;
+}
+
+export async function createNode(input: NodeInput): Promise<Node> {
+  return request("/api/v1/nodes", { method: "POST", body: JSON.stringify(input) });
+}
+
+export async function updateNode(id: string, input: NodeInput): Promise<Node> {
+  return request(`/api/v1/nodes/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify(input) });
+}
+
+export async function deleteNode(id: string): Promise<void> {
+  return request(`/api/v1/nodes/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
+export async function createNodeRegistrationToken(id: string): Promise<NodeRegistrationToken> {
+  return request(`/api/v1/nodes/${encodeURIComponent(id)}/registration-tokens`, { method: "POST" });
+}
+
+export async function listUsers(): Promise<User[]> {
+  const response = await request<{ items: User[] }>("/api/v1/users");
+  return response.items;
+}
+
+export async function createUser(input: UserInput): Promise<User> {
+  return request("/api/v1/users", { method: "POST", body: JSON.stringify(input) });
+}
+
+export async function updateUser(id: string, input: UserInput): Promise<User> {
+  return request(`/api/v1/users/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify(input) });
+}
+
+export async function deleteUser(id: string): Promise<void> {
+  return request(`/api/v1/users/${encodeURIComponent(id)}`, { method: "DELETE" });
 }
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {

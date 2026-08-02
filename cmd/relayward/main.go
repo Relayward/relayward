@@ -16,6 +16,7 @@ import (
 
 	"github.com/Relayward/relayward/internal/auth"
 	"github.com/Relayward/relayward/internal/buildinfo"
+	"github.com/Relayward/relayward/internal/management"
 	"github.com/Relayward/relayward/internal/secretbox"
 	"github.com/Relayward/relayward/internal/server"
 	"github.com/Relayward/relayward/internal/store"
@@ -90,6 +91,7 @@ func serve(args []string, logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	manager := management.NewService(database)
 
 	httpServer := &http.Server{
 		Addr: *listen,
@@ -97,6 +99,7 @@ func serve(args []string, logger *slog.Logger) error {
 			Version:      buildinfo.Version,
 			Store:        database,
 			Auth:         authentication,
+			Management:   manager,
 			Secrets:      secrets,
 			Logger:       logger,
 			SecureCookie: !*insecureCookie,
