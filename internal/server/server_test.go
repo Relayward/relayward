@@ -413,6 +413,13 @@ func TestAgentRegistrationControlAndDuplicateSession(t *testing.T) {
 	if reused.Code != http.StatusUnauthorized {
 		t.Fatalf("reused registration token status = %d", reused.Code)
 	}
+	now := time.Now().UTC()
+	heartbeatOnlyCommand, err := database.CreateAgentCommand(context.Background(), "heartbeat-only-command", node.ID, agentv1.Command{
+		Kind: "agent.test", IssuedAt: now, ExpiresAt: now.Add(time.Hour), Payload: json.RawMessage(`{}`),
+	}, now)
+	if err != nil {
+		t.Fatalf("create command for capability gate: %v", err)
+	}
 
 	server := httptest.NewServer(handler)
 	defer server.Close()
@@ -436,6 +443,13 @@ func TestAgentRegistrationControlAndDuplicateSession(t *testing.T) {
 	ackPayload, err := agentv1.DecodeEnvelopePayload[agentv1.HeartbeatAck](ack)
 	if err != nil || ackPayload.MessageID != heartbeat.ID {
 		t.Fatalf("heartbeat acknowledgement = %+v, %v", ackPayload, err)
+	}
+	if ackPayload.Command != nil {
+		t.Fatal("heartbeat-only Agent received a command")
+	}
+	storedCommand, err := database.AgentCommandByID(context.Background(), heartbeatOnlyCommand.ID)
+	if err != nil || storedCommand.Attempts != 0 {
+		t.Fatalf("command behind capability gate = %+v, %v", storedCommand, err)
 	}
 	stored, err := database.NodeByID(context.Background(), node.ID)
 	if err != nil || stored.LastSeenAt == nil || stored.AgentVersion != "0.1.1" {
@@ -475,7 +489,104 @@ func TestAgentRegistrationControlAndDuplicateSession(t *testing.T) {
 	}
 }
 
+func TestAgentCommandDispatchResultAndReplay(t *testing.T) {
+	handler, database := newTestHandler(t)
+	identity, nodeID := registerTestAgent(t, handler, []string{
+		agentv1.CapabilityControlCommands,
+		agentv1.CapabilityControlHeartbeat,
+	})
+	now := time.Now().UTC()
+	request := agentv1.Command{
+		Kind: "agent.test", IssuedAt: now, ExpiresAt: now.Add(time.Hour), Payload: json.RawMessage(`{"value":1}`),
+	}
+	command, err := database.CreateAgentCommand(context.Background(), "command-1", nodeID, request, now)
+	if err != nil {
+		t.Fatalf("CreateAgentCommand() error = %v", err)
+	}
+
+	testServer := httptest.NewServer(handler)
+	defer testServer.Close()
+	connection := connectTestAgentWithCapabilities(t, testServer.URL, identity, "0.1.0", []string{
+		agentv1.CapabilityControlCommands,
+		agentv1.CapabilityControlHeartbeat,
+	})
+	defer connection.Close()
+	centerHello := readTestAgentEnvelope(t, connection)
+	session, err := agentv1.DecodeEnvelopePayload[agentv1.CenterHello](centerHello)
+	if err != nil {
+		t.Fatalf("decode center hello: %v", err)
+	}
+
+	heartbeat, err := agentv1.NewEnvelope(agentv1.MessageAgentHeartbeat, agentv1.Heartbeat{
+		SessionID: session.SessionID, AgentVersion: "0.1.0", ObservedAt: time.Now().UTC(),
+	})
+	if err != nil || connection.WriteJSON(heartbeat) != nil {
+		t.Fatalf("send heartbeat: %v", err)
+	}
+	heartbeatAck := readTestAgentEnvelope(t, connection)
+	ackPayload, err := agentv1.DecodeEnvelopePayload[agentv1.HeartbeatAck](heartbeatAck)
+	if err != nil || ackPayload.Command == nil {
+		t.Fatalf("heartbeat acknowledgement = %+v, %v", ackPayload, err)
+	}
+	dispatched, err := agentv1.DecodeEnvelopePayload[agentv1.Command](*ackPayload.Command)
+	if err != nil || ackPayload.Command.IdempotencyKey != command.ID {
+		t.Fatalf("dispatched command = %+v, payload = %+v, %v", ackPayload.Command, dispatched, err)
+	}
+	digest, err := agentv1.CommandDigest(dispatched)
+	if err != nil || digest != command.RequestSHA256 {
+		t.Fatalf("dispatched command digest = %q, %v", digest, err)
+	}
+
+	resultEnvelope, err := agentv1.NewCommandResultEnvelope(agentv1.CommandResult{
+		CommandID: command.ID, RequestSHA256: command.RequestSHA256, Status: agentv1.CommandStatusSucceeded,
+		CompletedAt: time.Now().UTC(), Output: json.RawMessage(`{"applied":true}`),
+	})
+	if err != nil || connection.WriteJSON(resultEnvelope) != nil {
+		t.Fatalf("send command result: %v", err)
+	}
+	resultAck := readTestAgentEnvelope(t, connection)
+	if resultAck.Type != agentv1.MessageCenterCommandResultAck || resultAck.CorrelationID != resultEnvelope.ID {
+		t.Fatalf("command result acknowledgement = %+v", resultAck)
+	}
+	if err := connection.WriteJSON(resultEnvelope); err != nil {
+		t.Fatalf("replay command result: %v", err)
+	}
+	replayAck := readTestAgentEnvelope(t, connection)
+	if replayAck.Type != agentv1.MessageCenterCommandResultAck || replayAck.CorrelationID != resultEnvelope.ID {
+		t.Fatalf("replayed result acknowledgement = %+v", replayAck)
+	}
+
+	stored, err := database.AgentCommandByID(context.Background(), command.ID)
+	if err != nil || stored.Status != store.AgentCommandSucceeded || stored.Attempts != 1 || stored.Result == nil {
+		t.Fatalf("stored command = %+v, %v", stored, err)
+	}
+	secondHeartbeat, _ := agentv1.NewEnvelope(agentv1.MessageAgentHeartbeat, agentv1.Heartbeat{
+		SessionID: session.SessionID, AgentVersion: "0.1.0", ObservedAt: time.Now().UTC(),
+	})
+	if err := connection.WriteJSON(secondHeartbeat); err != nil {
+		t.Fatalf("send second heartbeat: %v", err)
+	}
+	secondAck := readTestAgentEnvelope(t, connection)
+	secondPayload, err := agentv1.DecodeEnvelopePayload[agentv1.HeartbeatAck](secondAck)
+	if err != nil || secondPayload.Command != nil {
+		t.Fatalf("second heartbeat acknowledgement = %+v, %v", secondPayload, err)
+	}
+}
+
+func TestAgentCommandCapabilityGate(t *testing.T) {
+	if hasAgentCapability([]string{agentv1.CapabilityControlHeartbeat}, agentv1.CapabilityControlCommands) {
+		t.Fatal("heartbeat-only Agent was treated as command capable")
+	}
+	if !hasAgentCapability([]string{agentv1.CapabilityControlCommands}, agentv1.CapabilityControlCommands) {
+		t.Fatal("command-capable Agent was rejected")
+	}
+}
+
 func connectTestAgent(t *testing.T, serverURL string, identity agentv1.RegisterResponse, version string) *websocket.Conn {
+	return connectTestAgentWithCapabilities(t, serverURL, identity, version, []string{agentv1.CapabilityControlHeartbeat})
+}
+
+func connectTestAgentWithCapabilities(t *testing.T, serverURL string, identity agentv1.RegisterResponse, version string, capabilities []string) *websocket.Conn {
 	t.Helper()
 	url := "ws" + strings.TrimPrefix(serverURL, "http") + "/api/v1/agent/connect/" + identity.NodeID
 	headers := http.Header{"Authorization": []string{"Bearer " + identity.Credential}}
@@ -488,7 +599,7 @@ func connectTestAgent(t *testing.T, serverURL string, identity agentv1.RegisterR
 	}
 	hello, err := agentv1.NewEnvelope(agentv1.MessageAgentHello, agentv1.AgentHello{
 		NodeID: identity.NodeID, AgentVersion: version, StartedAt: time.Now().UTC(),
-		Capabilities: []string{"control.heartbeat"},
+		Capabilities: capabilities,
 	})
 	if err != nil {
 		connection.Close()
@@ -499,6 +610,39 @@ func connectTestAgent(t *testing.T, serverURL string, identity agentv1.RegisterR
 		t.Fatalf("write Agent hello: %v", err)
 	}
 	return connection
+}
+
+func registerTestAgent(t *testing.T, handler http.Handler, capabilities []string) (agentv1.RegisterResponse, string) {
+	t.Helper()
+	sessionCookie, csrfCookie := setupCookies(t, handler)
+	headers := map[string]string{"Content-Type": "application/json", "X-CSRF-Token": csrfCookie.Value}
+	nodeRequest := performRequest(handler, http.MethodPost, "/api/v1/nodes", []byte(`{"name":"Edge"}`), headers, sessionCookie)
+	if nodeRequest.Code != http.StatusCreated {
+		t.Fatalf("create node status = %d, body = %s", nodeRequest.Code, nodeRequest.Body.String())
+	}
+	var node nodeResponse
+	decodeResponse(t, nodeRequest, &node)
+	tokenRequest := performRequest(handler, http.MethodPost, "/api/v1/nodes/"+node.ID+"/registration-tokens", nil,
+		map[string]string{"X-CSRF-Token": csrfCookie.Value}, sessionCookie)
+	var token struct {
+		Value string `json:"token"`
+	}
+	decodeResponse(t, tokenRequest, &token)
+	body, err := json.Marshal(agentv1.RegisterRequest{
+		APIVersion: agentv1.APIVersion, Token: token.Value, AgentVersion: "0.1.0",
+		Hostname: "edge-one", OS: "linux", Arch: "amd64", Capabilities: capabilities,
+	})
+	if err != nil {
+		t.Fatalf("marshal registration request: %v", err)
+	}
+	registration := performRequest(handler, http.MethodPost, "/api/v1/agent/register", body,
+		map[string]string{"Content-Type": "application/json"})
+	if registration.Code != http.StatusCreated {
+		t.Fatalf("Agent registration status = %d, body = %s", registration.Code, registration.Body.String())
+	}
+	var identity agentv1.RegisterResponse
+	decodeResponse(t, registration, &identity)
+	return identity, node.ID
 }
 
 func readTestAgentEnvelope(t *testing.T, connection *websocket.Conn) protocol.Envelope {

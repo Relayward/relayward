@@ -66,3 +66,15 @@ func (service *Service) RecordAgentHeartbeat(ctx context.Context, nodeID string,
 	}
 	return service.store.RecordAgentHeartbeat(ctx, nodeID, credentialHash, heartbeat.AgentVersion, receivedAt)
 }
+
+func (service *Service) NextAgentCommand(ctx context.Context, nodeID string, now time.Time) (store.AgentCommand, error) {
+	return service.store.NextAgentCommand(ctx, nodeID, now)
+}
+
+func (service *Service) MarkAgentCommandSent(ctx context.Context, commandID, nodeID string, sentAt time.Time) error {
+	return service.store.MarkAgentCommandSent(ctx, commandID, nodeID, sentAt)
+}
+
+func (service *Service) CompleteAgentCommand(ctx context.Context, nodeID string, credentialHash []byte, result agentv1.CommandResult, receivedAt time.Time) error {
+	return service.store.CompleteAgentCommand(ctx, nodeID, credentialHash, result, receivedAt)
+}

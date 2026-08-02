@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,6 +15,8 @@ import (
 
 	agentv1 "github.com/Relayward/relayward-sdk/agent/v1"
 	"github.com/Relayward/relayward-sdk/protocol"
+
+	"github.com/Relayward/relayward/internal/store"
 )
 
 const agentHandshakeTimeout = 20 * time.Second
@@ -144,41 +147,107 @@ func (server *Server) connectAgent(w http.ResponseWriter, request *http.Request)
 		return
 	}
 
+	commandsEnabled := hasAgentCapability(hello.Capabilities, agentv1.CapabilityControlCommands)
+	lastHeartbeat := time.Now().UTC()
 	for {
-		if err := connection.SetReadDeadline(time.Now().Add(3 * agentv1.DefaultHeartbeatInterval)); err != nil {
+		if err := connection.SetReadDeadline(lastHeartbeat.Add(3 * agentv1.DefaultHeartbeatInterval)); err != nil {
 			return
 		}
 		envelope, err := readAgentEnvelope(connection)
 		if err != nil {
 			return
 		}
-		if envelope.Type != agentv1.MessageAgentHeartbeat {
+		switch envelope.Type {
+		case agentv1.MessageAgentHeartbeat:
+			if !server.handleAgentHeartbeat(request.Context(), connection, node.ID, node.CredentialHash, sessionID, commandsEnabled, envelope) {
+				return
+			}
+			lastHeartbeat = time.Now().UTC()
+		case agentv1.MessageAgentCommandResult:
+			if !commandsEnabled || !server.handleAgentCommandResult(request.Context(), connection, node.ID, node.CredentialHash, sessionID, envelope) {
+				return
+			}
+		default:
 			server.closeAgentProtocol(connection, protocol.ErrorInvalidArgument, "Unexpected Agent message.")
 			return
 		}
-		heartbeat, err := agentv1.DecodeEnvelopePayload[agentv1.Heartbeat](envelope)
-		if err != nil || heartbeat.SessionID != sessionID {
-			server.closeAgentProtocol(connection, protocol.ErrorInvalidArgument, "Invalid Agent heartbeat.")
-			return
-		}
-		receivedAt := time.Now().UTC()
-		err = server.agentSessions.withActive(node.ID, sessionID, func() error {
-			return server.management.RecordAgentHeartbeat(request.Context(), node.ID, node.CredentialHash, heartbeat, receivedAt)
-		})
-		if err != nil {
-			return
-		}
-		ack, err := agentv1.NewEnvelope(agentv1.MessageCenterHeartbeatAck, agentv1.HeartbeatAck{
-			MessageID: envelope.ID, ServerTime: receivedAt,
-		})
-		if err != nil {
-			return
-		}
-		ack.CorrelationID = envelope.ID
-		if err := writeAgentEnvelope(connection, ack); err != nil {
-			return
+	}
+}
+
+func (server *Server) handleAgentHeartbeat(ctx context.Context, connection *websocket.Conn, nodeID string, credentialHash []byte, sessionID string, commandsEnabled bool, envelope protocol.Envelope) bool {
+	heartbeat, err := agentv1.DecodeEnvelopePayload[agentv1.Heartbeat](envelope)
+	if err != nil || heartbeat.SessionID != sessionID {
+		server.closeAgentProtocol(connection, protocol.ErrorInvalidArgument, "Invalid Agent heartbeat.")
+		return false
+	}
+	receivedAt := time.Now().UTC()
+	err = server.agentSessions.withActive(nodeID, sessionID, func() error {
+		return server.management.RecordAgentHeartbeat(ctx, nodeID, credentialHash, heartbeat, receivedAt)
+	})
+	if err != nil {
+		return false
+	}
+
+	ackPayload := agentv1.HeartbeatAck{MessageID: envelope.ID, ServerTime: receivedAt}
+	if commandsEnabled {
+		command, err := server.management.NextAgentCommand(ctx, nodeID, receivedAt)
+		switch {
+		case err == nil:
+			commandEnvelope, envelopeErr := agentv1.NewCommandEnvelope(command.ID, command.Request)
+			if envelopeErr != nil {
+				return false
+			}
+			if err := server.management.MarkAgentCommandSent(ctx, command.ID, nodeID, receivedAt); err != nil {
+				return false
+			}
+			ackPayload.Command = &commandEnvelope
+		case errors.Is(err, store.ErrNotFound):
+		default:
+			return false
 		}
 	}
+	ack, err := agentv1.NewEnvelope(agentv1.MessageCenterHeartbeatAck, ackPayload)
+	if err != nil {
+		return false
+	}
+	ack.CorrelationID = envelope.ID
+	return writeAgentEnvelope(connection, ack) == nil
+}
+
+func (server *Server) handleAgentCommandResult(ctx context.Context, connection *websocket.Conn, nodeID string, credentialHash []byte, sessionID string, envelope protocol.Envelope) bool {
+	result, err := agentv1.DecodeEnvelopePayload[agentv1.CommandResult](envelope)
+	if err != nil {
+		server.closeAgentProtocol(connection, protocol.ErrorInvalidArgument, "Invalid Agent command result.")
+		return false
+	}
+	receivedAt := time.Now().UTC()
+	err = server.agentSessions.withActive(nodeID, sessionID, func() error {
+		return server.management.CompleteAgentCommand(ctx, nodeID, credentialHash, result, receivedAt)
+	})
+	if err != nil {
+		code := protocol.ErrorConflict
+		if errors.Is(err, store.ErrNotFound) {
+			code = protocol.ErrorNotFound
+		}
+		server.closeAgentProtocol(connection, code, "Agent command result was rejected.")
+		return false
+	}
+	ack, err := agentv1.NewCommandResultAckEnvelope(envelope.ID, agentv1.CommandResultAck{
+		CommandID: result.CommandID, RequestSHA256: result.RequestSHA256, ServerTime: receivedAt,
+	})
+	if err != nil {
+		return false
+	}
+	return writeAgentEnvelope(connection, ack) == nil
+}
+
+func hasAgentCapability(capabilities []string, expected string) bool {
+	for _, capability := range capabilities {
+		if capability == expected {
+			return true
+		}
+	}
+	return false
 }
 
 func readAgentEnvelope(connection *websocket.Conn) (protocol.Envelope, error) {

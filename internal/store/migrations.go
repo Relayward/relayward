@@ -204,6 +204,27 @@ ALTER TABLE nodes ADD COLUMN agent_arch TEXT NOT NULL DEFAULT '';
 ALTER TABLE nodes ADD COLUMN agent_capabilities_json TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(agent_capabilities_json));
 `,
 	},
+	{
+		version: 4,
+		sql: `
+CREATE TABLE agent_commands (
+    id TEXT PRIMARY KEY,
+    node_id TEXT NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL,
+    request_json TEXT NOT NULL CHECK (json_valid(request_json)),
+    request_sha256 TEXT NOT NULL CHECK (length(request_sha256) = 64),
+    status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'succeeded', 'failed', 'expired')),
+    attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+    last_sent_at INTEGER,
+    result_json TEXT CHECK (result_json IS NULL OR json_valid(result_json)),
+    completed_at INTEGER,
+    expires_at INTEGER NOT NULL,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+CREATE INDEX agent_commands_dispatch_idx ON agent_commands(node_id, status, created_at, id);
+`,
+	},
 }
 
 func migrate(ctx context.Context, db *sql.DB) error {
