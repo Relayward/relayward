@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Download } from "lucide-react";
 
 import { APIError, getSubscription, type SubscriptionInfo } from "../api";
 
@@ -45,7 +46,22 @@ export function SubscriptionPage({ token }: { token: string }) {
       <section className="subscription-services" aria-labelledby="services-title">
         <h2 id="services-title">Services</h2>
         {subscription.services.length === 0 ? <p className="empty-service">No services available.</p> : null}
+        {subscription.services.length > 0 ? (
+          <ul>{subscription.services.map((service) => (
+            <li key={`${service.plugin_id}/${service.service_id}`}>
+              <strong>{service.display_name}</strong>
+              <span>{service.plugin_id} / {service.service_id}</span>
+            </li>
+          ))}</ul>
+        ) : null}
       </section>
+      {subscription.status === "active" && subscription.services.length > 0 ? (
+        <section className="subscription-downloads" aria-label="Downloads">
+          <DownloadLink href={downloadURL(token, "base64")} label="Base64" />
+          <DownloadLink href={downloadURL(token, "mihomo.yaml")} label="Mihomo" />
+          <DownloadLink href={downloadURL(token, "sing-box.json")} label="sing-box" />
+        </section>
+      ) : null}
     </main>
   );
 }
@@ -60,7 +76,16 @@ function statusLabel(status: SubscriptionInfo["status"]): string {
     case "disabled": return "Disabled";
     case "expired": return "Expired";
     case "node_disabled": return "Node disabled";
+    case "quota_exceeded": return "Quota reached";
   }
+}
+
+function DownloadLink({ href, label }: { href: string; label: string }) {
+  return <a className="secondary-button button-with-icon" href={href} download><Download size={16} />{label}</a>;
+}
+
+function downloadURL(token: string, format: string): string {
+  return `/api/v1/subscriptions/${encodeURIComponent(token)}/${format}`;
 }
 
 function formatBytes(value: number): string {

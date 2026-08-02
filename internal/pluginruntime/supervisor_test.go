@@ -15,6 +15,7 @@ import (
 
 	centerpluginv1 "github.com/Relayward/relayward-sdk/centerplugin/v1"
 	"github.com/Relayward/relayward-sdk/manifest"
+	"github.com/Relayward/relayward-sdk/protocol"
 
 	"github.com/Relayward/relayward/internal/pluginartifact"
 	"github.com/Relayward/relayward/internal/store"
@@ -166,9 +167,54 @@ func TestHostRequiresDeclaredPermission(t *testing.T) {
 	root := shortRuntimeRoot(t)
 	database, _ := store.Open(t.Context(), filepath.Join(root, "relayward.db"))
 	defer database.Close()
-	host := newHostService(database, nil)
+	host := newHostService(database, "io.relayward.test", nil)
 	if _, err := host.ListNodes(t.Context(), &centerpluginv1.ListNodesRequest{}); status.Code(err) != codes.PermissionDenied {
 		t.Fatalf("ListNodes() permission error = %v", err)
+	}
+}
+
+type hostDatabaseStub struct {
+	pluginID string
+	nodeID   string
+	services []store.PluginService
+}
+
+func (*hostDatabaseStub) ListPluginInstallations(context.Context) ([]store.PluginInstallation, error) {
+	return nil, nil
+}
+func (*hostDatabaseStub) PluginVersionByID(context.Context, string, string) (store.PluginVersion, error) {
+	return store.PluginVersion{}, store.ErrNotFound
+}
+func (*hostDatabaseStub) ListNodes(context.Context) ([]store.Node, error) { return nil, nil }
+func (database *hostDatabaseStub) ReplacePluginServices(_ context.Context, pluginID, nodeID string,
+	services []store.PluginService, _ time.Time,
+) error {
+	database.pluginID = pluginID
+	database.nodeID = nodeID
+	database.services = append([]store.PluginService(nil), services...)
+	return nil
+}
+func (*hostDatabaseStub) RecordPluginRuntimeStatus(context.Context, string, string, string, uint64, *protocol.Problem, time.Time) error {
+	return nil
+}
+
+func TestHostBindsPluginIdentityWhenReplacingServices(t *testing.T) {
+	database := &hostDatabaseStub{}
+	host := newHostService(database, "io.relayward.expected", []string{centerpluginv1.PermissionServicesWrite})
+	request := &centerpluginv1.ReplaceServicesRequest{
+		NodeId: "10000000-0000-4000-8000-000000000001",
+		Services: []*centerpluginv1.PluginService{{
+			Id: "main", DisplayName: "Main", Enabled: true,
+			Capabilities: []string{"subscription.render"}, SubscriptionSha256: strings.Repeat("a", 64),
+		}},
+	}
+	response, err := host.ReplaceServices(t.Context(), request)
+	if err != nil || response.ServiceCount != 1 {
+		t.Fatalf("ReplaceServices() = %+v, %v", response, err)
+	}
+	if database.pluginID != "io.relayward.expected" || database.nodeID != request.NodeId ||
+		len(database.services) != 1 || database.services[0].PluginID != "io.relayward.expected" {
+		t.Fatalf("captured service replacement = %+v", database)
 	}
 }
 

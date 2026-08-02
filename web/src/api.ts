@@ -291,6 +291,22 @@ export interface ServiceBinding {
   updated_at: string;
 }
 
+export interface PluginService {
+  node_id: string;
+  plugin_id: string;
+  service_id: string;
+  display_name: string;
+  enabled: boolean;
+  capabilities: string[];
+}
+
+export interface SubscriptionService {
+  plugin_id: string;
+  service_id: string;
+  display_name: string;
+  capabilities: string[];
+}
+
 export interface AuditEntry {
   id: number;
   occurred_at: string;
@@ -304,7 +320,7 @@ export interface AuditEntry {
 }
 
 export interface SubscriptionInfo {
-  status: "active" | "disabled" | "expired" | "node_disabled";
+  status: "active" | "disabled" | "expired" | "node_disabled" | "quota_exceeded";
   user_name: string;
   node_name: string;
   node_address: string;
@@ -312,7 +328,7 @@ export interface SubscriptionInfo {
   traffic_used_bytes: number | null;
   reset: ResetRule;
   expires_at: string | null;
-  services: unknown[];
+  services: SubscriptionService[];
   announcement: string | null;
 }
 
@@ -527,6 +543,40 @@ export async function listServiceBindings(authorizationID: string): Promise<Serv
     `/api/v1/authorizations/${encodeURIComponent(authorizationID)}/service-bindings`,
   );
   return response.items;
+}
+
+export async function createServiceBinding(authorizationID: string, input: { plugin_id: string; service_id: string; enabled: boolean }): Promise<ServiceBinding> {
+  return request(`/api/v1/authorizations/${encodeURIComponent(authorizationID)}/service-bindings`, {
+    method: "POST", body: JSON.stringify(input),
+  });
+}
+
+export async function updateServiceBinding(id: string, enabled: boolean): Promise<ServiceBinding> {
+  return request(`/api/v1/service-bindings/${encodeURIComponent(id)}`, {
+    method: "PUT", body: JSON.stringify({ enabled }),
+  });
+}
+
+export async function deleteServiceBinding(id: string): Promise<void> {
+  return request(`/api/v1/service-bindings/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
+export async function listPluginServices(nodeID?: string): Promise<PluginService[]> {
+  const query = nodeID ? `?node_id=${encodeURIComponent(nodeID)}` : "";
+  const response = await request<{ items: PluginService[] }>(`/api/v1/plugin-services${query}`);
+  return response.items;
+}
+
+export async function getAnnouncement(): Promise<string | null> {
+  const response = await request<{ content: string | null }>("/api/v1/announcement");
+  return response.content;
+}
+
+export async function updateAnnouncement(content: string): Promise<string | null> {
+  const response = await request<{ content: string | null }>("/api/v1/announcement", {
+    method: "PUT", body: JSON.stringify({ content }),
+  });
+  return response.content;
 }
 
 export async function listAudit(beforeID?: number, limit = 100): Promise<AuditEntry[]> {

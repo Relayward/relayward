@@ -215,6 +215,9 @@ func (service *Service) UpdateServiceBinding(ctx context.Context, id string, ena
 		if err != nil {
 			return store.ServiceBinding{}, err
 		}
+		if err := service.store.RequirePluginService(ctx, binding.AuthorizationID, binding.PluginID, binding.ServiceID); err != nil {
+			return store.ServiceBinding{}, err
+		}
 		authorization, err := service.store.AuthorizationByID(ctx, binding.AuthorizationID)
 		if err != nil {
 			return store.ServiceBinding{}, err

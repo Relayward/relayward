@@ -20,13 +20,19 @@ import (
 const registrationTokenLifetime = 15 * time.Minute
 
 type Service struct {
-	store           *store.Store
-	secrets         *secretbox.Manager
-	now             func() time.Time
-	pluginMu        sync.Mutex
-	pluginReleases  pluginReleaseClient
-	pluginArtifacts pluginArtifactStore
-	pluginRuntime   centerPluginRuntime
+	store             *store.Store
+	secrets           *secretbox.Manager
+	now               func() time.Time
+	pluginMu          sync.Mutex
+	pluginReleases    pluginReleaseClient
+	pluginArtifacts   pluginArtifactStore
+	pluginRuntime     centerPluginRuntime
+	subscriptionLocks sync.Map
+}
+
+func (service *Service) subscriptionLock(authorizationID string) *sync.Mutex {
+	value, _ := service.subscriptionLocks.LoadOrStore(authorizationID, &sync.Mutex{})
+	return value.(*sync.Mutex)
 }
 
 func NewService(database *store.Store, secrets *secretbox.Manager) *Service {

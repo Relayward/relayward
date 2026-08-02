@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	centerpluginv1 "github.com/Relayward/relayward-sdk/centerplugin/v1"
 	"github.com/Relayward/relayward-sdk/manifest"
 
 	"github.com/Relayward/relayward/internal/auth"
@@ -84,8 +85,10 @@ func (value *serverQuarantine) Remove() error {
 }
 
 type serverPluginRuntime struct {
-	active  *store.PluginVersion
-	stopped bool
+	active      *store.PluginVersion
+	stopped     bool
+	renderCalls int
+	renderErr   error
 }
 
 func (runtime *serverPluginRuntime) Switch(_ context.Context, value store.PluginVersion) error {
@@ -105,6 +108,23 @@ func (runtime *serverPluginRuntime) StopPlugin(context.Context, string) error {
 
 func (*serverPluginRuntime) InvokeUI(context.Context, string, string, []byte) ([]byte, error) {
 	return []byte(`{"ok":true}`), nil
+}
+
+func (runtime *serverPluginRuntime) RenderSubscription(_ context.Context, _ string, request *centerpluginv1.RenderSubscriptionRequest) (*centerpluginv1.RenderSubscriptionResponse, error) {
+	runtime.renderCalls++
+	if runtime.renderErr != nil {
+		return nil, runtime.renderErr
+	}
+	services := make([]*centerpluginv1.SubscriptionServiceContribution, len(request.Services))
+	for index, service := range request.Services {
+		services[index] = &centerpluginv1.SubscriptionServiceContribution{
+			ServiceId: service.ServiceId, DisplayName: service.DisplayName,
+			Uris:                 []string{"relayward-test://credential@edge.example.com:443#Edge"},
+			MihomoProxiesJson:    [][]byte{[]byte(`{"name":"Edge","server":"edge.example.com","type":"test"}`)},
+			SingBoxOutboundsJson: [][]byte{[]byte(`{"server":"edge.example.com","tag":"Edge","type":"test"}`)},
+		}
+	}
+	return &centerpluginv1.RenderSubscriptionResponse{Services: services}, nil
 }
 
 func TestPluginLifecycleHTTPFlowDoesNotExposeSecrets(t *testing.T) {

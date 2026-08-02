@@ -508,8 +508,8 @@ func TestSubscriptionStatus(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			if got := subscriptionStatus(test.snapshot, now); got != test.want {
-				t.Fatalf("subscriptionStatus() = %q, want %q", got, test.want)
+			if got := management.SubscriptionStatus(test.snapshot, now); got != test.want {
+				t.Fatalf("SubscriptionStatus() = %q, want %q", got, test.want)
 			}
 		})
 	}

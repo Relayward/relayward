@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strconv"
@@ -298,6 +299,10 @@ func (server *Server) createServiceBinding(w http.ResponseWriter, request *http.
 		server.resourceError(w, request, err, "Service binding")
 		return
 	}
+	if err := server.reconcileAuthorizationNode(request.Context(), value.AuthorizationID); err != nil {
+		server.internalError(w, request, err)
+		return
+	}
 	writeJSON(w, http.StatusCreated, serviceBindingView(value))
 }
 
@@ -312,15 +317,40 @@ func (server *Server) updateServiceBinding(w http.ResponseWriter, request *http.
 		server.resourceError(w, request, err, "Service binding")
 		return
 	}
+	if err := server.reconcileAuthorizationNode(request.Context(), value.AuthorizationID); err != nil {
+		server.internalError(w, request, err)
+		return
+	}
 	writeJSON(w, http.StatusOK, serviceBindingView(value))
 }
 
 func (server *Server) deleteServiceBinding(w http.ResponseWriter, request *http.Request, _ auth.Authenticated) {
-	if err := server.management.DeleteServiceBinding(request.Context(), request.PathValue("binding_id")); err != nil {
+	binding, err := server.store.ServiceBindingByID(request.Context(), request.PathValue("binding_id"))
+	if err != nil {
 		server.resourceError(w, request, err, "Service binding")
 		return
 	}
+	if err := server.management.DeleteServiceBinding(request.Context(), binding.ID); err != nil {
+		server.resourceError(w, request, err, "Service binding")
+		return
+	}
+	if err := server.reconcileAuthorizationNode(request.Context(), binding.AuthorizationID); err != nil {
+		server.internalError(w, request, err)
+		return
+	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (server *Server) reconcileAuthorizationNode(ctx context.Context, authorizationID string) error {
+	if server.policyCoordinator == nil {
+		return nil
+	}
+	authorization, err := server.management.Authorization(ctx, authorizationID)
+	if err != nil {
+		return err
+	}
+	_, err = server.policyCoordinator.ReconcileNode(ctx, authorization.NodeID)
+	return err
 }
 
 func serviceBindingView(value store.ServiceBinding) serviceBindingResponse {

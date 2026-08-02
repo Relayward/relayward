@@ -52,7 +52,7 @@ func (store *Store) RequirePluginService(ctx context.Context, authorizationID, p
 SELECT 1
 FROM authorizations a
 JOIN plugin_services s ON s.node_id = a.node_id
-WHERE a.id = ? AND s.plugin_id = ? AND s.service_id = ?`, authorizationID, pluginID, serviceID).Scan(&exists)
+	WHERE a.id = ? AND s.plugin_id = ? AND s.service_id = ? AND s.enabled = 1`, authorizationID, pluginID, serviceID).Scan(&exists)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ErrNotFound
 	}
@@ -73,7 +73,7 @@ func (store *Store) CreateServiceBinding(ctx context.Context, value ServiceBindi
 SELECT 1
 FROM authorizations a
 JOIN plugin_services s ON s.node_id = a.node_id
-WHERE a.id = ? AND s.plugin_id = ? AND s.service_id = ?`,
+	WHERE a.id = ? AND s.plugin_id = ? AND s.service_id = ? AND s.enabled = 1`,
 		value.AuthorizationID, value.PluginID, value.ServiceID).Scan(&serviceExists)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ErrNotFound

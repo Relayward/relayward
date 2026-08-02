@@ -6,6 +6,7 @@ import (
 	"compress/gzip"
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"io"
 	"log/slog"
@@ -15,8 +16,10 @@ import (
 	"testing"
 	"time"
 
+	agentv1 "github.com/Relayward/relayward-sdk/agent/v1"
 	centerpluginv1 "github.com/Relayward/relayward-sdk/centerplugin/v1"
 	"github.com/Relayward/relayward-sdk/manifest"
+	nodepluginv1 "github.com/Relayward/relayward-sdk/nodeplugin/v1"
 
 	"github.com/Relayward/relayward/internal/githubrelease"
 	"github.com/Relayward/relayward/internal/pluginartifact"
@@ -69,7 +72,13 @@ func TestPluginLifecycleRunsRealReleaseAndRestoresAfterBadUpgrade(t *testing.T) 
 		defer cancel()
 		_ = runtime.Close(closeContext)
 	})
-	if err := service.store.CreateNode(t.Context(), store.Node{ID: "node-1", Name: "Edge", Enabled: true}, time.Now().UTC()); err != nil {
+	node := registerManagedAgent(t, service, "Edge", []string{
+		agentv1.CapabilityControlCommands, agentv1.CapabilityPluginSupervision,
+	})
+	node, err = service.UpdateNode(t.Context(), node.ID, NodeInput{
+		Name: node.Name, PublicAddress: "edge.example.com", Enabled: true,
+	})
+	if err != nil {
 		t.Fatal(err)
 	}
 	executable, err := os.ReadFile(mustExecutable(t))
@@ -84,13 +93,32 @@ func TestPluginLifecycleRunsRealReleaseAndRestoresAfterBadUpgrade(t *testing.T) 
 	}
 	installed, err := service.InstallPluginRelease(t.Context(), PluginReleaseInput{
 		Repository: releases.release.Repository.URL(), Version: "1.2.3", GitHubToken: "private-token",
-		ApprovedPermissions: []string{centerpluginv1.PermissionNodesRead},
+		ApprovedPermissions: []string{centerpluginv1.PermissionNodesRead, centerpluginv1.PermissionServicesWrite},
 	})
 	if err != nil {
 		t.Fatalf("InstallPluginRelease() error = %v", err)
 	}
 	if installed.Health != "healthy" || installed.ActiveVersion != "1.2.3" {
 		t.Fatalf("installed plugin = %+v", installed)
+	}
+	instance, err := service.ReconcileNodePlugin(t.Context(), node.ID, installed.PluginID, NodePluginInput{
+		DesiredState: agentv1.PluginStateRunning, Version: installed.ActiveVersion,
+		Configuration: []byte(`{"enabled":true}`),
+	})
+	if err != nil {
+		t.Fatalf("ReconcileNodePlugin() error = %v", err)
+	}
+	completeIntegrationPluginCommand(t, service, node)
+	if err := service.RecordNodePluginStatus(t.Context(), node.ID, agentv1.PluginStatusEvent{
+		PluginID: installed.PluginID, Generation: instance.Generation, State: agentv1.PluginStateRunning,
+		Version: installed.ActiveVersion, ConfigurationSHA256: instance.DesiredConfigurationSHA256,
+		Health: agentv1.PluginHealthHealthy,
+		Capabilities: []string{
+			nodepluginv1.CapabilityRecentActivity, nodepluginv1.CapabilityDynamicBlocking,
+			nodepluginv1.CapabilityServiceControl, nodepluginv1.CapabilityTrafficCounters,
+		},
+	}, time.Now().UTC(), time.Now().UTC()); err != nil {
+		t.Fatalf("RecordNodePluginStatus() error = %v", err)
 	}
 	raw, err := service.InvokePluginUI(t.Context(), installed.PluginID, "nodes.summary", []byte(`{}`))
 	if err != nil || string(raw) != `{"count":1}` {
@@ -105,11 +133,41 @@ func TestPluginLifecycleRunsRealReleaseAndRestoresAfterBadUpgrade(t *testing.T) 
 	if readErr != nil || !strings.Contains(string(page), "contract-ui") {
 		t.Fatalf("plugin UI entry = %q, %v", page, readErr)
 	}
+	raw, err = service.InvokePluginUI(t.Context(), installed.PluginID, "services.replace", []byte(`{"node_id":"`+node.ID+`"}`))
+	if err != nil || string(raw) != `{"service_count":1}` {
+		t.Fatalf("InvokePluginUI(services.replace) = %s, %v", raw, err)
+	}
+	services, err := service.ListPluginServices(t.Context(), node.ID)
+	if err != nil || len(services) != 1 || services[0].ServiceID != "contract-main" {
+		t.Fatalf("registered services = %+v, %v", services, err)
+	}
+	user, err := service.CreateUser(t.Context(), UserInput{DisplayName: "Alice"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	authorization, err := service.CreateAuthorization(t.Context(), DefaultAuthorizationInput(user.ID, node.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.CreateServiceBinding(t.Context(), ServiceBindingInput{
+		AuthorizationID: authorization.Authorization.ID, PluginID: installed.PluginID,
+		ServiceID: "contract-main", Enabled: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	rendered, err := service.RenderSubscription(t.Context(), authorization.SubscriptionToken, store.SubscriptionFormatBase64)
+	if err != nil {
+		t.Fatalf("RenderSubscription() error = %v", err)
+	}
+	decoded, err := base64.StdEncoding.DecodeString(strings.TrimSpace(string(rendered.Content)))
+	if err != nil || !strings.Contains(string(decoded), "relayward-test://") || !strings.Contains(string(decoded), node.PublicAddress) {
+		t.Fatalf("rendered subscription = %q, decode error = %v", decoded, err)
+	}
 
 	releases.release, releases.assets = integrationRelease("1.2.4", executable, ui)
 	if _, err := service.InstallPluginRelease(t.Context(), PluginReleaseInput{
 		Repository: releases.release.Repository.URL(), Version: "1.2.4",
-		ApprovedPermissions: []string{centerpluginv1.PermissionNodesRead},
+		ApprovedPermissions: []string{centerpluginv1.PermissionNodesRead, centerpluginv1.PermissionServicesWrite},
 	}); fieldName(err) != "release" {
 		t.Fatalf("bad upgrade error = %v", err)
 	}
@@ -121,11 +179,58 @@ func TestPluginLifecycleRunsRealReleaseAndRestoresAfterBadUpgrade(t *testing.T) 
 	if err != nil || string(raw) != `{"count":1}` {
 		t.Fatalf("InvokePluginUI() after rollback = %s, %v", raw, err)
 	}
+	removed, err := service.ReconcileNodePlugin(t.Context(), node.ID, installed.PluginID, NodePluginInput{
+		DesiredState: agentv1.PluginStateAbsent,
+	})
+	if err != nil {
+		t.Fatalf("remove node plugin request error = %v", err)
+	}
+	completeIntegrationPluginCommand(t, service, node)
+	removedAt := time.Now().UTC()
+	if err := service.RecordNodePluginStatus(t.Context(), node.ID, agentv1.PluginStatusEvent{
+		PluginID: installed.PluginID, Generation: removed.Generation,
+		State: agentv1.PluginStateAbsent, Health: agentv1.PluginHealthUnknown,
+	}, removedAt, removedAt); err != nil {
+		t.Fatalf("record removed node plugin error = %v", err)
+	}
 	if err := service.UninstallPlugin(t.Context(), installed.PluginID); err != nil {
 		t.Fatalf("UninstallPlugin() error = %v", err)
 	}
 	if _, err := service.PluginInstallation(t.Context(), installed.PluginID); err == nil {
 		t.Fatal("plugin installation remains after uninstall")
+	}
+}
+
+func completeIntegrationPluginCommand(t *testing.T, service *Service, node store.Node) {
+	t.Helper()
+	now := time.Now().UTC()
+	command, err := service.NextAgentCommand(t.Context(), node.ID, now)
+	if err != nil {
+		t.Fatalf("read plugin reconcile command error = %v", err)
+	}
+	reconcile, err := agentv1.DecodePluginReconcileCommand(command.Request)
+	if err != nil {
+		t.Fatalf("decode plugin reconcile command error = %v", err)
+	}
+	configurationSHA256 := ""
+	if reconcile.DesiredState != agentv1.PluginStateAbsent {
+		configurationSHA256, err = agentv1.PluginConfigurationDigest(reconcile.Configuration)
+		if err != nil {
+			t.Fatalf("digest plugin reconcile configuration error = %v", err)
+		}
+	}
+	output, err := agentv1.EncodePluginReconcileOutput(agentv1.PluginReconcileOutput{
+		PluginID: reconcile.PluginID, Generation: reconcile.Generation, State: reconcile.DesiredState,
+		Version: reconcile.Version, ConfigurationSHA256: configurationSHA256,
+	})
+	if err != nil {
+		t.Fatalf("encode plugin reconcile output error = %v", err)
+	}
+	if err := service.CompleteAgentCommand(t.Context(), node.ID, node.CredentialHash, agentv1.CommandResult{
+		CommandID: command.ID, RequestSHA256: command.RequestSHA256,
+		Status: agentv1.CommandStatusSucceeded, CompletedAt: now, Output: output,
+	}, now); err != nil {
+		t.Fatalf("complete plugin reconcile command error = %v", err)
 	}
 }
 
@@ -137,9 +242,12 @@ func integrationRelease(version string, executable, ui []byte) (githubrelease.Re
 	value := manifest.Manifest{
 		APIVersion: "relayward.plugin/v1", ID: "io.relayward.contract-test", Name: "Contract plugin",
 		Version: version, Kind: manifest.KindRuntime,
-		Requires:    manifest.Requirements{ControlAPI: 1, AgentAPI: &agentAPI, UIAPI: &uiAPI},
-		Permissions: []manifest.Permission{{Name: centerpluginv1.PermissionNodesRead, Reason: "Exercise node access."}},
-		Artifacts:   []manifest.Artifact{centerArtifact, nodeArtifact, uiArtifact},
+		Requires: manifest.Requirements{ControlAPI: 1, AgentAPI: &agentAPI, UIAPI: &uiAPI},
+		Permissions: []manifest.Permission{
+			{Name: centerpluginv1.PermissionNodesRead, Reason: "Exercise node access."},
+			{Name: centerpluginv1.PermissionServicesWrite, Reason: "Exercise service registration."},
+		},
+		Artifacts: []manifest.Artifact{centerArtifact, nodeArtifact, uiArtifact},
 	}
 	return githubrelease.Release{
 		ID: 10, Repository: githubrelease.Repository{Owner: "Relayward", Name: "contract-plugin"}, Tag: "v" + version,

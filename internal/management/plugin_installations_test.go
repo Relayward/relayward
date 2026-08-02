@@ -117,6 +117,9 @@ func (runtime *pluginRuntimeStub) StopPlugin(context.Context, string) error {
 func (*pluginRuntimeStub) InvokeUI(context.Context, string, string, []byte) ([]byte, error) {
 	return []byte(`{}`), nil
 }
+func (*pluginRuntimeStub) RenderSubscription(context.Context, string, *centerpluginv1.RenderSubscriptionRequest) (*centerpluginv1.RenderSubscriptionResponse, error) {
+	return nil, errors.New("subscription unavailable")
+}
 
 func TestPluginReleaseInspectionApprovalAndPrivateInstall(t *testing.T) {
 	service := newTestService(t)

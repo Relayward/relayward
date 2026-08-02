@@ -28,6 +28,7 @@ type database interface {
 	ListPluginInstallations(context.Context) ([]store.PluginInstallation, error)
 	PluginVersionByID(context.Context, string, string) (store.PluginVersion, error)
 	ListNodes(context.Context) ([]store.Node, error)
+	ReplacePluginServices(context.Context, string, string, []store.PluginService, time.Time) error
 	RecordPluginRuntimeStatus(context.Context, string, string, string, uint64, *protocol.Problem, time.Time) error
 }
 
@@ -201,6 +202,31 @@ func (supervisor *Supervisor) InvokeUI(ctx context.Context, pluginID, method str
 		return nil, fmt.Errorf("validate center plugin UI response: %w", err)
 	}
 	return append([]byte(nil), response.Json...), nil
+}
+
+func (supervisor *Supervisor) RenderSubscription(ctx context.Context, pluginID string,
+	request *centerpluginv1.RenderSubscriptionRequest,
+) (*centerpluginv1.RenderSubscriptionResponse, error) {
+	if err := centerpluginv1.ValidateRenderSubscriptionRequest(request); err != nil {
+		return nil, err
+	}
+	actor := supervisor.actor(pluginID)
+	actor.mu.Lock()
+	process := actor.process
+	actor.mu.Unlock()
+	if process == nil || process.exited() {
+		return nil, ErrPluginUnavailable
+	}
+	callContext, cancel := context.WithTimeout(ctx, pluginRPCTimeout)
+	defer cancel()
+	response, err := process.client.RenderSubscription(callContext, request)
+	if err != nil {
+		return nil, fmt.Errorf("render center plugin subscription: %w", err)
+	}
+	if err := centerpluginv1.ValidateRenderSubscriptionResponse(request, response); err != nil {
+		return nil, fmt.Errorf("validate center plugin subscription response: %w", err)
+	}
+	return response, nil
 }
 
 func (supervisor *Supervisor) Close(ctx context.Context) error {

@@ -804,6 +804,50 @@ button:disabled {
   width: 17px;
 }
 
+.service-picker {
+  display: grid;
+  gap: 1px;
+  max-height: 360px;
+  overflow: auto;
+}
+
+.service-option {
+  align-items: center;
+  border-bottom: 1px solid #e2e6e8;
+  cursor: pointer;
+  display: flex;
+  gap: 12px;
+  min-height: 58px;
+  padding: 9px 2px;
+}
+
+.service-option input {
+  accent-color: #16784b;
+  height: 18px;
+  width: 18px;
+}
+
+.service-option span {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.service-option small {
+  color: #68737b;
+  overflow-wrap: anywhere;
+}
+
+.announcement-editor textarea {
+  min-height: 240px;
+}
+
+.form-success {
+  color: #16784b;
+  font-size: 13px;
+  font-weight: 600;
+}
+
 .field textarea {
   background: #ffffff;
   border: 1px solid #bbc3c9;
@@ -985,7 +1029,8 @@ button:disabled {
 }
 
 .subscription-state--expired::before,
-.subscription-state--node_disabled::before {
+.subscription-state--node_disabled::before,
+.subscription-state--quota_exceeded::before {
   background: #b77900;
 }
 
@@ -1038,6 +1083,39 @@ button:disabled {
   color: #667078;
   margin: 0;
   white-space: pre-wrap;
+}
+
+.subscription-services ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.subscription-services li {
+  align-items: baseline;
+  border-bottom: 1px solid #e2e6e8;
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+  padding: 13px 0;
+}
+
+.subscription-services li span {
+  color: #68737b;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+  text-align: right;
+}
+
+.subscription-downloads {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 24px;
+}
+
+.subscription-downloads a {
+  text-decoration: none;
 }
 
 .field textarea:focus {
@@ -1224,5 +1302,19 @@ button:disabled {
 
   .subscription-details > div:nth-child(odd) {
     margin-right: 0;
+  }
+
+  .subscription-services li {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .subscription-services li span {
+    text-align: left;
+  }
+
+  .subscription-downloads {
+    display: grid;
   }
 }

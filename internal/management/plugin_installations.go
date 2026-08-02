@@ -37,6 +37,7 @@ type centerPluginRuntime interface {
 	Rollback(context.Context, string, *store.PluginVersion) error
 	StopPlugin(context.Context, string) error
 	InvokeUI(context.Context, string, string, []byte) ([]byte, error)
+	RenderSubscription(context.Context, string, *centerpluginv1.RenderSubscriptionRequest) (*centerpluginv1.RenderSubscriptionResponse, error)
 }
 
 type PluginReleaseInput struct {
@@ -289,7 +290,7 @@ func (service *Service) inspectPluginRelease(ctx context.Context, input PluginRe
 		return githubrelease.Release{}, "", nil, translateGitHubReleaseError(err)
 	}
 	for _, permission := range release.Manifest.Permissions {
-		if permission.Name != centerpluginv1.PermissionNodesRead {
+		if permission.Name != centerpluginv1.PermissionNodesRead && permission.Name != centerpluginv1.PermissionServicesWrite {
 			return githubrelease.Release{}, "", nil, invalid("repository", "release requests an unsupported permission: "+permission.Name)
 		}
 	}

@@ -1,13 +1,15 @@
 import { useEffect, useState } from "react";
-import { Activity, BadgeCheck, Gauge, LogOut, Plug, ScrollText, Server, Shield, Users } from "lucide-react";
+import { Activity, BadgeCheck, Gauge, LogOut, Megaphone, Plug, Save, ScrollText, Server, Shield, Users } from "lucide-react";
 import QRCode from "qrcode";
 
 import {
   APIError,
   disableTOTP,
   enableTOTP,
+  getAnnouncement,
   prepareTOTP,
   regenerateRecoveryCodes,
+  updateAnnouncement,
   type SessionInfo,
   type TOTPPreparation,
 } from "../api";
@@ -28,7 +30,7 @@ interface DashboardProps {
   onSessionRevoked: () => void;
 }
 
-type View = "system" | "nodes" | "plugins" | "users" | "authorizations" | "events" | "audit" | "security";
+type View = "system" | "nodes" | "plugins" | "users" | "authorizations" | "events" | "announcement" | "audit" | "security";
 
 export function Dashboard({ session, system, onLogout, onSessionChange, onSessionRevoked }: DashboardProps) {
   const [view, setView] = useState<View>("system");
@@ -79,6 +81,7 @@ export function Dashboard({ session, system, onLogout, onSessionChange, onSessio
           <button className={view === "users" ? "active" : ""} onClick={() => setView("users")}><Users size={17} />Users</button>
           <button className={view === "authorizations" ? "active" : ""} onClick={() => setView("authorizations")}><BadgeCheck size={17} />Authorizations</button>
           <button className={view === "events" ? "active" : ""} onClick={() => setView("events")}><Activity size={17} />Recent events</button>
+          <button className={view === "announcement" ? "active" : ""} onClick={() => setView("announcement")}><Megaphone size={17} />Announcement</button>
           <button className={view === "audit" ? "active" : ""} onClick={() => setView("audit")}><ScrollText size={17} />Audit</button>
           <button className={view === "security" ? "active" : ""} onClick={() => setView("security")}><Shield size={17} />Security</button>
         </nav>
@@ -89,6 +92,7 @@ export function Dashboard({ session, system, onLogout, onSessionChange, onSessio
           {view === "users" ? <UsersView /> : null}
           {view === "authorizations" ? <AuthorizationsView /> : null}
           {view === "events" ? <RecentEventsView /> : null}
+          {view === "announcement" ? <AnnouncementView /> : null}
           {view === "audit" ? <AuditView /> : null}
           {view === "security" ? (
             <SecurityView
@@ -126,6 +130,52 @@ export function Dashboard({ session, system, onLogout, onSessionChange, onSessio
       ) : null}
       {recoveryCodes ? <RecoveryCodesDialog codes={recoveryCodes} onClose={() => setRecoveryCodes(undefined)} /> : null}
     </div>
+  );
+}
+
+function AnnouncementView() {
+  const [content, setContent] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [error, setError] = useState<string>();
+
+  useEffect(() => {
+    let active = true;
+    getAnnouncement().then((value) => {
+      if (active) setContent(value ?? "");
+    }, (cause) => {
+      if (active) setError(errorMessage(cause));
+    }).finally(() => {
+      if (active) setLoading(false);
+    });
+    return () => { active = false; };
+  }, []);
+
+  async function save() {
+    setBusy(true);
+    setSaved(false);
+    setError(undefined);
+    try {
+      setContent((await updateAnnouncement(content)) ?? "");
+      setSaved(true);
+    } catch (cause) {
+      setError(errorMessage(cause));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section aria-labelledby="announcement-title">
+      <div className="section-heading">
+        <div><p className="eyebrow">Subscriptions</p><h1 id="announcement-title">Announcement</h1></div>
+        <button className="primary-button compact button-with-icon" disabled={loading || busy} onClick={save} type="button"><Save size={17} />{busy ? "Saving..." : "Save"}</button>
+      </div>
+      <label className="field announcement-editor"><span>Content</span><textarea value={content} onChange={(event) => { setContent(event.target.value); setSaved(false); }} maxLength={4096} rows={10} disabled={loading} /></label>
+      {saved ? <p className="form-success">Saved.</p> : null}
+      <FormError message={error} />
+    </section>
   );
 }
 

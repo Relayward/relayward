@@ -354,6 +354,16 @@ ON agent_commands(node_id)
 WHERE kind = 'policy.reconcile' AND status = 'pending';
 `,
 	},
+	{
+		version: 9,
+		sql: `
+UPDATE plugin_services SET capabilities_json = '[]' WHERE capabilities_json = '{}';
+ALTER TABLE plugin_services ADD COLUMN subscription_sha256 TEXT NOT NULL DEFAULT ''
+    CHECK (subscription_sha256 = '' OR length(subscription_sha256) = 64);
+ALTER TABLE subscription_render_cache ADD COLUMN input_sha256 TEXT NOT NULL DEFAULT ''
+    CHECK (input_sha256 = '' OR length(input_sha256) = 64);
+`,
+	},
 }
 
 func migrate(ctx context.Context, db *sql.DB) error {

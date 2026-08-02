@@ -186,8 +186,13 @@ func authorizationPolicy(ctx context.Context, tx *sql.Tx, value Authorization, a
 		policy.SoftIPLimit = &converted
 	}
 	rows, err := tx.QueryContext(ctx, `
-SELECT plugin_id, service_id FROM service_bindings
-WHERE authorization_id = ? AND enabled = 1 ORDER BY plugin_id, service_id`, value.ID)
+	SELECT bindings.plugin_id, bindings.service_id
+	FROM service_bindings bindings
+	JOIN plugin_services services
+	  ON services.node_id = ? AND services.plugin_id = bindings.plugin_id
+	 AND services.service_id = bindings.service_id
+	WHERE bindings.authorization_id = ? AND bindings.enabled = 1 AND services.enabled = 1
+	ORDER BY bindings.plugin_id, bindings.service_id`, value.NodeID, value.ID)
 	if err != nil {
 		return agentv1.AuthorizationPolicy{}, fmt.Errorf("read authorization %s policy bindings: %w", value.ID, err)
 	}

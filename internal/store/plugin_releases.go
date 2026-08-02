@@ -241,6 +241,9 @@ WHERE plugin_id = ? AND (desired_state <> 'absent' OR actual_state <> 'absent')`
 	if err != nil {
 		return nil, err
 	}
+	if _, err := tx.ExecContext(ctx, "DELETE FROM service_bindings WHERE plugin_id = ?", pluginID); err != nil {
+		return nil, fmt.Errorf("delete plugin service bindings: %w", err)
+	}
 	result, err := tx.ExecContext(ctx, `DELETE FROM plugin_installations WHERE plugin_id = ?`, pluginID)
 	if err != nil {
 		return nil, fmt.Errorf("delete plugin installation: %w", err)

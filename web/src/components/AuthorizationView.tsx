@@ -1,20 +1,26 @@
 import { type FormEvent, type ReactNode, useEffect, useMemo, useState } from "react";
-import { KeyRound, Pencil, Plus, Trash2 } from "lucide-react";
+import { KeyRound, ListChecks, Pencil, Plus, Trash2 } from "lucide-react";
 
 import {
   APIError,
   createAuthorization,
+  createServiceBinding,
   deleteAuthorization,
   listAuthorizations,
   listNodes,
+  listPluginServices,
+  listServiceBindings,
   listUsers,
   rotateSubscriptionToken,
+  updateServiceBinding,
   updateAuthorization,
   type Authorization,
   type AuthorizationInput,
   type Node,
+  type PluginService,
   type ResetKind,
   type User,
+  type ServiceBinding,
 } from "../api";
 import { FormError } from "./AuthScreen";
 import { Modal } from "./Modal";
@@ -30,6 +36,7 @@ export function AuthorizationsView() {
   const [editing, setEditing] = useState<Authorization | "new">();
   const [deleting, setDeleting] = useState<Authorization>();
   const [rotating, setRotating] = useState<Authorization>();
+  const [servicesFor, setServicesFor] = useState<Authorization>();
   const [shownToken, setShownToken] = useState<{ title: string; value: string }>();
 
   useEffect(() => {
@@ -80,6 +87,7 @@ export function AuthorizationsView() {
                 <td><AuthorizationStatus value={authorization} /></td>
                 <td><IPStatus value={authorization} /></td>
                 <td className="table-actions">
+                  <IconAction label="Manage services" onClick={() => setServicesFor(authorization)}><ListChecks size={17} /></IconAction>
                   <IconAction label="Rotate subscription token" onClick={() => setRotating(authorization)}><KeyRound size={17} /></IconAction>
                   <IconAction label="Edit authorization" onClick={() => setEditing(authorization)}><Pencil size={17} /></IconAction>
                   <IconAction label="Delete authorization" danger onClick={() => setDeleting(authorization)}><Trash2 size={17} /></IconAction>
@@ -129,9 +137,98 @@ export function AuthorizationsView() {
           }}
         />
       ) : null}
+      {servicesFor ? (
+        <ServicesDialog
+          authorization={servicesFor}
+          onClose={() => setServicesFor(undefined)}
+        />
+      ) : null}
       {shownToken ? <TokenDialog title={shownToken.title} token={shownToken.value} onClose={() => setShownToken(undefined)} /> : null}
     </section>
   );
+}
+
+function ServicesDialog({ authorization, onClose }: { authorization: Authorization; onClose: () => void }) {
+  const [services, setServices] = useState<PluginService[]>([]);
+  const [bindings, setBindings] = useState<ServiceBinding[]>([]);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string>();
+
+  useEffect(() => {
+    let active = true;
+    Promise.all([listPluginServices(authorization.node_id), listServiceBindings(authorization.id)]).then(([catalog, current]) => {
+      if (!active) return;
+      setServices(catalog.filter((service) => service.enabled));
+      setBindings(current);
+      setSelected(new Set(current.filter((binding) => binding.enabled).map(bindingKey)));
+    }, (cause) => {
+      if (active) setError(errorMessage(cause));
+    }).finally(() => {
+      if (active) setLoading(false);
+    });
+    return () => { active = false; };
+  }, [authorization.id, authorization.node_id]);
+
+  function toggle(key: string) {
+    setSelected((current) => {
+      const next = new Set(current);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  }
+
+  async function save() {
+    setBusy(true);
+    setError(undefined);
+    try {
+      const existing = new Map(bindings.map((binding) => [bindingKey(binding), binding]));
+      for (const service of services) {
+        const key = bindingKey(service);
+        const binding = existing.get(key);
+        const enabled = selected.has(key);
+        if (binding && binding.enabled !== enabled) {
+          await updateServiceBinding(binding.id, enabled);
+        } else if (!binding && enabled) {
+          await createServiceBinding(authorization.id, {
+            plugin_id: service.plugin_id, service_id: service.service_id, enabled: true,
+          });
+        }
+      }
+      onClose();
+    } catch (cause) {
+      setError(errorMessage(cause));
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Modal title="Manage services" onClose={onClose}>
+      <div className="service-picker">
+        {loading ? <p className="empty-service">Loading...</p> : null}
+        {!loading && services.length === 0 ? <p className="empty-service">No services are available on this node.</p> : null}
+        {services.map((service) => {
+          const key = bindingKey(service);
+          return (
+            <label key={key} className="service-option">
+              <input type="checkbox" checked={selected.has(key)} onChange={() => toggle(key)} />
+              <span><strong>{service.display_name}</strong><small>{service.plugin_id} / {service.service_id}</small></span>
+            </label>
+          );
+        })}
+      </div>
+      <FormError message={error} />
+      <div className="dialog-actions">
+        <button className="quiet-button" onClick={onClose} type="button">Cancel</button>
+        <button className="primary-button compact" disabled={busy || loading} onClick={save} type="button">{busy ? "Saving..." : "Save"}</button>
+      </div>
+    </Modal>
+  );
+}
+
+function bindingKey(value: { plugin_id: string; service_id: string }): string {
+  return `${value.plugin_id}\u0000${value.service_id}`;
 }
 
 function AuthorizationDialog({ value, nodes, users, onClose, onSaved }: {
