@@ -5,7 +5,7 @@ import { loadSystemInfo } from "./system";
 describe("loadSystemInfo", () => {
   it("returns a validated response", async () => {
     const fetcher: typeof fetch = async () =>
-      new Response(JSON.stringify({ name: "relayward", version: "dev" }), {
+      new Response(JSON.stringify({ name: "relayward", version: "dev", secrets_available: true }), {
         status: 200,
         headers: { "Content-Type": "application/json" },
       });
@@ -13,6 +13,7 @@ describe("loadSystemInfo", () => {
     await expect(loadSystemInfo(undefined, fetcher)).resolves.toEqual({
       name: "relayward",
       version: "dev",
+      secrets_available: true,
     });
   });
 

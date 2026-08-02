@@ -1,53 +1,105 @@
 import { useEffect, useState } from "react";
 
-import { productName } from "./config";
+import { APIError, getSession, getSetupStatus, initialize, login, logout, type SessionInfo } from "./api";
+import { LoginScreen, SetupScreen } from "./components/AuthScreen";
+import { Dashboard } from "./components/Dashboard";
 import { loadSystemInfo, type SystemInfo } from "./system";
 
-type LoadState =
+type AppState =
   | { phase: "loading" }
-  | { phase: "ready"; info: SystemInfo }
-  | { phase: "error" };
+  | { phase: "setup"; busy: boolean; error?: string }
+  | { phase: "login"; busy: boolean; secondFactorRequired: boolean; error?: string }
+  | { phase: "dashboard"; session: SessionInfo; system: SystemInfo }
+  | { phase: "error"; message: string };
 
 export function App() {
-  const [state, setState] = useState<LoadState>({ phase: "loading" });
+  const [state, setState] = useState<AppState>({ phase: "loading" });
 
   useEffect(() => {
-    const controller = new AbortController();
-    loadSystemInfo(controller.signal).then(
-      (info) => setState({ phase: "ready", info }),
-      () => {
-        if (!controller.signal.aborted) {
-          setState({ phase: "error" });
-        }
-      },
-    );
-    return () => controller.abort();
+    let active = true;
+    bootstrap().then((next) => {
+      if (active) setState(next);
+    });
+    return () => { active = false; };
   }, []);
 
-  const available = state.phase === "ready";
+  async function setup(username: string, password: string) {
+    setState({ phase: "setup", busy: true });
+    try {
+      const [session, system] = await Promise.all([initialize(username, password), loadSystemInfo()]);
+      setState({ phase: "dashboard", session, system });
+    } catch (cause) {
+      setState({ phase: "setup", busy: false, error: messageFor(cause) });
+    }
+  }
 
-  return (
-    <div className="app-shell">
-      <header className="topbar">
-        <strong>{productName}</strong>
-        <span className="environment">Control plane</span>
-      </header>
-      <main>
-        <h1>System status</h1>
-        <dl className="status-list">
-          <div>
-            <dt>Control plane</dt>
-            <dd>
-              <span className={`status-dot status-dot--${state.phase}`} />
-              {state.phase === "loading" ? "Checking" : available ? "Available" : "Unavailable"}
-            </dd>
-          </div>
-          <div>
-            <dt>Version</dt>
-            <dd>{available ? state.info.version : "-"}</dd>
-          </div>
-        </dl>
+  async function signIn(username: string, password: string, secondFactor: string) {
+    const requiresSecondFactor = state.phase === "login" && state.secondFactorRequired;
+    setState({ phase: "login", busy: true, secondFactorRequired: requiresSecondFactor });
+    try {
+      const [session, system] = await Promise.all([login(username, password, secondFactor), loadSystemInfo()]);
+      setState({ phase: "dashboard", session, system });
+    } catch (cause) {
+      const needsSecondFactor = cause instanceof APIError && cause.hasViolation("second_factor");
+      setState({ phase: "login", busy: false, secondFactorRequired: requiresSecondFactor || needsSecondFactor, error: needsSecondFactor ? undefined : messageFor(cause) });
+    }
+  }
+
+  async function signOut() {
+    await logout();
+    setState({ phase: "login", busy: false, secondFactorRequired: false });
+  }
+
+  if (state.phase === "loading") {
+    return <div className="loading-screen"><span className="brand-mark">R</span><span>Relayward</span></div>;
+  }
+  if (state.phase === "setup") {
+    return <SetupScreen busy={state.busy} error={state.error} onSubmit={setup} />;
+  }
+  if (state.phase === "login") {
+    return <LoginScreen busy={state.busy} error={state.error} secondFactorRequired={state.secondFactorRequired} onSubmit={signIn} />;
+  }
+  if (state.phase === "error") {
+    return (
+      <main className="error-page">
+        <span className="brand-mark">R</span>
+        <h1>Relayward unavailable</h1>
+        <p>{state.message}</p>
+        <button className="primary-button compact" onClick={() => window.location.reload()}>Retry</button>
       </main>
-    </div>
+    );
+  }
+  return (
+    <Dashboard
+      session={state.session}
+      system={state.system}
+      onLogout={signOut}
+      onSessionChange={(session) => setState({ ...state, session })}
+      onSessionRevoked={() => setState({ phase: "login", busy: false, secondFactorRequired: false })}
+    />
   );
+}
+async function bootstrap(): Promise<AppState> {
+  try {
+    const [setup, system] = await Promise.all([getSetupStatus(), loadSystemInfo()]);
+    if (!setup.initialized) {
+      return { phase: "setup", busy: false };
+    }
+    try {
+      const session = await getSession();
+      return { phase: "dashboard", session, system };
+    } catch (cause) {
+      if (cause instanceof APIError && cause.status === 401) {
+        return { phase: "login", busy: false, secondFactorRequired: false };
+      }
+      throw cause;
+    }
+  } catch (cause) {
+    return { phase: "error", message: messageFor(cause) };
+  }
+}
+
+function messageFor(cause: unknown): string {
+  if (cause instanceof APIError) return cause.message;
+  return "The control plane could not be reached.";
 }

@@ -1,6 +1,7 @@
 export interface SystemInfo {
   name: string;
   version: string;
+  secrets_available: boolean;
 }
 
 export async function loadSystemInfo(
@@ -27,5 +28,5 @@ function isSystemInfo(value: unknown): value is SystemInfo {
     return false;
   }
   const record = value as Record<string, unknown>;
-  return record.name === "relayward" && typeof record.version === "string" && record.version.length > 0;
+  return record.name === "relayward" && typeof record.version === "string" && record.version.length > 0 && typeof record.secrets_available === "boolean";
 }
