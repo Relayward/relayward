@@ -35,14 +35,15 @@ type Options struct {
 }
 
 type Server struct {
-	version      string
-	store        *store.Store
-	auth         *auth.Service
-	management   *management.Service
-	secrets      *secretbox.Manager
-	logger       *slog.Logger
-	secureCookie bool
-	loginLimiter *attemptLimiter
+	version       string
+	store         *store.Store
+	auth          *auth.Service
+	management    *management.Service
+	secrets       *secretbox.Manager
+	logger        *slog.Logger
+	secureCookie  bool
+	loginLimiter  *attemptLimiter
+	agentSessions *agentSessionHub
 }
 
 type systemInfo struct {
@@ -53,14 +54,15 @@ type systemInfo struct {
 
 func New(options Options) http.Handler {
 	server := &Server{
-		version:      options.Version,
-		store:        options.Store,
-		auth:         options.Auth,
-		management:   options.Management,
-		secrets:      options.Secrets,
-		logger:       options.Logger,
-		secureCookie: options.SecureCookie,
-		loginLimiter: newAttemptLimiter(5, 5*time.Minute),
+		version:       options.Version,
+		store:         options.Store,
+		auth:          options.Auth,
+		management:    options.Management,
+		secrets:       options.Secrets,
+		logger:        options.Logger,
+		secureCookie:  options.SecureCookie,
+		loginLimiter:  newAttemptLimiter(5, 5*time.Minute),
+		agentSessions: newAgentSessionHub(),
 	}
 	if server.logger == nil {
 		server.logger = slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -101,6 +103,8 @@ func New(options Options) http.Handler {
 	mux.HandleFunc("DELETE /api/v1/service-bindings/{binding_id}", server.withAuthentication(server.withCSRF(server.deleteServiceBinding)))
 	mux.HandleFunc("GET /api/v1/audit", server.withAuthentication(server.listAudit))
 	mux.HandleFunc("GET /api/v1/subscriptions/{subscription_token}", server.subscription)
+	mux.HandleFunc("POST /api/v1/agent/register", server.registerAgent)
+	mux.HandleFunc("GET /api/v1/agent/connect/{node_id}", server.connectAgent)
 	return server.securityHeaders(mux)
 }
 

@@ -32,14 +32,24 @@ export function NodesView() {
 
   useEffect(() => {
     let active = true;
-    listNodes().then((values) => {
-      if (active) setItems(values);
-    }, (cause) => {
-      if (active) setError(errorMessage(cause));
-    }).finally(() => {
-      if (active) setLoading(false);
-    });
-    return () => { active = false; };
+    const refresh = () => {
+      listNodes().then((values) => {
+        if (active) {
+          setItems(values);
+          setError(undefined);
+        }
+      }, (cause) => {
+        if (active) setError(errorMessage(cause));
+      }).finally(() => {
+        if (active) setLoading(false);
+      });
+    };
+    refresh();
+    const timer = window.setInterval(refresh, 10_000);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
   }, []);
 
   async function issueToken(node: Node) {
@@ -55,12 +65,13 @@ export function NodesView() {
   return (
     <section aria-labelledby="nodes-title">
       <ResourceHeading eyebrow="Infrastructure" title="Nodes" id="nodes-title" onAdd={() => setEditing("new")} />
-      <ResourceTable headers={["Name", "Address", "Registration", "State", "Actions"]} loading={loading} empty="No nodes have been created." error={error}>
+      <ResourceTable headers={["Name", "Address", "Agent", "Version", "State", "Actions"]} loading={loading} empty="No nodes have been created." error={error}>
         {items.map((node) => (
           <tr key={node.id}>
             <td data-label="Name"><strong>{node.name}</strong></td>
             <td data-label="Address" className="secondary-cell">{node.public_address || "Not set"}</td>
-            <td data-label="Registration"><Status value={node.registered_at ? "Registered" : "Pending"} tone={node.registered_at ? "ok" : "warning"} /></td>
+            <td data-label="Agent"><Status value={agentStatusLabel(node.agent_status)} tone={agentStatusTone(node.agent_status)} /></td>
+            <td data-label="Version" className="secondary-cell">{node.agent_version || "Not reported"}</td>
             <td data-label="State"><Status value={node.enabled ? "Enabled" : "Disabled"} tone={node.enabled ? "ok" : "muted"} /></td>
             <td className="table-actions">
               <IconAction label="Create registration token" onClick={() => issueToken(node)}><KeyRound size={17} /></IconAction>
@@ -318,6 +329,16 @@ function IconAction({ label, danger = false, onClick, children }: { label: strin
 
 function Status({ value, tone }: { value: string; tone: "ok" | "warning" | "muted" }) {
   return <span className="inline-status"><span className={`status-dot status-dot--${tone}`} />{value}</span>;
+}
+
+function agentStatusLabel(status: Node["agent_status"]) {
+  return status.charAt(0).toUpperCase() + status.slice(1);
+}
+
+function agentStatusTone(status: Node["agent_status"]): "ok" | "warning" | "muted" {
+  if (status === "online") return "ok";
+  if (status === "disabled") return "muted";
+  return "warning";
 }
 
 function byName(left: Node, right: Node) {

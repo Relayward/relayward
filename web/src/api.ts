@@ -25,6 +25,12 @@ export interface Node {
   name: string;
   public_address: string;
   enabled: boolean;
+  agent_status: "pending" | "online" | "offline" | "disabled";
+  hostname: string;
+  agent_version: string;
+  agent_os: string;
+  agent_arch: string;
+  capabilities: string[];
   registered_at: string | null;
   last_seen_at: string | null;
   created_at: string;

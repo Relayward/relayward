@@ -22,6 +22,12 @@ type nodeResponse struct {
 	Name          string     `json:"name"`
 	PublicAddress string     `json:"public_address"`
 	Enabled       bool       `json:"enabled"`
+	AgentStatus   string     `json:"agent_status"`
+	Hostname      string     `json:"hostname"`
+	AgentVersion  string     `json:"agent_version"`
+	AgentOS       string     `json:"agent_os"`
+	AgentArch     string     `json:"agent_arch"`
+	Capabilities  []string   `json:"capabilities"`
 	RegisteredAt  *time.Time `json:"registered_at"`
 	LastSeenAt    *time.Time `json:"last_seen_at"`
 	CreatedAt     time.Time  `json:"created_at"`
@@ -36,7 +42,7 @@ func (server *Server) listNodes(w http.ResponseWriter, request *http.Request, _ 
 	}
 	items := make([]nodeResponse, len(values))
 	for index, value := range values {
-		items[index] = nodeView(value)
+		items[index] = server.nodeView(value)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": items})
 }
@@ -47,7 +53,7 @@ func (server *Server) getNode(w http.ResponseWriter, request *http.Request, _ au
 		server.resourceError(w, request, err, "Node")
 		return
 	}
-	writeJSON(w, http.StatusOK, nodeView(value))
+	writeJSON(w, http.StatusOK, server.nodeView(value))
 }
 
 func (server *Server) createNode(w http.ResponseWriter, request *http.Request, _ auth.Authenticated) {
@@ -65,7 +71,7 @@ func (server *Server) createNode(w http.ResponseWriter, request *http.Request, _
 		server.resourceError(w, request, err, "Node")
 		return
 	}
-	writeJSON(w, http.StatusCreated, nodeView(value))
+	writeJSON(w, http.StatusCreated, server.nodeView(value))
 }
 
 func (server *Server) updateNode(w http.ResponseWriter, request *http.Request, _ auth.Authenticated) {
@@ -86,14 +92,19 @@ func (server *Server) updateNode(w http.ResponseWriter, request *http.Request, _
 		server.resourceError(w, request, err, "Node")
 		return
 	}
-	writeJSON(w, http.StatusOK, nodeView(value))
+	if !value.Enabled {
+		server.agentSessions.disconnect(value.ID)
+	}
+	writeJSON(w, http.StatusOK, server.nodeView(value))
 }
 
 func (server *Server) deleteNode(w http.ResponseWriter, request *http.Request, _ auth.Authenticated) {
-	if err := server.management.DeleteNode(request.Context(), request.PathValue("node_id")); err != nil {
+	nodeID := request.PathValue("node_id")
+	if err := server.management.DeleteNode(request.Context(), nodeID); err != nil {
 		server.resourceError(w, request, err, "Node")
 		return
 	}
+	server.agentSessions.disconnect(nodeID)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -106,9 +117,23 @@ func (server *Server) createNodeRegistrationToken(w http.ResponseWriter, request
 	writeJSON(w, http.StatusCreated, map[string]any{"token": value.Token, "expires_at": value.ExpiresAt})
 }
 
-func nodeView(value store.Node) nodeResponse {
+func (server *Server) nodeView(value store.Node) nodeResponse {
+	status := "pending"
+	if !value.Enabled {
+		status = "disabled"
+	} else if server.agentSessions.connected(value.ID) {
+		status = "online"
+	} else if value.RegisteredAt != nil {
+		status = "offline"
+	}
+	capabilities := value.Capabilities
+	if capabilities == nil {
+		capabilities = []string{}
+	}
 	return nodeResponse{
 		ID: value.ID, Name: value.Name, PublicAddress: value.PublicAddress, Enabled: value.Enabled,
+		AgentStatus: status, Hostname: value.Hostname, AgentVersion: value.AgentVersion,
+		AgentOS: value.AgentOS, AgentArch: value.AgentArch, Capabilities: capabilities,
 		RegisteredAt: value.RegisteredAt, LastSeenAt: value.LastSeenAt, CreatedAt: value.CreatedAt, UpdatedAt: value.UpdatedAt,
 	}
 }

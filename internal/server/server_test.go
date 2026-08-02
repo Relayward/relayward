@@ -18,6 +18,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gorilla/websocket"
+
+	agentv1 "github.com/Relayward/relayward-sdk/agent/v1"
 	"github.com/Relayward/relayward-sdk/protocol"
 	"github.com/Relayward/relayward/internal/auth"
 	"github.com/Relayward/relayward/internal/management"
@@ -367,6 +370,150 @@ func TestSubscriptionStatus(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestAgentRegistrationControlAndDuplicateSession(t *testing.T) {
+	handler, database := newTestHandler(t)
+	sessionCookie, csrfCookie := setupCookies(t, handler)
+	headers := map[string]string{"Content-Type": "application/json", "X-CSRF-Token": csrfCookie.Value}
+	nodeRequest := performRequest(handler, http.MethodPost, "/api/v1/nodes", []byte(`{"name":"Edge"}`), headers, sessionCookie)
+	if nodeRequest.Code != http.StatusCreated {
+		t.Fatalf("create node status = %d, body = %s", nodeRequest.Code, nodeRequest.Body.String())
+	}
+	var node nodeResponse
+	decodeResponse(t, nodeRequest, &node)
+	tokenRequest := performRequest(handler, http.MethodPost, "/api/v1/nodes/"+node.ID+"/registration-tokens", nil,
+		map[string]string{"X-CSRF-Token": csrfCookie.Value}, sessionCookie)
+	if tokenRequest.Code != http.StatusCreated {
+		t.Fatalf("create registration token status = %d", tokenRequest.Code)
+	}
+	var token struct {
+		Value string `json:"token"`
+	}
+	decodeResponse(t, tokenRequest, &token)
+	registrationBody, err := json.Marshal(agentv1.RegisterRequest{
+		APIVersion: agentv1.APIVersion, Token: token.Value, AgentVersion: "0.1.0",
+		Hostname: "edge-one", OS: "linux", Arch: "amd64", Capabilities: []string{"control.heartbeat"},
+	})
+	if err != nil {
+		t.Fatalf("marshal registration request: %v", err)
+	}
+	registration := performRequest(handler, http.MethodPost, "/api/v1/agent/register", registrationBody,
+		map[string]string{"Content-Type": "application/json"})
+	if registration.Code != http.StatusCreated {
+		t.Fatalf("Agent registration status = %d, body = %s", registration.Code, registration.Body.String())
+	}
+	var identity agentv1.RegisterResponse
+	decodeResponse(t, registration, &identity)
+	if err := agentv1.ValidateRegisterResponse(identity); err != nil {
+		t.Fatalf("Agent registration response = %+v: %v", identity, err)
+	}
+	reused := performRequest(handler, http.MethodPost, "/api/v1/agent/register", registrationBody,
+		map[string]string{"Content-Type": "application/json"})
+	if reused.Code != http.StatusUnauthorized {
+		t.Fatalf("reused registration token status = %d", reused.Code)
+	}
+
+	server := httptest.NewServer(handler)
+	defer server.Close()
+	first := connectTestAgent(t, server.URL, identity, "0.1.0")
+	defer first.Close()
+	firstHello := readTestAgentEnvelope(t, first)
+	firstSession, err := agentv1.DecodeEnvelopePayload[agentv1.CenterHello](firstHello)
+	if err != nil {
+		t.Fatalf("decode first center hello: %v", err)
+	}
+	heartbeat, err := agentv1.NewEnvelope(agentv1.MessageAgentHeartbeat, agentv1.Heartbeat{
+		SessionID: firstSession.SessionID, AgentVersion: "0.1.1", ObservedAt: time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatalf("create heartbeat: %v", err)
+	}
+	if err := first.WriteJSON(heartbeat); err != nil {
+		t.Fatalf("write heartbeat: %v", err)
+	}
+	ack := readTestAgentEnvelope(t, first)
+	ackPayload, err := agentv1.DecodeEnvelopePayload[agentv1.HeartbeatAck](ack)
+	if err != nil || ackPayload.MessageID != heartbeat.ID {
+		t.Fatalf("heartbeat acknowledgement = %+v, %v", ackPayload, err)
+	}
+	stored, err := database.NodeByID(context.Background(), node.ID)
+	if err != nil || stored.LastSeenAt == nil || stored.AgentVersion != "0.1.1" {
+		t.Fatalf("node after heartbeat = %+v, %v", stored, err)
+	}
+
+	second := connectTestAgent(t, server.URL, identity, "0.1.1")
+	defer second.Close()
+	_ = readTestAgentEnvelope(t, second)
+	online := performRequest(handler, http.MethodGet, "/api/v1/nodes/"+node.ID, nil, nil, sessionCookie)
+	var onlineNode nodeResponse
+	decodeResponse(t, online, &onlineNode)
+	if onlineNode.AgentStatus != "online" || onlineNode.AgentVersion != "0.1.1" || onlineNode.Hostname != "edge-one" {
+		t.Fatalf("online node response = %+v", onlineNode)
+	}
+	if err := first.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
+		t.Fatalf("set superseded session deadline: %v", err)
+	}
+	if _, _, err := first.ReadMessage(); err == nil {
+		t.Fatal("superseded Agent session remained open")
+	}
+	disableBody := []byte(`{"name":"Edge","public_address":"","enabled":false}`)
+	disabled := performRequest(handler, http.MethodPut, "/api/v1/nodes/"+node.ID, disableBody, headers, sessionCookie)
+	if disabled.Code != http.StatusOK {
+		t.Fatalf("disable node status = %d, body = %s", disabled.Code, disabled.Body.String())
+	}
+	var disabledNode nodeResponse
+	decodeResponse(t, disabled, &disabledNode)
+	if disabledNode.AgentStatus != "disabled" {
+		t.Fatalf("disabled node response = %+v", disabledNode)
+	}
+	if err := second.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
+		t.Fatalf("set disabled session deadline: %v", err)
+	}
+	if _, _, err := second.ReadMessage(); err == nil {
+		t.Fatal("disabled node session remained open")
+	}
+}
+
+func connectTestAgent(t *testing.T, serverURL string, identity agentv1.RegisterResponse, version string) *websocket.Conn {
+	t.Helper()
+	url := "ws" + strings.TrimPrefix(serverURL, "http") + "/api/v1/agent/connect/" + identity.NodeID
+	headers := http.Header{"Authorization": []string{"Bearer " + identity.Credential}}
+	connection, response, err := websocket.DefaultDialer.Dial(url, headers)
+	if err != nil {
+		if response != nil {
+			t.Fatalf("connect Agent status = %d: %v", response.StatusCode, err)
+		}
+		t.Fatalf("connect Agent: %v", err)
+	}
+	hello, err := agentv1.NewEnvelope(agentv1.MessageAgentHello, agentv1.AgentHello{
+		NodeID: identity.NodeID, AgentVersion: version, StartedAt: time.Now().UTC(),
+		Capabilities: []string{"control.heartbeat"},
+	})
+	if err != nil {
+		connection.Close()
+		t.Fatalf("create Agent hello: %v", err)
+	}
+	if err := connection.WriteJSON(hello); err != nil {
+		connection.Close()
+		t.Fatalf("write Agent hello: %v", err)
+	}
+	return connection
+}
+
+func readTestAgentEnvelope(t *testing.T, connection *websocket.Conn) protocol.Envelope {
+	t.Helper()
+	if err := connection.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
+		t.Fatalf("set Agent read deadline: %v", err)
+	}
+	var value protocol.Envelope
+	if err := connection.ReadJSON(&value); err != nil {
+		t.Fatalf("read Agent envelope: %v", err)
+	}
+	if err := agentv1.ValidateEnvelope(value); err != nil {
+		t.Fatalf("Agent envelope = %+v: %v", value, err)
+	}
+	return value
 }
 
 func newTestHandler(t *testing.T) (http.Handler, *store.Store) {

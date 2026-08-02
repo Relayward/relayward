@@ -194,6 +194,16 @@ CREATE TABLE plugin_services (
 );
 `,
 	},
+	{
+		version: 3,
+		sql: `
+ALTER TABLE nodes ADD COLUMN hostname TEXT NOT NULL DEFAULT '';
+ALTER TABLE nodes ADD COLUMN agent_version TEXT NOT NULL DEFAULT '';
+ALTER TABLE nodes ADD COLUMN agent_os TEXT NOT NULL DEFAULT '';
+ALTER TABLE nodes ADD COLUMN agent_arch TEXT NOT NULL DEFAULT '';
+ALTER TABLE nodes ADD COLUMN agent_capabilities_json TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(agent_capabilities_json));
+`,
+	},
 }
 
 func migrate(ctx context.Context, db *sql.DB) error {
