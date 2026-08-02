@@ -59,6 +59,82 @@ export interface UserInput {
   note: string;
 }
 
+export type ResetKind = "never" | "daily" | "weekly" | "monthly" | "interval_days";
+
+export interface ResetRule {
+  kind: ResetKind;
+  value: number | null;
+  timezone: string;
+  period_anchor: string | null;
+}
+
+export interface Authorization {
+  id: string;
+  user_id: string;
+  node_id: string;
+  enabled: boolean;
+  traffic_limit_bytes: number | null;
+  reset: ResetRule;
+  expires_at: string | null;
+  soft_ip_limit: number | null;
+  activity_window_seconds: number;
+  block_duration_seconds: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AuthorizationInput {
+  user_id: string;
+  node_id: string;
+  enabled: boolean;
+  traffic_limit_bytes: number | null;
+  reset: ResetRule;
+  expires_at: string | null;
+  soft_ip_limit: number | null;
+  activity_window_seconds: number;
+  block_duration_seconds: number;
+}
+
+export interface SubscriptionToken {
+  subscription_token: string;
+  rotated_at?: string;
+}
+
+export interface ServiceBinding {
+  id: string;
+  authorization_id: string;
+  plugin_id: string;
+  service_id: string;
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AuditEntry {
+  id: number;
+  occurred_at: string;
+  actor_type: string;
+  actor_id: string;
+  action: string;
+  target_type: string;
+  target_id: string;
+  outcome: string;
+  metadata: Record<string, unknown>;
+}
+
+export interface SubscriptionInfo {
+  status: "active" | "disabled" | "expired" | "node_disabled";
+  user_name: string;
+  node_name: string;
+  node_address: string;
+  traffic_limit_bytes: number | null;
+  traffic_used_bytes: number | null;
+  reset: ResetRule;
+  expires_at: string | null;
+  services: unknown[];
+  announcement: string | null;
+}
+
 interface FieldViolation {
   field: string;
   description: string;
@@ -170,6 +246,49 @@ export async function updateUser(id: string, input: UserInput): Promise<User> {
 
 export async function deleteUser(id: string): Promise<void> {
   return request(`/api/v1/users/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
+export async function listAuthorizations(filters: { userID?: string; nodeID?: string } = {}): Promise<Authorization[]> {
+  const query = new URLSearchParams();
+  if (filters.userID) query.set("user_id", filters.userID);
+  if (filters.nodeID) query.set("node_id", filters.nodeID);
+  const suffix = query.size > 0 ? `?${query}` : "";
+  const response = await request<{ items: Authorization[] }>(`/api/v1/authorizations${suffix}`);
+  return response.items;
+}
+
+export async function createAuthorization(input: AuthorizationInput): Promise<{ authorization: Authorization; subscription_token: string }> {
+  return request("/api/v1/authorizations", { method: "POST", body: JSON.stringify(input) });
+}
+
+export async function updateAuthorization(id: string, input: AuthorizationInput): Promise<Authorization> {
+  return request(`/api/v1/authorizations/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify(input) });
+}
+
+export async function deleteAuthorization(id: string): Promise<void> {
+  return request(`/api/v1/authorizations/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
+export async function rotateSubscriptionToken(id: string): Promise<SubscriptionToken> {
+  return request(`/api/v1/authorizations/${encodeURIComponent(id)}/subscription-token`, { method: "POST" });
+}
+
+export async function listServiceBindings(authorizationID: string): Promise<ServiceBinding[]> {
+  const response = await request<{ items: ServiceBinding[] }>(
+    `/api/v1/authorizations/${encodeURIComponent(authorizationID)}/service-bindings`,
+  );
+  return response.items;
+}
+
+export async function listAudit(beforeID?: number, limit = 100): Promise<AuditEntry[]> {
+  const query = new URLSearchParams({ limit: String(limit) });
+  if (beforeID !== undefined) query.set("before_id", String(beforeID));
+  const response = await request<{ items: AuditEntry[] }>(`/api/v1/audit?${query}`);
+  return response.items;
+}
+
+export async function getSubscription(token: string): Promise<SubscriptionInfo> {
+  return request(`/api/v1/subscriptions/${encodeURIComponent(token)}`);
 }
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {

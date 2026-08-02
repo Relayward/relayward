@@ -60,6 +60,29 @@ func nullableString(value sql.NullString) *string {
 	return &result
 }
 
+func nullableInt64(value sql.NullInt64) *int64 {
+	if !value.Valid {
+		return nil
+	}
+	result := value.Int64
+	return &result
+}
+
+func nullableInt(value sql.NullInt64) *int {
+	if !value.Valid {
+		return nil
+	}
+	result := int(value.Int64)
+	return &result
+}
+
+func nullableUnix(value *time.Time) any {
+	if value == nil {
+		return nil
+	}
+	return unixTime(*value)
+}
+
 func boolInt(value bool) int {
 	if value {
 		return 1

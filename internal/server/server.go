@@ -89,6 +89,18 @@ func New(options Options) http.Handler {
 	mux.HandleFunc("GET /api/v1/users/{user_id}", server.withAuthentication(server.getUser))
 	mux.HandleFunc("PUT /api/v1/users/{user_id}", server.withAuthentication(server.withCSRF(server.updateUser)))
 	mux.HandleFunc("DELETE /api/v1/users/{user_id}", server.withAuthentication(server.withCSRF(server.deleteUser)))
+	mux.HandleFunc("GET /api/v1/authorizations", server.withAuthentication(server.listAuthorizations))
+	mux.HandleFunc("POST /api/v1/authorizations", server.withAuthentication(server.withCSRF(server.createAuthorization)))
+	mux.HandleFunc("GET /api/v1/authorizations/{authorization_id}", server.withAuthentication(server.getAuthorization))
+	mux.HandleFunc("PUT /api/v1/authorizations/{authorization_id}", server.withAuthentication(server.withCSRF(server.updateAuthorization)))
+	mux.HandleFunc("DELETE /api/v1/authorizations/{authorization_id}", server.withAuthentication(server.withCSRF(server.deleteAuthorization)))
+	mux.HandleFunc("POST /api/v1/authorizations/{authorization_id}/subscription-token", server.withAuthentication(server.withCSRF(server.rotateSubscriptionToken)))
+	mux.HandleFunc("GET /api/v1/authorizations/{authorization_id}/service-bindings", server.withAuthentication(server.listServiceBindings))
+	mux.HandleFunc("POST /api/v1/authorizations/{authorization_id}/service-bindings", server.withAuthentication(server.withCSRF(server.createServiceBinding)))
+	mux.HandleFunc("PUT /api/v1/service-bindings/{binding_id}", server.withAuthentication(server.withCSRF(server.updateServiceBinding)))
+	mux.HandleFunc("DELETE /api/v1/service-bindings/{binding_id}", server.withAuthentication(server.withCSRF(server.deleteServiceBinding)))
+	mux.HandleFunc("GET /api/v1/audit", server.withAuthentication(server.listAudit))
+	mux.HandleFunc("GET /api/v1/subscriptions/{subscription_token}", server.subscription)
 	return server.securityHeaders(mux)
 }
 
@@ -335,7 +347,7 @@ func (server *Server) clearCredentials(w http.ResponseWriter) {
 }
 
 func (server *Server) internalError(w http.ResponseWriter, request *http.Request, err error) {
-	server.logger.Error("request failed", "method", request.Method, "path", request.URL.Path, "error", err)
+	server.logger.Error("request failed", "method", request.Method, "route", request.Pattern, "error", err)
 	writeProblem(w, http.StatusInternalServerError, protocol.ErrorInternal, "The request could not be completed.", false)
 }
 

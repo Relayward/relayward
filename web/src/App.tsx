@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { APIError, getSession, getSetupStatus, initialize, login, logout, type SessionInfo } from "./api";
 import { LoginScreen, SetupScreen } from "./components/AuthScreen";
 import { Dashboard } from "./components/Dashboard";
+import { SubscriptionPage } from "./components/SubscriptionPage";
 import { loadSystemInfo, type SystemInfo } from "./system";
 
 type AppState =
@@ -13,15 +14,17 @@ type AppState =
   | { phase: "error"; message: string };
 
 export function App() {
+  const subscriptionToken = subscriptionTokenFromPath();
   const [state, setState] = useState<AppState>({ phase: "loading" });
 
   useEffect(() => {
+    if (subscriptionToken !== undefined) return;
     let active = true;
     bootstrap().then((next) => {
       if (active) setState(next);
     });
     return () => { active = false; };
-  }, []);
+  }, [subscriptionToken]);
 
   async function setup(username: string, password: string) {
     setState({ phase: "setup", busy: true });
@@ -50,6 +53,9 @@ export function App() {
     setState({ phase: "login", busy: false, secondFactorRequired: false });
   }
 
+  if (subscriptionToken !== undefined) {
+    return <SubscriptionPage token={subscriptionToken} />;
+  }
   if (state.phase === "loading") {
     return <div className="loading-screen"><span className="brand-mark">R</span><span>Relayward</span></div>;
   }
@@ -78,6 +84,16 @@ export function App() {
       onSessionRevoked={() => setState({ phase: "login", busy: false, secondFactorRequired: false })}
     />
   );
+}
+
+function subscriptionTokenFromPath(): string | undefined {
+  const match = window.location.pathname.match(/^\/s\/([^/]+)\/?$/);
+  if (!match) return undefined;
+  try {
+    return decodeURIComponent(match[1]);
+  } catch {
+    return "";
+  }
 }
 async function bootstrap(): Promise<AppState> {
   try {

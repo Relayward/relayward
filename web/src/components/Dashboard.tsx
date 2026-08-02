@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Gauge, LogOut, Server, Shield, Users } from "lucide-react";
+import { BadgeCheck, Gauge, LogOut, ScrollText, Server, Shield, Users } from "lucide-react";
 import QRCode from "qrcode";
 
 import {
@@ -13,6 +13,8 @@ import {
 } from "../api";
 import type { SystemInfo } from "../system";
 import { Field, FormError } from "./AuthScreen";
+import { AuditView } from "./AuditView";
+import { AuthorizationsView } from "./AuthorizationView";
 import { Modal } from "./Modal";
 import { NodesView, UsersView } from "./ResourceViews";
 
@@ -24,7 +26,7 @@ interface DashboardProps {
   onSessionRevoked: () => void;
 }
 
-type View = "system" | "nodes" | "users" | "security";
+type View = "system" | "nodes" | "users" | "authorizations" | "audit" | "security";
 
 export function Dashboard({ session, system, onLogout, onSessionChange, onSessionRevoked }: DashboardProps) {
   const [view, setView] = useState<View>("system");
@@ -72,12 +74,16 @@ export function Dashboard({ session, system, onLogout, onSessionChange, onSessio
           <button className={view === "system" ? "active" : ""} onClick={() => setView("system")}><Gauge size={17} />System</button>
           <button className={view === "nodes" ? "active" : ""} onClick={() => setView("nodes")}><Server size={17} />Nodes</button>
           <button className={view === "users" ? "active" : ""} onClick={() => setView("users")}><Users size={17} />Users</button>
+          <button className={view === "authorizations" ? "active" : ""} onClick={() => setView("authorizations")}><BadgeCheck size={17} />Authorizations</button>
+          <button className={view === "audit" ? "active" : ""} onClick={() => setView("audit")}><ScrollText size={17} />Audit</button>
           <button className={view === "security" ? "active" : ""} onClick={() => setView("security")}><Shield size={17} />Security</button>
         </nav>
         <main className="dashboard-main">
           {view === "system" ? <SystemView system={system} session={session} /> : null}
           {view === "nodes" ? <NodesView /> : null}
           {view === "users" ? <UsersView /> : null}
+          {view === "authorizations" ? <AuthorizationsView /> : null}
+          {view === "audit" ? <AuditView /> : null}
           {view === "security" ? (
             <SecurityView
               session={session}

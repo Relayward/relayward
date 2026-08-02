@@ -264,6 +264,111 @@ func TestNodeAndUserHTTPFlow(t *testing.T) {
 	}
 }
 
+func TestAuthorizationBindingAndAuditHTTPFlow(t *testing.T) {
+	handler, _ := newTestHandler(t)
+	sessionCookie, csrfCookie := setupCookies(t, handler)
+	headers := map[string]string{"Content-Type": "application/json", "X-CSRF-Token": csrfCookie.Value}
+
+	nodeRequest := performRequest(handler, http.MethodPost, "/api/v1/nodes", []byte(`{"name":"Edge"}`), headers, sessionCookie)
+	var node nodeResponse
+	decodeResponse(t, nodeRequest, &node)
+	userRequest := performRequest(handler, http.MethodPost, "/api/v1/users",
+		[]byte(`{"display_name":"Alice","email":null,"telegram":null,"note":""}`), headers, sessionCookie)
+	var user userResponse
+	decodeResponse(t, userRequest, &user)
+
+	body := fmt.Sprintf(`{
+      "user_id":%q,"node_id":%q,"enabled":true,"traffic_limit_bytes":null,
+      "reset":{"kind":"never","value":null,"timezone":"UTC","period_anchor":null},
+      "expires_at":null,"soft_ip_limit":null,"activity_window_seconds":600,"block_duration_seconds":1800
+    }`, user.ID, node.ID)
+	create := performRequest(handler, http.MethodPost, "/api/v1/authorizations", []byte(body), headers, sessionCookie)
+	if create.Code != http.StatusCreated {
+		t.Fatalf("create authorization status = %d, body = %s", create.Code, create.Body.String())
+	}
+	var created struct {
+		Authorization     authorizationResponse `json:"authorization"`
+		SubscriptionToken string                `json:"subscription_token"`
+	}
+	decodeResponse(t, create, &created)
+	if !strings.HasPrefix(created.SubscriptionToken, "rws_") {
+		t.Fatalf("subscription token = %q", created.SubscriptionToken)
+	}
+	publicSubscription := performRequest(handler, http.MethodGet,
+		"/api/v1/subscriptions/"+created.SubscriptionToken, nil, nil)
+	if publicSubscription.Code != http.StatusOK || !strings.Contains(publicSubscription.Body.String(), `"status":"active"`) {
+		t.Fatalf("public subscription status = %d, body = %s", publicSubscription.Code, publicSubscription.Body.String())
+	}
+	if strings.Contains(publicSubscription.Body.String(), created.SubscriptionToken) {
+		t.Fatal("public subscription response contains its raw token")
+	}
+	duplicate := performRequest(handler, http.MethodPost, "/api/v1/authorizations", []byte(body), headers, sessionCookie)
+	if duplicate.Code != http.StatusConflict {
+		t.Fatalf("duplicate authorization status = %d", duplicate.Code)
+	}
+
+	invalidBody := strings.Replace(body, `"kind":"never","value":null`, `"kind":"weekly","value":null`, 1)
+	invalid := performRequest(handler, http.MethodPut, "/api/v1/authorizations/"+created.Authorization.ID,
+		[]byte(invalidBody), headers, sessionCookie)
+	if invalid.Code != http.StatusBadRequest {
+		t.Fatalf("invalid authorization update status = %d", invalid.Code)
+	}
+
+	binding := performRequest(handler, http.MethodPost,
+		"/api/v1/authorizations/"+created.Authorization.ID+"/service-bindings",
+		[]byte(`{"plugin_id":"xray-runtime","service_id":"vless-main","enabled":true}`), headers, sessionCookie)
+	if binding.Code != http.StatusNotFound {
+		t.Fatalf("create binding without plugin service status = %d, body = %s", binding.Code, binding.Body.String())
+	}
+
+	rotate := performRequest(handler, http.MethodPost,
+		"/api/v1/authorizations/"+created.Authorization.ID+"/subscription-token", nil,
+		map[string]string{"X-CSRF-Token": csrfCookie.Value}, sessionCookie)
+	if rotate.Code != http.StatusOK {
+		t.Fatalf("rotate token status = %d, body = %s", rotate.Code, rotate.Body.String())
+	}
+	if strings.Contains(rotate.Body.String(), created.SubscriptionToken) {
+		t.Fatal("rotation returned the previous subscription token")
+	}
+	oldSubscription := performRequest(handler, http.MethodGet,
+		"/api/v1/subscriptions/"+created.SubscriptionToken, nil, nil)
+	if oldSubscription.Code != http.StatusNotFound {
+		t.Fatalf("rotated subscription token status = %d", oldSubscription.Code)
+	}
+
+	audit := performRequest(handler, http.MethodGet, "/api/v1/audit?limit=200", nil, nil, sessionCookie)
+	if audit.Code != http.StatusOK || !strings.Contains(audit.Body.String(), "authorization.subscription_token.rotate") {
+		t.Fatalf("audit status = %d, body = %s", audit.Code, audit.Body.String())
+	}
+	if strings.Contains(audit.Body.String(), created.SubscriptionToken) {
+		t.Fatal("audit response contains a raw subscription token")
+	}
+}
+
+func TestSubscriptionStatus(t *testing.T) {
+	now := time.Date(2026, time.August, 2, 10, 0, 0, 0, time.UTC)
+	expired := now.Add(-time.Second)
+	future := now.Add(time.Second)
+	tests := []struct {
+		name     string
+		snapshot store.SubscriptionSnapshot
+		want     string
+	}{
+		{name: "active", snapshot: store.SubscriptionSnapshot{NodeEnabled: true, Authorization: store.Authorization{Enabled: true}}, want: "active"},
+		{name: "future expiry", snapshot: store.SubscriptionSnapshot{NodeEnabled: true, Authorization: store.Authorization{Enabled: true, ExpiresAt: &future}}, want: "active"},
+		{name: "expired", snapshot: store.SubscriptionSnapshot{NodeEnabled: true, Authorization: store.Authorization{Enabled: true, ExpiresAt: &expired}}, want: "expired"},
+		{name: "disabled authorization", snapshot: store.SubscriptionSnapshot{NodeEnabled: true}, want: "disabled"},
+		{name: "disabled node", snapshot: store.SubscriptionSnapshot{}, want: "node_disabled"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := subscriptionStatus(test.snapshot, now); got != test.want {
+				t.Fatalf("subscriptionStatus() = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
 func newTestHandler(t *testing.T) (http.Handler, *store.Store) {
 	t.Helper()
 	directory := t.TempDir()

@@ -178,6 +178,22 @@ CREATE TABLE audit_log (
 CREATE INDEX audit_log_occurred_idx ON audit_log(occurred_at DESC, id DESC);
 `,
 	},
+	{
+		version: 2,
+		sql: `
+CREATE TABLE plugin_services (
+    node_id TEXT NOT NULL,
+    plugin_id TEXT NOT NULL,
+    service_id TEXT NOT NULL,
+    display_name TEXT NOT NULL,
+    enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
+    capabilities_json TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(capabilities_json)),
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (node_id, plugin_id, service_id),
+    FOREIGN KEY (node_id, plugin_id) REFERENCES node_plugin_instances(node_id, plugin_id) ON DELETE CASCADE
+);
+`,
+	},
 }
 
 func migrate(ctx context.Context, db *sql.DB) error {
