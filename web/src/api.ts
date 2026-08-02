@@ -62,6 +62,43 @@ export interface AgentUpdate {
   updated_at: string;
 }
 
+export type PluginState = "running" | "stopped" | "absent" | "failed";
+
+export interface NodePluginInstance {
+  node_id: string;
+  node_name: string;
+  plugin_id: string;
+  plugin_name: string;
+  desired_version: string;
+  active_version: string;
+  desired_state: Exclude<PluginState, "failed">;
+  actual_state: PluginState;
+  generation: number;
+  desired_configuration_sha256: string;
+  artifact_size: number;
+  artifact_sha256: string;
+  actual_generation: number;
+  actual_configuration_sha256: string;
+  health: "healthy" | "unhealthy" | "unknown";
+  reason: string;
+  restart_count: number;
+  reconcile_status: "pending" | "succeeded" | "failed" | "expired";
+  last_problem?: Problem;
+  last_command_id: string;
+  command_status: "none" | "pending" | "succeeded" | "failed" | "expired";
+  command_attempts: number;
+  command_last_sent_at: string | null;
+  command_completed_at: string | null;
+  actual_observed_at: string | null;
+  updated_at: string;
+}
+
+export interface NodePluginInput {
+  desired_state: Exclude<PluginState, "failed">;
+  version: string;
+  configuration?: Record<string, unknown>;
+}
+
 export interface User {
   id: string;
   display_name: string;
@@ -265,6 +302,18 @@ export async function getLatestAgentUpdate(id: string): Promise<AgentUpdate | nu
     if (cause instanceof APIError && cause.status === 404) return null;
     throw cause;
   }
+}
+
+export async function listNodePluginInstances(): Promise<NodePluginInstance[]> {
+  const response = await request<{ items: NodePluginInstance[] }>("/api/v1/node-plugin-instances");
+  return response.items;
+}
+
+export async function reconcileNodePlugin(nodeID: string, pluginID: string, input: NodePluginInput): Promise<NodePluginInstance> {
+  return request(`/api/v1/nodes/${encodeURIComponent(nodeID)}/plugins/${encodeURIComponent(pluginID)}`, {
+    method: "PUT",
+    body: JSON.stringify(input),
+  });
 }
 
 export async function listUsers(): Promise<User[]> {

@@ -1,8 +1,11 @@
 package management
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"time"
 
 	agentv1 "github.com/Relayward/relayward-sdk/agent/v1"
@@ -10,6 +13,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/Relayward/relayward/internal/auth"
+	"github.com/Relayward/relayward/internal/secretbox"
 	"github.com/Relayward/relayward/internal/store"
 )
 
@@ -72,7 +76,14 @@ func (service *Service) RecordAgentHeartbeat(ctx context.Context, nodeID string,
 }
 
 func (service *Service) NextAgentCommand(ctx context.Context, nodeID string, now time.Time) (store.AgentCommand, error) {
-	return service.store.NextAgentCommand(ctx, nodeID, now)
+	command, err := service.store.NextAgentCommand(ctx, nodeID, now)
+	if err != nil {
+		return store.AgentCommand{}, err
+	}
+	if err := service.decryptAgentCommand(ctx, &command); err != nil {
+		return store.AgentCommand{}, err
+	}
+	return command, nil
 }
 
 func (service *Service) MarkAgentCommandSent(ctx context.Context, commandID, nodeID string, sentAt time.Time) error {
@@ -80,7 +91,20 @@ func (service *Service) MarkAgentCommandSent(ctx context.Context, commandID, nod
 }
 
 func (service *Service) CompleteAgentCommand(ctx context.Context, nodeID string, credentialHash []byte, result agentv1.CommandResult, receivedAt time.Time) error {
-	return service.store.CompleteAgentCommand(ctx, nodeID, credentialHash, result, receivedAt)
+	command, err := service.store.AgentCommandByID(ctx, result.CommandID)
+	if err != nil || command.NodeID != nodeID {
+		return store.ErrNotFound
+	}
+	if !command.RequestEncrypted || command.Status != store.AgentCommandPending {
+		return service.store.CompleteAgentCommand(ctx, nodeID, credentialHash, result, receivedAt)
+	}
+	if err := service.decryptAgentCommand(ctx, &command); err != nil {
+		if err == store.ErrNotFound {
+			return service.store.CompleteAgentCommand(ctx, nodeID, credentialHash, result, receivedAt)
+		}
+		return err
+	}
+	return service.store.CompleteEncryptedAgentCommand(ctx, nodeID, credentialHash, result, command.Request, receivedAt)
 }
 
 func (service *Service) RequestAgentUpdate(ctx context.Context, nodeID, version string) (store.AgentCommand, error) {
@@ -131,4 +155,40 @@ func containsCapability(values []string, expected string) bool {
 		}
 	}
 	return false
+}
+
+func (service *Service) decryptAgentCommand(ctx context.Context, command *store.AgentCommand) error {
+	if !command.RequestEncrypted {
+		return nil
+	}
+	if service.secrets == nil || !service.secrets.Available() {
+		return fmt.Errorf("decrypt Agent command: %w", secretbox.ErrUnavailable)
+	}
+	ciphertext, err := service.store.Secret(ctx, store.AgentCommandSecretOwnerType, command.ID, store.AgentCommandRequestSecret)
+	if err != nil {
+		return err
+	}
+	plaintext, err := service.secrets.Decrypt(store.AgentCommandSecretOwnerType, command.ID, store.AgentCommandRequestSecret, ciphertext)
+	if err != nil {
+		return fmt.Errorf("decrypt Agent command: %w", err)
+	}
+	decoder := json.NewDecoder(bytes.NewReader(plaintext))
+	decoder.DisallowUnknownFields()
+	var request agentv1.Command
+	if err := decoder.Decode(&request); err != nil {
+		return fmt.Errorf("decode encrypted Agent command: %w", err)
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		return fmt.Errorf("decode encrypted Agent command: trailing JSON value")
+	}
+	digest, err := agentv1.CommandDigest(request)
+	if err != nil {
+		return fmt.Errorf("validate encrypted Agent command: %w", err)
+	}
+	if digest != command.RequestSHA256 || request.Kind != command.Kind {
+		return fmt.Errorf("validate encrypted Agent command: digest mismatch")
+	}
+	command.Request = request
+	return nil
 }

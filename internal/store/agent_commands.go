@@ -21,22 +21,36 @@ const (
 )
 
 type AgentCommand struct {
-	ID            string
-	NodeID        string
-	Kind          string
-	Request       agentv1.Command
-	RequestSHA256 string
-	Status        string
-	Attempts      int
-	LastSentAt    *time.Time
-	Result        *agentv1.CommandResult
-	CompletedAt   *time.Time
-	ExpiresAt     time.Time
-	CreatedAt     time.Time
-	UpdatedAt     time.Time
+	ID               string
+	NodeID           string
+	Kind             string
+	Request          agentv1.Command
+	RequestEncrypted bool
+	ScopeKey         string
+	RequestSHA256    string
+	Status           string
+	Attempts         int
+	LastSentAt       *time.Time
+	Result           *agentv1.CommandResult
+	CompletedAt      *time.Time
+	ExpiresAt        time.Time
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
 }
 
+const (
+	AgentCommandSecretOwnerType = "agent_command"
+	AgentCommandRequestSecret   = "request"
+)
+
 func (store *Store) CreateAgentCommand(ctx context.Context, commandID, nodeID string, request agentv1.Command, now time.Time) (AgentCommand, error) {
+	if request.Kind == agentv1.CommandPluginReconcile {
+		return AgentCommand{}, errors.New("plugin reconcile commands must use encrypted storage")
+	}
+	return store.createAgentCommand(ctx, commandID, nodeID, request, now)
+}
+
+func (store *Store) createAgentCommand(ctx context.Context, commandID, nodeID string, request agentv1.Command, now time.Time) (AgentCommand, error) {
 	if err := protocol.ValidateIdempotencyKey(commandID); err != nil {
 		return AgentCommand{}, fmt.Errorf("validate Agent command ID: %w", err)
 	}
@@ -82,9 +96,9 @@ WHERE node_id = ? AND kind = ? AND status = 'pending' AND expires_at <= ?`,
 		}
 	}
 	result, err := tx.ExecContext(ctx, `
-	INSERT INTO agent_commands(id, node_id, kind, request_json, request_sha256, expires_at, created_at, updated_at)
-	VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-	ON CONFLICT DO NOTHING`, commandID, nodeID, request.Kind, string(raw), digest,
+	INSERT INTO agent_commands(id, node_id, kind, request_json, request_sha256, request_encrypted, scope_key, expires_at, created_at, updated_at)
+	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT DO NOTHING`, commandID, nodeID, request.Kind, string(raw), digest, 0, "",
 		unixTime(request.ExpiresAt), unixTime(now), unixTime(now))
 	if err != nil {
 		return AgentCommand{}, fmt.Errorf("insert Agent command: %w", err)
@@ -129,8 +143,9 @@ func (store *Store) AgentCommandByID(ctx context.Context, commandID string) (Age
 func (store *Store) LatestAgentCommandByKind(ctx context.Context, nodeID, kind string, now time.Time) (AgentCommand, error) {
 	if _, err := store.db.ExecContext(ctx, `
 UPDATE agent_commands SET status = 'expired', completed_at = ?, updated_at = ?
-WHERE node_id = ? AND kind = ? AND status = 'pending' AND expires_at <= ?`,
-		unixTime(now), unixTime(now), nodeID, kind, unixTime(now)); err != nil {
+WHERE node_id = ? AND kind = ? AND status = 'pending' AND expires_at <= ?
+  AND (kind <> ? OR attempts = 0)`,
+		unixTime(now), unixTime(now), nodeID, kind, unixTime(now), agentv1.CommandPluginReconcile); err != nil {
 		return AgentCommand{}, fmt.Errorf("expire Agent commands by kind: %w", err)
 	}
 	return scanAgentCommand(store.db.QueryRowContext(ctx, agentCommandSelect+`
@@ -146,9 +161,20 @@ func (store *Store) NextAgentCommand(ctx context.Context, nodeID string, now tim
 	defer tx.Rollback()
 	if _, err := tx.ExecContext(ctx, `
 UPDATE agent_commands SET status = 'expired', completed_at = ?, updated_at = ?
-WHERE node_id = ? AND status = 'pending' AND expires_at <= ?`,
-		unixTime(now), unixTime(now), nodeID, unixTime(now)); err != nil {
+WHERE node_id = ? AND status = 'pending' AND expires_at <= ?
+  AND (kind <> ? OR attempts = 0)`,
+		unixTime(now), unixTime(now), nodeID, unixTime(now), agentv1.CommandPluginReconcile); err != nil {
 		return AgentCommand{}, fmt.Errorf("expire undispatched Agent commands: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `
+DELETE FROM secrets
+WHERE owner_type = ? AND name = ? AND owner_id IN (
+    SELECT id FROM agent_commands WHERE node_id = ? AND status = 'expired'
+)`, AgentCommandSecretOwnerType, AgentCommandRequestSecret, nodeID); err != nil {
+		return AgentCommand{}, fmt.Errorf("delete expired Agent command secrets: %w", err)
+	}
+	if err := cleanExpiredPluginCommandsTx(ctx, tx, now); err != nil {
+		return AgentCommand{}, err
 	}
 	value, err := scanAgentCommand(tx.QueryRowContext(ctx, agentCommandSelect+`
  JOIN nodes ON nodes.id = agent_commands.node_id
@@ -180,6 +206,18 @@ WHERE id = ? AND node_id = ? AND status = 'pending'`, unixTime(sentAt), unixTime
 }
 
 func (store *Store) CompleteAgentCommand(ctx context.Context, nodeID string, credentialHash []byte, result agentv1.CommandResult, now time.Time) error {
+	return store.completeAgentCommand(ctx, nodeID, credentialHash, result, nil, now)
+}
+
+func (store *Store) CompleteEncryptedAgentCommand(ctx context.Context, nodeID string, credentialHash []byte,
+	result agentv1.CommandResult, request agentv1.Command, now time.Time,
+) error {
+	return store.completeAgentCommand(ctx, nodeID, credentialHash, result, &request, now)
+}
+
+func (store *Store) completeAgentCommand(ctx context.Context, nodeID string, credentialHash []byte,
+	result agentv1.CommandResult, decryptedRequest *agentv1.Command, now time.Time,
+) error {
 	if err := agentv1.ValidateCommandResult(result); err != nil {
 		return fmt.Errorf("validate Agent command result: %w", err)
 	}
@@ -192,13 +230,18 @@ func (store *Store) CompleteAgentCommand(ctx context.Context, nodeID string, cre
 		return fmt.Errorf("begin Agent command completion: %w", err)
 	}
 	defer tx.Rollback()
-	var kind, digest, status, requestJSON string
+	var kind, digest, status, requestJSON, scopeKey string
+	var requestEncrypted int
 	var existingResult sql.NullString
 	err = tx.QueryRowContext(ctx, `
-	SELECT agent_commands.kind, agent_commands.request_sha256, agent_commands.status, agent_commands.request_json, agent_commands.result_json
+	SELECT agent_commands.kind, agent_commands.request_sha256, agent_commands.status,
+       agent_commands.request_json, agent_commands.request_encrypted, agent_commands.scope_key,
+       agent_commands.result_json
 FROM agent_commands JOIN nodes ON nodes.id = agent_commands.node_id
 WHERE agent_commands.id = ? AND agent_commands.node_id = ? AND nodes.enabled = 1 AND nodes.credential_hash = ?`,
-		result.CommandID, nodeID, credentialHash).Scan(&kind, &digest, &status, &requestJSON, &existingResult)
+		result.CommandID, nodeID, credentialHash).Scan(
+		&kind, &digest, &status, &requestJSON, &requestEncrypted, &scopeKey, &existingResult,
+	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ErrNotFound
 	}
@@ -208,15 +251,33 @@ WHERE agent_commands.id = ? AND agent_commands.node_id = ? AND nodes.enabled = 1
 	if digest != result.RequestSHA256 {
 		return ErrConflict
 	}
+	if status != AgentCommandPending {
+		if (status == AgentCommandSucceeded || status == AgentCommandFailed) && existingResult.Valid && bytes.Equal([]byte(existingResult.String), raw) {
+			return tx.Commit()
+		}
+		return ErrStateConflict
+	}
+	if (requestEncrypted != 0) != (decryptedRequest != nil) {
+		return ErrStateConflict
+	}
+	var request agentv1.Command
+	if decryptedRequest != nil {
+		request = *decryptedRequest
+		requestDigest, err := agentv1.CommandDigest(request)
+		if err != nil {
+			return fmt.Errorf("validate decrypted Agent command: %w", err)
+		}
+		if requestDigest != digest || request.Kind != kind {
+			return ErrConflict
+		}
+	} else if err := json.Unmarshal([]byte(requestJSON), &request); err != nil {
+		return fmt.Errorf("decode completed Agent command: %w", err)
+	}
 	auditAction := "node.command.complete"
 	auditTargetType := "agent_command"
 	auditTargetID := result.CommandID
 	auditMetadata := map[string]any{"kind": kind}
 	if kind == agentv1.CommandAgentUpdate {
-		var request agentv1.Command
-		if err := json.Unmarshal([]byte(requestJSON), &request); err != nil {
-			return fmt.Errorf("decode completed Agent update command: %w", err)
-		}
 		update, err := agentv1.DecodeAgentUpdateCommand(request)
 		if err != nil {
 			return fmt.Errorf("validate completed Agent update command: %w", err)
@@ -235,12 +296,43 @@ WHERE agent_commands.id = ? AND agent_commands.node_id = ? AND nodes.enabled = 1
 		auditTargetID = nodeID
 		auditMetadata["command_id"] = result.CommandID
 		auditMetadata["version"] = update.Version
-	}
-	if status != AgentCommandPending {
-		if (status == AgentCommandSucceeded || status == AgentCommandFailed) && existingResult.Valid && bytes.Equal([]byte(existingResult.String), raw) {
-			return tx.Commit()
+	} else if kind == agentv1.CommandPluginReconcile {
+		reconcile, err := agentv1.DecodePluginReconcileCommand(request)
+		if err != nil {
+			return fmt.Errorf("validate completed plugin reconcile command: %w", err)
 		}
-		return ErrStateConflict
+		if reconcile.PluginID != scopeKey {
+			return ErrConflict
+		}
+		if result.Status == agentv1.CommandStatusSucceeded {
+			output, err := agentv1.DecodePluginReconcileOutput(result.Output)
+			if err != nil {
+				return fmt.Errorf("validate plugin reconcile result: %w", err)
+			}
+			configurationSHA256 := ""
+			if reconcile.DesiredState != agentv1.PluginStateAbsent {
+				configurationSHA256, err = agentv1.PluginConfigurationDigest(reconcile.Configuration)
+				if err != nil {
+					return fmt.Errorf("digest completed plugin configuration: %w", err)
+				}
+			}
+			if output.PluginID != reconcile.PluginID || output.Generation != reconcile.Generation ||
+				output.State != reconcile.DesiredState || output.Version != reconcile.Version ||
+				output.ConfigurationSHA256 != configurationSHA256 {
+				return errors.New("plugin reconcile result does not match requested state")
+			}
+		}
+		auditAction = "node.plugin_reconcile.complete"
+		auditTargetType = "node_plugin_instance"
+		auditTargetID = NodePluginSecretOwnerID(nodeID, reconcile.PluginID)
+		auditMetadata = map[string]any{
+			"command_id": result.CommandID, "node_id": nodeID, "plugin_id": reconcile.PluginID,
+			"generation": reconcile.Generation, "desired_state": reconcile.DesiredState,
+			"version": reconcile.Version,
+		}
+		if err := updateNodePluginReconcileResultTx(ctx, tx, nodeID, reconcile, result, now); err != nil {
+			return err
+		}
 	}
 	status = result.Status
 	updated, err := tx.ExecContext(ctx, `
@@ -256,6 +348,13 @@ WHERE id = ? AND node_id = ? AND status = 'pending'`, status, string(raw), unixT
 	if rows != 1 {
 		return ErrStateConflict
 	}
+	if requestEncrypted != 0 {
+		if _, err := tx.ExecContext(ctx, `
+DELETE FROM secrets WHERE owner_type = ? AND owner_id = ? AND name = ?`,
+			AgentCommandSecretOwnerType, result.CommandID, AgentCommandRequestSecret); err != nil {
+			return fmt.Errorf("delete completed Agent command secret: %w", err)
+		}
+	}
 	if err := appendAuditTx(ctx, tx, AuditEntry{
 		OccurredAt: now, ActorType: "agent", ActorID: nodeID, Action: auditAction,
 		TargetType: auditTargetType, TargetID: auditTargetID, Outcome: result.Status,
@@ -266,9 +365,93 @@ WHERE id = ? AND node_id = ? AND status = 'pending'`, status, string(raw), unixT
 	return commit(tx, "Agent command completion")
 }
 
+func updateNodePluginReconcileResultTx(ctx context.Context, tx *sql.Tx, nodeID string,
+	reconcile agentv1.PluginReconcileCommand, result agentv1.CommandResult, now time.Time,
+) error {
+	problemJSON := any(nil)
+	if result.Problem != nil {
+		raw, err := json.Marshal(result.Problem)
+		if err != nil {
+			return fmt.Errorf("encode plugin reconcile problem: %w", err)
+		}
+		problemJSON = string(raw)
+	}
+	if result.Status == agentv1.CommandStatusFailed {
+		updated, err := tx.ExecContext(ctx, `
+UPDATE node_plugin_instances SET reconcile_status = 'failed', last_problem_json = ?, updated_at = ?
+WHERE node_id = ? AND plugin_id = ? AND generation = ?`,
+			problemJSON, unixTime(now), nodeID, reconcile.PluginID, int64(reconcile.Generation))
+		if err != nil {
+			return fmt.Errorf("record failed plugin reconciliation: %w", err)
+		}
+		return expectOneAgentUpdate(updated, "plugin reconciliation failure")
+	}
+	configurationSHA256 := ""
+	health := agentv1.PluginHealthUnknown
+	if reconcile.DesiredState != agentv1.PluginStateAbsent {
+		var err error
+		configurationSHA256, err = agentv1.PluginConfigurationDigest(reconcile.Configuration)
+		if err != nil {
+			return fmt.Errorf("digest reconciled plugin configuration: %w", err)
+		}
+		if reconcile.DesiredState == agentv1.PluginStateRunning {
+			health = agentv1.PluginHealthHealthy
+		}
+	}
+	var actualGeneration int64
+	var actualObservedAt sql.NullInt64
+	if err := tx.QueryRowContext(ctx, `
+SELECT actual_generation, actual_observed_at_ns
+FROM node_plugin_instances
+WHERE node_id = ? AND plugin_id = ? AND generation = ?`,
+		nodeID, reconcile.PluginID, int64(reconcile.Generation),
+	).Scan(&actualGeneration, &actualObservedAt); errors.Is(err, sql.ErrNoRows) {
+		return ErrStateConflict
+	} else if err != nil {
+		return fmt.Errorf("read plugin status before reconciliation success: %w", err)
+	}
+	resultObservedAt := result.CompletedAt.UTC().UnixNano()
+	if actualGeneration > int64(reconcile.Generation) ||
+		(actualGeneration == int64(reconcile.Generation) && actualObservedAt.Valid && actualObservedAt.Int64 > resultObservedAt) {
+		updated, err := tx.ExecContext(ctx, `
+UPDATE node_plugin_instances SET
+    reconcile_status = 'succeeded', last_problem_json = NULL, updated_at = ?
+WHERE node_id = ? AND plugin_id = ? AND generation = ?`,
+			unixTime(now), nodeID, reconcile.PluginID, int64(reconcile.Generation))
+		if err != nil {
+			return fmt.Errorf("record successful plugin reconciliation: %w", err)
+		}
+		return expectOneAgentUpdate(updated, "plugin reconciliation success")
+	}
+	updated, err := tx.ExecContext(ctx, `
+UPDATE node_plugin_instances SET
+    active_version = NULLIF(?, ''), actual_state = ?, actual_generation = ?,
+    actual_configuration_sha256 = ?, health = ?, reason = '', restart_count = 0,
+    reconcile_status = 'succeeded', last_problem_json = NULL,
+    actual_observed_at_ns = ?, updated_at = ?
+WHERE node_id = ? AND plugin_id = ? AND generation = ?`,
+		reconcile.Version, reconcile.DesiredState, int64(reconcile.Generation), configurationSHA256,
+		health, resultObservedAt, unixTime(now), nodeID, reconcile.PluginID, int64(reconcile.Generation))
+	if err != nil {
+		return fmt.Errorf("record successful plugin reconciliation: %w", err)
+	}
+	if err := expectOneAgentUpdate(updated, "plugin reconciliation success"); err != nil {
+		return err
+	}
+	if reconcile.DesiredState == agentv1.PluginStateAbsent {
+		if _, err := tx.ExecContext(ctx, `
+DELETE FROM secrets WHERE owner_type = ? AND owner_id = ? AND name = ?`,
+			NodePluginSecretOwnerType, NodePluginSecretOwnerID(nodeID, reconcile.PluginID), NodePluginConfigurationSecret); err != nil {
+			return fmt.Errorf("delete removed plugin configuration: %w", err)
+		}
+	}
+	return nil
+}
+
 const agentCommandSelect = `
 SELECT agent_commands.id, agent_commands.node_id, agent_commands.kind, agent_commands.request_json,
-       agent_commands.request_sha256, agent_commands.status, agent_commands.attempts,
+	   agent_commands.request_encrypted, agent_commands.scope_key, agent_commands.request_sha256,
+	   agent_commands.status, agent_commands.attempts,
        agent_commands.last_sent_at, agent_commands.result_json, agent_commands.completed_at,
        agent_commands.expires_at, agent_commands.created_at, agent_commands.updated_at
 FROM agent_commands`
@@ -279,7 +462,8 @@ func scanAgentCommand(row rowScanner) (AgentCommand, error) {
 	var result sql.NullString
 	var lastSentAt, completedAt sql.NullInt64
 	var expiresAt, createdAt, updatedAt int64
-	if err := row.Scan(&value.ID, &value.NodeID, &value.Kind, &request, &value.RequestSHA256,
+	var requestEncrypted int
+	if err := row.Scan(&value.ID, &value.NodeID, &value.Kind, &request, &requestEncrypted, &value.ScopeKey, &value.RequestSHA256,
 		&value.Status, &value.Attempts, &lastSentAt, &result, &completedAt,
 		&expiresAt, &createdAt, &updatedAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -287,8 +471,11 @@ func scanAgentCommand(row rowScanner) (AgentCommand, error) {
 		}
 		return AgentCommand{}, fmt.Errorf("scan Agent command: %w", err)
 	}
-	if err := json.Unmarshal(request, &value.Request); err != nil {
-		return AgentCommand{}, fmt.Errorf("decode Agent command request: %w", err)
+	value.RequestEncrypted = requestEncrypted != 0
+	if !value.RequestEncrypted {
+		if err := json.Unmarshal(request, &value.Request); err != nil {
+			return AgentCommand{}, fmt.Errorf("decode Agent command request: %w", err)
+		}
 	}
 	if result.Valid {
 		var decoded agentv1.CommandResult

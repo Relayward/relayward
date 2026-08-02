@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/Relayward/relayward/internal/secretbox"
 	"github.com/Relayward/relayward/internal/store"
 )
 
@@ -93,12 +94,17 @@ func TestUserLifecycleAndValidation(t *testing.T) {
 
 func newTestService(t *testing.T) *Service {
 	t.Helper()
-	database, err := store.Open(context.Background(), filepath.Join(t.TempDir(), "relayward.db"))
+	directory := t.TempDir()
+	database, err := store.Open(context.Background(), filepath.Join(directory, "relayward.db"))
 	if err != nil {
 		t.Fatalf("store.Open() error = %v", err)
 	}
 	t.Cleanup(func() { _ = database.Close() })
-	return NewService(database)
+	secrets, err := secretbox.Open(directory, 0)
+	if err != nil {
+		t.Fatalf("secretbox.Open() error = %v", err)
+	}
+	return NewService(database, secrets)
 }
 
 func fieldName(err error) string {

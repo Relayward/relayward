@@ -14,6 +14,7 @@ import (
 	"github.com/Relayward/relayward-sdk/protocol"
 
 	"github.com/Relayward/relayward/internal/eventstore"
+	"github.com/Relayward/relayward/internal/store"
 )
 
 func (server *Server) receiveAgentEvents(w http.ResponseWriter, request *http.Request) {
@@ -41,6 +42,18 @@ func (server *Server) receiveAgentEvents(w http.ResponseWriter, request *http.Re
 		writeProblem(w, http.StatusBadRequest, protocol.ErrorInvalidArgument, "Invalid Agent event batch.", false)
 		return
 	}
+	pluginStatuses := make([]pluginStatusUpdate, 0)
+	for _, event := range batch.Events {
+		if event.Kind != agentv1.EventPluginStatus {
+			continue
+		}
+		status, err := agentv1.DecodePluginStatusEvent(event.Payload)
+		if err != nil {
+			writeProblem(w, http.StatusBadRequest, protocol.ErrorInvalidArgument, "Invalid plugin status event.", false)
+			return
+		}
+		pluginStatuses = append(pluginStatuses, pluginStatusUpdate{status: status, observedAt: event.ObservedAt})
+	}
 	if server.eventStore == nil {
 		server.internalError(w, request, errors.New("event store is not configured"))
 		return
@@ -49,6 +62,13 @@ func (server *Server) receiveAgentEvents(w http.ResponseWriter, request *http.Re
 	highest, err := server.eventStore.Ingest(request.Context(), node.ID, batch, receivedAt)
 	switch {
 	case err == nil:
+		for _, update := range pluginStatuses {
+			if err := server.management.RecordNodePluginStatus(request.Context(), node.ID, update.status, update.observedAt, receivedAt); err != nil &&
+				!errors.Is(err, store.ErrNotFound) {
+				server.internalError(w, request, err)
+				return
+			}
+		}
 		writeJSON(w, http.StatusOK, agentv1.EventBatchAck{
 			APIVersion: agentv1.APIVersion, StreamID: batch.StreamID,
 			HighestContiguousSequence: highest, ServerTime: receivedAt,
@@ -58,6 +78,11 @@ func (server *Server) receiveAgentEvents(w http.ResponseWriter, request *http.Re
 	default:
 		server.internalError(w, request, err)
 	}
+}
+
+type pluginStatusUpdate struct {
+	status     agentv1.PluginStatusEvent
+	observedAt time.Time
 }
 
 func decodeAgentEventBatch(w http.ResponseWriter, request *http.Request) (agentv1.EventBatch, error) {

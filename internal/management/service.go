@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/mail"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -12,18 +13,21 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/Relayward/relayward/internal/auth"
+	"github.com/Relayward/relayward/internal/secretbox"
 	"github.com/Relayward/relayward/internal/store"
 )
 
 const registrationTokenLifetime = 15 * time.Minute
 
 type Service struct {
-	store *store.Store
-	now   func() time.Time
+	store    *store.Store
+	secrets  *secretbox.Manager
+	now      func() time.Time
+	pluginMu sync.Mutex
 }
 
-func NewService(database *store.Store) *Service {
-	return &Service{store: database, now: time.Now}
+func NewService(database *store.Store, secrets *secretbox.Manager) *Service {
+	return &Service{store: database, secrets: secrets, now: time.Now}
 }
 
 type NodeInput struct {

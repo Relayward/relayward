@@ -18,6 +18,7 @@ body {
 
 button,
 input,
+select,
 textarea {
   font: inherit;
 }
@@ -117,7 +118,9 @@ button:disabled {
   font-weight: 600;
 }
 
-.field input {
+.field input,
+.field select,
+.field textarea {
   background: #ffffff;
   border: 1px solid #bbc3c9;
   border-radius: 4px;
@@ -128,13 +131,27 @@ button:disabled {
   width: 100%;
 }
 
-.field input:focus {
+.field select {
+  padding: 0 11px;
+}
+
+.field textarea {
+  min-height: 110px;
+  padding: 10px 11px;
+  resize: vertical;
+}
+
+.field input:focus,
+.field select:focus,
+.field textarea:focus {
   border-color: #16784b;
   box-shadow: 0 0 0 3px rgba(22, 120, 75, 0.14);
   outline: none;
 }
 
-.field input:disabled {
+.field input:disabled,
+.field select:disabled,
+.field textarea:disabled {
   background: #f1f3f4;
   color: #68737b;
 }
@@ -532,6 +549,23 @@ button:disabled {
 
 .secondary-cell {
   color: #667078;
+}
+
+.plugin-table {
+  min-width: 1020px;
+}
+
+.plugin-identity {
+  display: grid;
+  gap: 3px;
+  max-width: 210px;
+}
+
+.plugin-identity small {
+  color: #68737b;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .table-actions {

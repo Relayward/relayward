@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { APIError, getLatestAgentUpdate, requestAgentUpdate, type AgentUpdate } from "./api";
+import { APIError, getLatestAgentUpdate, reconcileNodePlugin, requestAgentUpdate, type AgentUpdate } from "./api";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -45,6 +45,25 @@ describe("Agent update API", () => {
     }, 404)));
 
     await expect(getLatestAgentUpdate("node-id")).resolves.toBeNull();
+  });
+});
+
+describe("Node plugin API", () => {
+  it("queues a desired state without inventing a configuration override", async () => {
+    const fetchMock = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(
+      async () => jsonResponse({}, 200),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("document", { cookie: "relayward_csrf=csrf-token" });
+
+    await reconcileNodePlugin("node/id", "io.relayward/plugin", {
+      desired_state: "stopped",
+      version: "1.2.3",
+    });
+    const [path, init] = fetchMock.mock.calls[0];
+    expect(path).toBe("/api/v1/nodes/node%2Fid/plugins/io.relayward%2Fplugin");
+    expect(init?.method).toBe("PUT");
+    expect(init?.body).toBe(JSON.stringify({ desired_state: "stopped", version: "1.2.3" }));
   });
 });
 

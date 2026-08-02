@@ -97,7 +97,7 @@ func serve(args []string, logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	manager := management.NewService(database)
+	manager := management.NewService(database, secrets)
 
 	httpServer := &http.Server{
 		Addr: *listen,

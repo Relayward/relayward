@@ -8,6 +8,7 @@ import (
 	"github.com/Relayward/relayward-sdk/protocol"
 	"github.com/Relayward/relayward/internal/auth"
 	"github.com/Relayward/relayward/internal/management"
+	"github.com/Relayward/relayward/internal/secretbox"
 	"github.com/Relayward/relayward/internal/store"
 )
 
@@ -234,6 +235,10 @@ func (server *Server) resourceError(w http.ResponseWriter, request *http.Request
 		writeProblem(w, http.StatusNotFound, protocol.ErrorNotFound, resource+" not found.", false)
 	case errors.Is(err, store.ErrConflict):
 		writeProblem(w, http.StatusConflict, protocol.ErrorConflict, resource+" conflicts with existing data.", false)
+	case errors.Is(err, store.ErrStateConflict):
+		writeProblem(w, http.StatusConflict, protocol.ErrorConflict, resource+" state changed before the operation completed.", true)
+	case errors.Is(err, secretbox.ErrUnavailable):
+		writeProblem(w, http.StatusServiceUnavailable, protocol.ErrorUnavailable, "Encrypted secrets are unavailable.", false)
 	default:
 		server.internalError(w, request, err)
 	}

@@ -11,6 +11,8 @@ import (
 
 	agentv1 "github.com/Relayward/relayward-sdk/agent/v1"
 	"github.com/Relayward/relayward-sdk/protocol"
+
+	"github.com/Relayward/relayward/internal/store"
 )
 
 const testEventStreamID = "0123456789abcdef0123456789abcdef"
@@ -143,6 +145,81 @@ func TestAgentEventUploadDoesNotAcknowledgeStorageFailure(t *testing.T) {
 	response := performRequest(handler, http.MethodPost, "/api/v1/agent/events/"+identity.NodeID,
 		gzipJSON(t, batch, gzip.BestSpeed), eventUploadHeaders(identity.Credential))
 	assertProblem(t, response, http.StatusInternalServerError, protocol.ErrorInternal)
+}
+
+func TestAgentPluginStatusEventsUpdateInstancesAndDoNotBlockOnUnknownPlugins(t *testing.T) {
+	handler, database, events := newTestHandlerWithEventStore(t)
+	sessionCookie, csrfCookie := setupCookies(t, handler)
+	node := createPluginNode(t, handler, sessionCookie, csrfCookie)
+	identity := registerPluginAgent(t, handler, node.ID, sessionCookie, csrfCookie)
+	pluginManifest := serverRuntimeManifest()
+	now := time.Now().UTC()
+	if err := database.CreatePluginInstallation(t.Context(), store.PluginInstallation{
+		PluginID: pluginManifest.ID, Repository: "https://github.com/Relayward/test-plugin",
+		Kind: string(pluginManifest.Kind), DesiredVersion: pluginManifest.Version,
+		ActiveVersion: pluginManifest.Version, Manifest: pluginManifest, State: "active",
+	}, now); err != nil {
+		t.Fatalf("CreatePluginInstallation() error = %v", err)
+	}
+	pluginPath := "/api/v1/nodes/" + node.ID + "/plugins/" + pluginManifest.ID
+	queued := performRequest(handler, http.MethodPut, pluginPath,
+		[]byte(`{"desired_state":"running","version":"1.2.3","configuration":{"enabled":true}}`),
+		map[string]string{"Content-Type": "application/json", "X-CSRF-Token": csrfCookie.Value}, sessionCookie)
+	if queued.Code != http.StatusOK {
+		t.Fatalf("queue plugin status = %d, body = %s", queued.Code, queued.Body.String())
+	}
+	var instance nodePluginResponse
+	decodeResponse(t, queued, &instance)
+	status := agentv1.PluginStatusEvent{
+		PluginID: pluginManifest.ID, Generation: instance.Generation, State: agentv1.PluginStateRunning,
+		Version: pluginManifest.Version, ConfigurationSHA256: instance.DesiredConfigurationSHA256,
+		Health: agentv1.PluginHealthHealthy, RestartCount: 2,
+	}
+	observedAt := now.Add(time.Minute)
+	event, err := agentv1.NewEvent(identity.NodeID, testEventStreamID, 1, agentv1.EventPluginStatus, observedAt, status)
+	if err != nil {
+		t.Fatalf("NewEvent() plugin status error = %v", err)
+	}
+	batch := agentv1.EventBatch{
+		APIVersion: agentv1.APIVersion, NodeID: identity.NodeID, StreamID: testEventStreamID,
+		FirstSequence: 1, LastSequence: 1, Events: []agentv1.Event{event},
+	}
+	accepted := performRequest(handler, http.MethodPost, "/api/v1/agent/events/"+identity.NodeID,
+		gzipJSON(t, batch, gzip.BestSpeed), eventUploadHeaders(identity.Credential))
+	if accepted.Code != http.StatusOK {
+		t.Fatalf("plugin status upload = %d, body = %s", accepted.Code, accepted.Body.String())
+	}
+	actual, err := database.NodePluginInstanceByID(t.Context(), node.ID, pluginManifest.ID)
+	if err != nil || actual.ActualState != agentv1.PluginStateRunning || actual.RestartCount != 2 || actual.Health != agentv1.PluginHealthHealthy {
+		t.Fatalf("node plugin after status = %+v, %v", actual, err)
+	}
+
+	unknown := status
+	unknown.PluginID = "io.relayward.deleted"
+	unknownEvent, err := agentv1.NewEvent(identity.NodeID, testEventStreamID, 2, agentv1.EventPluginStatus, observedAt.Add(time.Second), unknown)
+	if err != nil {
+		t.Fatalf("NewEvent() unknown plugin status error = %v", err)
+	}
+	batch.FirstSequence, batch.LastSequence, batch.Events = 2, 2, []agentv1.Event{unknownEvent}
+	ignored := performRequest(handler, http.MethodPost, "/api/v1/agent/events/"+identity.NodeID,
+		gzipJSON(t, batch, gzip.BestSpeed), eventUploadHeaders(identity.Credential))
+	if ignored.Code != http.StatusOK {
+		t.Fatalf("unknown plugin status upload = %d, body = %s", ignored.Code, ignored.Body.String())
+	}
+
+	invalidEvent, err := agentv1.NewEvent(identity.NodeID, testEventStreamID, 3, agentv1.EventPluginStatus,
+		observedAt.Add(2*time.Second), map[string]any{"plugin_id": pluginManifest.ID})
+	if err != nil {
+		t.Fatalf("NewEvent() invalid plugin status error = %v", err)
+	}
+	batch.FirstSequence, batch.LastSequence, batch.Events = 3, 3, []agentv1.Event{invalidEvent}
+	invalid := performRequest(handler, http.MethodPost, "/api/v1/agent/events/"+identity.NodeID,
+		gzipJSON(t, batch, gzip.BestSpeed), eventUploadHeaders(identity.Credential))
+	assertProblem(t, invalid, http.StatusBadRequest, protocol.ErrorInvalidArgument)
+	count, err := events.Count(t.Context())
+	if err != nil || count != 2 {
+		t.Fatalf("event count after plugin statuses = %d, %v", count, err)
+	}
 }
 
 func testAgentEventBatch(t *testing.T, nodeID string, first, last uint64, marker string) agentv1.EventBatch {

@@ -233,6 +233,49 @@ ON agent_commands(node_id)
 WHERE kind = 'agent.update' AND status = 'pending';
 `,
 	},
+	{
+		version: 6,
+		sql: `
+ALTER TABLE agent_commands ADD COLUMN request_encrypted INTEGER NOT NULL DEFAULT 0 CHECK (request_encrypted IN (0, 1));
+ALTER TABLE agent_commands ADD COLUMN scope_key TEXT NOT NULL DEFAULT '';
+
+CREATE UNIQUE INDEX agent_commands_one_pending_plugin_reconcile_idx
+ON agent_commands(node_id, kind, scope_key)
+WHERE kind = 'plugin.reconcile' AND status = 'pending';
+
+ALTER TABLE node_plugin_instances ADD COLUMN generation INTEGER NOT NULL DEFAULT 0 CHECK (generation >= 0);
+ALTER TABLE node_plugin_instances ADD COLUMN desired_configuration_sha256 TEXT NOT NULL DEFAULT '';
+ALTER TABLE node_plugin_instances ADD COLUMN artifact_size INTEGER NOT NULL DEFAULT 0 CHECK (artifact_size >= 0);
+ALTER TABLE node_plugin_instances ADD COLUMN artifact_sha256 TEXT NOT NULL DEFAULT '';
+ALTER TABLE node_plugin_instances ADD COLUMN actual_generation INTEGER NOT NULL DEFAULT 0 CHECK (actual_generation >= 0);
+ALTER TABLE node_plugin_instances ADD COLUMN actual_configuration_sha256 TEXT NOT NULL DEFAULT '';
+ALTER TABLE node_plugin_instances ADD COLUMN health TEXT NOT NULL DEFAULT 'unknown';
+ALTER TABLE node_plugin_instances ADD COLUMN reason TEXT NOT NULL DEFAULT '';
+ALTER TABLE node_plugin_instances ADD COLUMN restart_count INTEGER NOT NULL DEFAULT 0 CHECK (restart_count >= 0);
+ALTER TABLE node_plugin_instances ADD COLUMN reconcile_status TEXT NOT NULL DEFAULT 'pending';
+ALTER TABLE node_plugin_instances ADD COLUMN last_problem_json TEXT CHECK (last_problem_json IS NULL OR json_valid(last_problem_json));
+ALTER TABLE node_plugin_instances ADD COLUMN last_command_id TEXT;
+ALTER TABLE node_plugin_instances ADD COLUMN actual_observed_at_ns INTEGER;
+
+CREATE INDEX node_plugin_instances_plugin_idx ON node_plugin_instances(plugin_id, node_id);
+
+CREATE TRIGGER agent_command_secret_cleanup
+AFTER DELETE ON agent_commands
+BEGIN
+    DELETE FROM secrets
+    WHERE owner_type = 'agent_command' AND owner_id = OLD.id AND name = 'request';
+END;
+
+CREATE TRIGGER node_plugin_secret_cleanup
+AFTER DELETE ON node_plugin_instances
+BEGIN
+    DELETE FROM secrets
+    WHERE owner_type = 'node_plugin_instance'
+      AND owner_id = OLD.node_id || '/' || OLD.plugin_id
+      AND name = 'desired_configuration';
+END;
+`,
+	},
 }
 
 func migrate(ctx context.Context, db *sql.DB) error {

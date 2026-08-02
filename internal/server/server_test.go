@@ -690,7 +690,7 @@ func newTestHandlerWithEventStore(t *testing.T) (http.Handler, *store.Store, *ev
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	return New(Options{
 		Version: "test", Store: database, EventStore: events, Auth: authentication,
-		Management: management.NewService(database), Secrets: secrets, Logger: logger,
+		Management: management.NewService(database, secrets), Secrets: secrets, Logger: logger,
 	}), database, events
 }
 
