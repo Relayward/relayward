@@ -35,6 +35,7 @@ type nodePluginResponse struct {
 	Health                     string            `json:"health"`
 	Reason                     string            `json:"reason"`
 	RestartCount               uint64            `json:"restart_count"`
+	Capabilities               []string          `json:"capabilities"`
 	ReconcileStatus            string            `json:"reconcile_status"`
 	LastProblem                *protocol.Problem `json:"last_problem,omitempty"`
 	LastCommandID              string            `json:"last_command_id"`
@@ -99,6 +100,7 @@ func nodePluginView(value store.NodePluginInstance) nodePluginResponse {
 		ArtifactSize:               value.ArtifactSize, ArtifactSHA256: value.ArtifactSHA256,
 		ActualGeneration: value.ActualGeneration, ActualConfigurationSHA256: value.ActualConfigurationSHA256,
 		Health: value.Health, Reason: value.Reason, RestartCount: value.RestartCount,
+		Capabilities:    value.Capabilities,
 		ReconcileStatus: value.ReconcileStatus, LastProblem: value.LastProblem,
 		LastCommandID: value.LastCommandID, CommandStatus: commandStatus,
 		CommandAttempts: value.CommandAttempts, CommandLastSentAt: value.CommandLastSentAt,

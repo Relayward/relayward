@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { BadgeCheck, Gauge, LogOut, Plug, ScrollText, Server, Shield, Users } from "lucide-react";
+import { Activity, BadgeCheck, Gauge, LogOut, Plug, ScrollText, Server, Shield, Users } from "lucide-react";
 import QRCode from "qrcode";
 
 import {
@@ -17,6 +17,7 @@ import { AuditView } from "./AuditView";
 import { AuthorizationsView } from "./AuthorizationView";
 import { Modal } from "./Modal";
 import { PluginsView } from "./PluginsView";
+import { RecentEventsView } from "./RecentEventsView";
 import { NodesView, UsersView } from "./ResourceViews";
 
 interface DashboardProps {
@@ -27,7 +28,7 @@ interface DashboardProps {
   onSessionRevoked: () => void;
 }
 
-type View = "system" | "nodes" | "plugins" | "users" | "authorizations" | "audit" | "security";
+type View = "system" | "nodes" | "plugins" | "users" | "authorizations" | "events" | "audit" | "security";
 
 export function Dashboard({ session, system, onLogout, onSessionChange, onSessionRevoked }: DashboardProps) {
   const [view, setView] = useState<View>("system");
@@ -77,6 +78,7 @@ export function Dashboard({ session, system, onLogout, onSessionChange, onSessio
           <button className={view === "plugins" ? "active" : ""} onClick={() => setView("plugins")}><Plug size={17} />Plugins</button>
           <button className={view === "users" ? "active" : ""} onClick={() => setView("users")}><Users size={17} />Users</button>
           <button className={view === "authorizations" ? "active" : ""} onClick={() => setView("authorizations")}><BadgeCheck size={17} />Authorizations</button>
+          <button className={view === "events" ? "active" : ""} onClick={() => setView("events")}><Activity size={17} />Recent events</button>
           <button className={view === "audit" ? "active" : ""} onClick={() => setView("audit")}><ScrollText size={17} />Audit</button>
           <button className={view === "security" ? "active" : ""} onClick={() => setView("security")}><Shield size={17} />Security</button>
         </nav>
@@ -86,6 +88,7 @@ export function Dashboard({ session, system, onLogout, onSessionChange, onSessio
           {view === "plugins" ? <PluginsView onNavigate={(target) => setView(target)} /> : null}
           {view === "users" ? <UsersView /> : null}
           {view === "authorizations" ? <AuthorizationsView /> : null}
+          {view === "events" ? <RecentEventsView /> : null}
           {view === "audit" ? <AuditView /> : null}
           {view === "security" ? (
             <SecurityView

@@ -62,7 +62,7 @@ func (service *Service) RecordAgentHello(ctx context.Context, nodeID string, cre
 	if err := agentv1.ValidateAgentHello(hello); err != nil || hello.NodeID != nodeID {
 		return store.ErrNotFound
 	}
-	return service.store.RecordAgentHello(ctx, nodeID, credentialHash, hello.AgentVersion, hello.Capabilities, receivedAt)
+	return service.store.RecordAgentHello(ctx, nodeID, credentialHash, hello.AgentVersion, hello.Capabilities, hello.StartedAt, receivedAt)
 }
 
 func (service *Service) RecordAgentHeartbeat(ctx context.Context, nodeID string, credentialHash []byte, heartbeat agentv1.Heartbeat, receivedAt time.Time) error {

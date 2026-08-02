@@ -1,10 +1,12 @@
 package server
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 	"time"
 
+	policyv1 "github.com/Relayward/relayward-sdk/policy/v1"
 	"github.com/Relayward/relayward-sdk/protocol"
 	"github.com/Relayward/relayward/internal/auth"
 	"github.com/Relayward/relayward/internal/management"
@@ -38,18 +40,46 @@ type resetRuleResponse struct {
 }
 
 type authorizationResponse struct {
-	ID                    string            `json:"id"`
-	UserID                string            `json:"user_id"`
-	NodeID                string            `json:"node_id"`
-	Enabled               bool              `json:"enabled"`
-	TrafficLimitBytes     *int64            `json:"traffic_limit_bytes"`
-	Reset                 resetRuleResponse `json:"reset"`
-	ExpiresAt             *time.Time        `json:"expires_at"`
-	SoftIPLimit           *int              `json:"soft_ip_limit"`
-	ActivityWindowSeconds int               `json:"activity_window_seconds"`
-	BlockDurationSeconds  int               `json:"block_duration_seconds"`
-	CreatedAt             time.Time         `json:"created_at"`
-	UpdatedAt             time.Time         `json:"updated_at"`
+	ID                    string                            `json:"id"`
+	UserID                string                            `json:"user_id"`
+	NodeID                string                            `json:"node_id"`
+	Enabled               bool                              `json:"enabled"`
+	TrafficLimitBytes     *int64                            `json:"traffic_limit_bytes"`
+	Reset                 resetRuleResponse                 `json:"reset"`
+	ExpiresAt             *time.Time                        `json:"expires_at"`
+	SoftIPLimit           *int                              `json:"soft_ip_limit"`
+	ActivityWindowSeconds int                               `json:"activity_window_seconds"`
+	BlockDurationSeconds  int                               `json:"block_duration_seconds"`
+	CurrentTraffic        *trafficPeriodResponse            `json:"current_traffic"`
+	Enforcement           *authorizationEnforcementResponse `json:"enforcement"`
+	CreatedAt             time.Time                         `json:"created_at"`
+	UpdatedAt             time.Time                         `json:"updated_at"`
+}
+
+type periodResponse struct {
+	ID       string     `json:"id"`
+	StartsAt time.Time  `json:"starts_at"`
+	EndsAt   *time.Time `json:"ends_at"`
+}
+
+type trafficPeriodResponse struct {
+	Period        periodResponse `json:"period"`
+	Revision      uint64         `json:"revision"`
+	UploadBytes   uint64         `json:"upload_bytes"`
+	DownloadBytes uint64         `json:"download_bytes"`
+	ObservedAt    time.Time      `json:"observed_at"`
+}
+
+type authorizationEnforcementResponse struct {
+	Generation      uint64         `json:"generation"`
+	Period          periodResponse `json:"period"`
+	UploadBytes     uint64         `json:"upload_bytes"`
+	DownloadBytes   uint64         `json:"download_bytes"`
+	ServicesEnabled bool           `json:"services_enabled"`
+	Reason          string         `json:"reason"`
+	ActiveIPCount   uint32         `json:"active_ip_count"`
+	BlockedIPCount  uint32         `json:"blocked_ip_count"`
+	ObservedAt      time.Time      `json:"observed_at"`
 }
 
 func (server *Server) listAuthorizations(w http.ResponseWriter, request *http.Request, _ auth.Authenticated) {
@@ -58,9 +88,29 @@ func (server *Server) listAuthorizations(w http.ResponseWriter, request *http.Re
 		server.resourceError(w, request, err, "Authorization")
 		return
 	}
+	trafficValues, err := server.store.ListLatestTrafficPeriods(request.Context())
+	if err != nil {
+		server.internalError(w, request, err)
+		return
+	}
+	traffic := make(map[string]store.TrafficPeriod, len(trafficValues))
+	for _, value := range trafficValues {
+		traffic[value.AuthorizationID] = value
+	}
+	statusValues, err := server.store.ListAuthorizationPolicyStatuses(request.Context())
+	if err != nil {
+		server.internalError(w, request, err)
+		return
+	}
+	statuses := make(map[string]store.AuthorizationPolicyStatus, len(statusValues))
+	for _, value := range statusValues {
+		statuses[value.AuthorizationID] = value
+	}
 	items := make([]authorizationResponse, len(values))
 	for index, value := range values {
-		items[index] = authorizationView(value)
+		trafficValue, hasTraffic := traffic[value.ID]
+		statusValue, hasStatus := statuses[value.ID]
+		items[index] = authorizationViewWithRuntime(value, trafficValue, hasTraffic, statusValue, hasStatus)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": items})
 }
@@ -71,7 +121,21 @@ func (server *Server) getAuthorization(w http.ResponseWriter, request *http.Requ
 		server.resourceError(w, request, err, "Authorization")
 		return
 	}
-	writeJSON(w, http.StatusOK, authorizationView(value))
+	traffic, err := server.store.TrafficPeriods(request.Context(), value.ID, 1)
+	if err != nil {
+		server.internalError(w, request, err)
+		return
+	}
+	status, statusErr := server.store.AuthorizationPolicyStatusByID(request.Context(), value.ID)
+	if statusErr != nil && !errors.Is(statusErr, store.ErrNotFound) {
+		server.internalError(w, request, statusErr)
+		return
+	}
+	var trafficValue store.TrafficPeriod
+	if len(traffic) > 0 {
+		trafficValue = traffic[0]
+	}
+	writeJSON(w, http.StatusOK, authorizationViewWithRuntime(value, trafficValue, len(traffic) > 0, status, statusErr == nil))
 }
 
 func (server *Server) createAuthorization(w http.ResponseWriter, request *http.Request, _ auth.Authenticated) {
@@ -156,14 +220,40 @@ func parseOptionalTime(field string, value *string) (*time.Time, error) {
 }
 
 func authorizationView(value store.Authorization) authorizationResponse {
+	return authorizationViewWithRuntime(value, store.TrafficPeriod{}, false, store.AuthorizationPolicyStatus{}, false)
+}
+
+func authorizationViewWithRuntime(value store.Authorization, traffic store.TrafficPeriod, hasTraffic bool,
+	status store.AuthorizationPolicyStatus, hasStatus bool,
+) authorizationResponse {
+	var trafficView *trafficPeriodResponse
+	if hasTraffic {
+		trafficView = &trafficPeriodResponse{
+			Period: periodView(traffic.Period), Revision: traffic.Revision,
+			UploadBytes: traffic.UploadBytes, DownloadBytes: traffic.DownloadBytes, ObservedAt: traffic.ObservedAt,
+		}
+	}
+	var enforcementView *authorizationEnforcementResponse
+	if hasStatus {
+		enforcementView = &authorizationEnforcementResponse{
+			Generation: status.Generation, Period: periodView(status.Period), UploadBytes: status.UploadBytes,
+			DownloadBytes: status.DownloadBytes, ServicesEnabled: status.ServicesEnabled, Reason: status.Reason,
+			ActiveIPCount: status.ActiveIPCount, BlockedIPCount: status.BlockedIPCount, ObservedAt: status.ObservedAt,
+		}
+	}
 	return authorizationResponse{
 		ID: value.ID, UserID: value.UserID, NodeID: value.NodeID, Enabled: value.Enabled,
 		TrafficLimitBytes: value.TrafficLimitBytes,
 		Reset:             resetRuleResponse{Kind: value.ResetKind, Value: value.ResetValue, Timezone: value.Timezone, PeriodAnchor: value.PeriodAnchor},
 		ExpiresAt:         value.ExpiresAt, SoftIPLimit: value.SoftIPLimit,
 		ActivityWindowSeconds: value.ActivityWindowSeconds, BlockDurationSeconds: value.BlockDurationSeconds,
+		CurrentTraffic: trafficView, Enforcement: enforcementView,
 		CreatedAt: value.CreatedAt, UpdatedAt: value.UpdatedAt,
 	}
+}
+
+func periodView(value policyv1.Period) periodResponse {
+	return periodResponse{ID: value.ID, StartsAt: value.StartsAt, EndsAt: value.EndsAt}
 }
 
 type serviceBindingRequest struct {

@@ -89,6 +89,79 @@ func TestIngestAcceptsOverlapAfterLostAcknowledgement(t *testing.T) {
 	}
 }
 
+func TestIngestPositionRemainsMonotonicAfterHotDataIsFullyPruned(t *testing.T) {
+	ctx := context.Background()
+	store, err := Open(ctx, filepath.Join(t.TempDir(), "events.db"))
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	defer store.Close()
+	now := time.Date(2026, time.August, 2, 12, 0, 0, 0, time.UTC)
+	first := testBatch(t, 1, 1, now)
+	if _, err := store.Ingest(ctx, testNodeID, first, now); err != nil {
+		t.Fatalf("first Ingest() error = %v", err)
+	}
+	stored, err := store.EventByID(ctx, first.Events[0].EventID)
+	if err != nil {
+		t.Fatalf("first EventByID() error = %v", err)
+	}
+	if err := store.EnsureConsumer(ctx, "test.consumer", now); err != nil {
+		t.Fatalf("EnsureConsumer() error = %v", err)
+	}
+	if err := store.AdvanceConsumer(ctx, "test.consumer", stored.RowID, now); err != nil {
+		t.Fatalf("AdvanceConsumer() error = %v", err)
+	}
+	deleted, _, err := store.PruneHotData(ctx, now.Add(time.Hour), []string{"test.consumer"})
+	if err != nil || deleted != 1 {
+		t.Fatalf("PruneHotData() deleted = %d, error = %v", deleted, err)
+	}
+
+	second := testBatch(t, 2, 2, now.Add(2*time.Hour))
+	if _, err := store.Ingest(ctx, testNodeID, second, now.Add(2*time.Hour)); err != nil {
+		t.Fatalf("second Ingest() error = %v", err)
+	}
+	batch, err := store.ReadConsumerBatch(ctx, "test.consumer", 10)
+	if err != nil || len(batch) != 1 || batch[0].Event.Sequence != 2 || batch[0].RowID <= stored.RowID {
+		t.Fatalf("consumer batch after prune = %+v, error = %v", batch, err)
+	}
+}
+
+func TestStoreAccessEventDeduplicatesPluginSourceIdentity(t *testing.T) {
+	ctx := context.Background()
+	store, err := Open(ctx, filepath.Join(t.TempDir(), "events.db"))
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	defer store.Close()
+	now := time.Date(2026, time.August, 2, 12, 0, 0, 0, time.UTC)
+	access := agentv1.AccessEvent{
+		SourceStreamID: testStreamID, SourceEventID: "runtime-event-1", PluginID: "runtime.test",
+		ServiceID: "main", AuthorizationID: "30000000-0000-4000-8000-000000000003",
+		SourceIP: "192.0.2.10", Destination: "example.com", DestinationPort: 443,
+		Network: "tcp", Protocol: "tls", Action: agentv1.AccessActionAccepted,
+	}
+	event, err := agentv1.NewEvent(testNodeID, testStreamID, 1, agentv1.EventAccess, now, access)
+	if err != nil {
+		t.Fatalf("NewEvent() error = %v", err)
+	}
+	source := StoredEvent{RowID: 1, NodeID: testNodeID, StreamID: testStreamID, Event: event, ReceivedAt: now}
+	if err := store.StoreAccessEvent(ctx, source, access); err != nil {
+		t.Fatalf("StoreAccessEvent() error = %v", err)
+	}
+	if err := store.StoreAccessEvent(ctx, source, access); err != nil {
+		t.Fatalf("StoreAccessEvent() idempotent replay error = %v", err)
+	}
+	conflict := access
+	conflict.Destination = "changed.example"
+	if err := store.StoreAccessEvent(ctx, source, conflict); !errors.Is(err, ErrConflict) {
+		t.Fatalf("StoreAccessEvent() conflicting source identity error = %v", err)
+	}
+	values, err := store.RecentAccessEvents(ctx, testNodeID, 0, 10)
+	if err != nil || len(values) != 1 || values[0].Destination != access.Destination {
+		t.Fatalf("RecentAccessEvents() = %+v, %v", values, err)
+	}
+}
+
 func testBatch(t *testing.T, first, last uint64, observedAt time.Time) agentv1.EventBatch {
 	t.Helper()
 	events := make([]agentv1.Event, 0, last-first+1)

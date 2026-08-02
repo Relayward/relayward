@@ -66,15 +66,27 @@ func TestAgentRegistrationAuthenticationAndReplacement(t *testing.T) {
 	if err := database.RecordAgentHeartbeat(ctx, "node-id", firstCredential, "0.2.0", now.Add(5*time.Second)); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("RecordAgentHeartbeat() replaced credential error = %v", err)
 	}
-	if err := database.RecordAgentHello(ctx, "node-id", secondCredential, "0.2.1", []string{"control.heartbeat", "event.queue"}, now.Add(6*time.Second)); err != nil {
+	startedAt := now.Add(-time.Minute)
+	if err := database.RecordAgentHello(ctx, "node-id", secondCredential, "0.2.1", []string{"control.heartbeat", "event.queue"}, startedAt, now.Add(6*time.Second)); err != nil {
 		t.Fatalf("RecordAgentHello() error = %v", err)
 	}
 	if err := database.RecordAgentHeartbeat(ctx, "node-id", secondCredential, "0.2.1", now.Add(7*time.Second)); err != nil {
 		t.Fatalf("RecordAgentHeartbeat() error = %v", err)
 	}
 	current, err := database.NodeByID(ctx, "node-id")
-	if err != nil || current.LastSeenAt == nil || current.AgentVersion != "0.2.1" || len(current.Capabilities) != 2 {
+	if err != nil || current.LastSeenAt == nil || current.AgentStartedAt == nil || !current.AgentStartedAt.Equal(startedAt) ||
+		current.AgentVersion != "0.2.1" || len(current.Capabilities) != 2 {
 		t.Fatalf("node after hello and heartbeat = %+v, error = %v", current, err)
+	}
+	current.Enabled = false
+	if err := database.UpdateNode(ctx, current, now.Add(8*time.Second)); err != nil {
+		t.Fatalf("disable registered node: %v", err)
+	}
+	if _, err := database.AuthenticateAgent(ctx, "node-id", secondCredential); err != nil {
+		t.Fatalf("AuthenticateAgent() disabled node credential error = %v", err)
+	}
+	if err := database.RecordAgentHeartbeat(ctx, "node-id", secondCredential, "0.2.1", now.Add(9*time.Second)); err != nil {
+		t.Fatalf("RecordAgentHeartbeat() disabled node error = %v", err)
 	}
 }
 

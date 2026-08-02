@@ -144,8 +144,9 @@ func (store *Store) LatestAgentCommandByKind(ctx context.Context, nodeID, kind s
 	if _, err := store.db.ExecContext(ctx, `
 UPDATE agent_commands SET status = 'expired', completed_at = ?, updated_at = ?
 WHERE node_id = ? AND kind = ? AND status = 'pending' AND expires_at <= ?
-  AND (kind <> ? OR attempts = 0)`,
-		unixTime(now), unixTime(now), nodeID, kind, unixTime(now), agentv1.CommandPluginReconcile); err != nil {
+  AND (kind NOT IN (?, ?) OR attempts = 0)`,
+		unixTime(now), unixTime(now), nodeID, kind, unixTime(now),
+		agentv1.CommandPluginReconcile, agentv1.CommandPolicyReconcile); err != nil {
 		return AgentCommand{}, fmt.Errorf("expire Agent commands by kind: %w", err)
 	}
 	return scanAgentCommand(store.db.QueryRowContext(ctx, agentCommandSelect+`
@@ -162,8 +163,9 @@ func (store *Store) NextAgentCommand(ctx context.Context, nodeID string, now tim
 	if _, err := tx.ExecContext(ctx, `
 UPDATE agent_commands SET status = 'expired', completed_at = ?, updated_at = ?
 WHERE node_id = ? AND status = 'pending' AND expires_at <= ?
-  AND (kind <> ? OR attempts = 0)`,
-		unixTime(now), unixTime(now), nodeID, unixTime(now), agentv1.CommandPluginReconcile); err != nil {
+  AND (kind NOT IN (?, ?) OR attempts = 0)`,
+		unixTime(now), unixTime(now), nodeID, unixTime(now),
+		agentv1.CommandPluginReconcile, agentv1.CommandPolicyReconcile); err != nil {
 		return AgentCommand{}, fmt.Errorf("expire undispatched Agent commands: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `
@@ -178,8 +180,11 @@ WHERE owner_type = ? AND name = ? AND owner_id IN (
 	}
 	value, err := scanAgentCommand(tx.QueryRowContext(ctx, agentCommandSelect+`
  JOIN nodes ON nodes.id = agent_commands.node_id
- WHERE agent_commands.node_id = ? AND agent_commands.status = 'pending' AND nodes.enabled = 1
- ORDER BY agent_commands.created_at, agent_commands.rowid LIMIT 1`, nodeID))
+ WHERE agent_commands.node_id = ? AND agent_commands.status = 'pending'
+   AND (nodes.enabled = 1 OR agent_commands.kind = ?)
+ ORDER BY CASE WHEN agent_commands.kind = ? THEN 0 ELSE 1 END,
+          agent_commands.created_at, agent_commands.rowid LIMIT 1`,
+		nodeID, agentv1.CommandPolicyReconcile, agentv1.CommandPolicyReconcile))
 	if errors.Is(err, ErrNotFound) {
 		if err := tx.Commit(); err != nil {
 			return AgentCommand{}, fmt.Errorf("commit expired Agent commands: %w", err)
@@ -238,7 +243,7 @@ func (store *Store) completeAgentCommand(ctx context.Context, nodeID string, cre
        agent_commands.request_json, agent_commands.request_encrypted, agent_commands.scope_key,
        agent_commands.result_json
 FROM agent_commands JOIN nodes ON nodes.id = agent_commands.node_id
-WHERE agent_commands.id = ? AND agent_commands.node_id = ? AND nodes.enabled = 1 AND nodes.credential_hash = ?`,
+WHERE agent_commands.id = ? AND agent_commands.node_id = ? AND nodes.credential_hash = ?`,
 		result.CommandID, nodeID, credentialHash).Scan(
 		&kind, &digest, &status, &requestJSON, &requestEncrypted, &scopeKey, &existingResult,
 	)
@@ -333,6 +338,30 @@ WHERE agent_commands.id = ? AND agent_commands.node_id = ? AND nodes.enabled = 1
 		if err := updateNodePluginReconcileResultTx(ctx, tx, nodeID, reconcile, result, now); err != nil {
 			return err
 		}
+	} else if kind == agentv1.CommandPolicyReconcile {
+		reconcile, err := agentv1.DecodePolicyReconcileCommand(request)
+		if err != nil {
+			return fmt.Errorf("validate completed policy reconcile command: %w", err)
+		}
+		if result.Status == agentv1.CommandStatusSucceeded {
+			output, err := agentv1.DecodePolicyReconcileOutput(result.Output)
+			if err != nil {
+				return fmt.Errorf("validate policy reconcile result: %w", err)
+			}
+			if output.Generation != reconcile.Generation || output.AuthorizationCount != uint32(len(reconcile.Authorizations)) {
+				return errors.New("policy reconcile result does not match requested state")
+			}
+		}
+		auditAction = "node.policy_reconcile.complete"
+		auditTargetType = "node"
+		auditTargetID = nodeID
+		auditMetadata = map[string]any{
+			"command_id": result.CommandID, "generation": reconcile.Generation,
+			"authorization_count": len(reconcile.Authorizations),
+		}
+		if err := updatePolicyReconcileResultTx(ctx, tx, nodeID, reconcile, result, now); err != nil {
+			return err
+		}
 	}
 	status = result.Status
 	updated, err := tx.ExecContext(ctx, `
@@ -363,6 +392,39 @@ DELETE FROM secrets WHERE owner_type = ? AND owner_id = ? AND name = ?`,
 		return err
 	}
 	return commit(tx, "Agent command completion")
+}
+
+func updatePolicyReconcileResultTx(ctx context.Context, tx *sql.Tx, nodeID string,
+	reconcile agentv1.PolicyReconcileCommand, result agentv1.CommandResult, now time.Time,
+) error {
+	if result.Status == agentv1.CommandStatusSucceeded {
+		updated, err := tx.ExecContext(ctx, `
+UPDATE node_policy_state SET applied_generation = ?, reconcile_status = 'applied',
+    last_problem_json = NULL, retry_after = NULL, updated_at = ?
+WHERE node_id = ? AND desired_generation = ? AND last_command_id = ?`,
+			int64(reconcile.Generation), unixTime(now), nodeID, int64(reconcile.Generation), result.CommandID)
+		if err != nil {
+			return fmt.Errorf("record applied policy reconciliation: %w", err)
+		}
+		return expectOneAgentUpdate(updated, "policy reconciliation success")
+	}
+	problemJSON, err := json.Marshal(result.Problem)
+	if err != nil {
+		return fmt.Errorf("encode policy reconciliation problem: %w", err)
+	}
+	retryAfter := any(nil)
+	if result.Problem != nil && result.Problem.Retryable {
+		retryAfter = unixTime(now.Add(policyRetryDelay))
+	}
+	updated, err := tx.ExecContext(ctx, `
+UPDATE node_policy_state SET reconcile_status = 'failed', last_problem_json = ?,
+    retry_after = ?, updated_at = ?
+WHERE node_id = ? AND desired_generation = ? AND last_command_id = ?`,
+		string(problemJSON), retryAfter, unixTime(now), nodeID, int64(reconcile.Generation), result.CommandID)
+	if err != nil {
+		return fmt.Errorf("record failed policy reconciliation: %w", err)
+	}
+	return expectOneAgentUpdate(updated, "policy reconciliation failure")
 }
 
 func updateNodePluginReconcileResultTx(ctx context.Context, tx *sql.Tx, nodeID string,

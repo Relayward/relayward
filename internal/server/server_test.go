@@ -10,17 +10,20 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/fstest"
 	"time"
 
 	"github.com/gorilla/websocket"
 
 	agentv1 "github.com/Relayward/relayward-sdk/agent/v1"
+	policyv1 "github.com/Relayward/relayward-sdk/policy/v1"
 	"github.com/Relayward/relayward-sdk/protocol"
 	"github.com/Relayward/relayward/internal/auth"
 	"github.com/Relayward/relayward/internal/eventstore"
@@ -47,6 +50,51 @@ func TestHealthAndSystemInfo(t *testing.T) {
 	decodeResponse(t, info, &infoBody)
 	if info.Code != http.StatusOK || infoBody.Name != "relayward" || infoBody.Version != "test" || !infoBody.SecretsAvailable {
 		t.Fatalf("system info status = %d, body = %+v", info.Code, infoBody)
+	}
+}
+
+func TestWebAssetsAndSPAFallback(t *testing.T) {
+	assets := fstest.MapFS{
+		"index.html":         {Data: []byte("<!doctype html><main>Relayward</main>")},
+		"assets/app-abcd.js": {Data: []byte("console.log('relayward')")},
+	}
+	handler := newTestHandlerWithWebAssets(t, assets)
+
+	for _, requestPath := range []string{"/", "/nodes", "/nodes/", "/authorizations/example"} {
+		response := performRequest(handler, http.MethodGet, requestPath, nil, nil)
+		if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "Relayward") {
+			t.Fatalf("GET %s = %d, %q", requestPath, response.Code, response.Body.String())
+		}
+		if response.Header().Get("Cache-Control") != "no-store" ||
+			!strings.Contains(response.Header().Get("Content-Security-Policy"), "frame-src 'self'") {
+			t.Fatalf("GET %s headers = %+v", requestPath, response.Header())
+		}
+	}
+
+	asset := performRequest(handler, http.MethodGet, "/assets/app-abcd.js", nil, nil)
+	if asset.Code != http.StatusOK || asset.Body.String() != "console.log('relayward')" ||
+		asset.Header().Get("Cache-Control") != "public, max-age=31536000, immutable" ||
+		!strings.Contains(asset.Header().Get("Content-Type"), "javascript") {
+		t.Fatalf("asset response = %d, headers=%+v, body=%q", asset.Code, asset.Header(), asset.Body.String())
+	}
+	head := performRequest(handler, http.MethodHead, "/assets/app-abcd.js", nil, nil)
+	if head.Code != http.StatusOK || head.Body.Len() != 0 || head.Header().Get("Content-Length") == "" {
+		t.Fatalf("HEAD asset = %d, headers=%+v, body=%q", head.Code, head.Header(), head.Body.String())
+	}
+
+	for _, requestPath := range []string{"/assets/missing.js", "/api/v1/missing", "/assets/%2e%2e/index.html"} {
+		response := performRequest(handler, http.MethodGet, requestPath, nil, nil)
+		if response.Code == http.StatusOK || strings.Contains(response.Body.String(), "Relayward") {
+			t.Fatalf("GET %s unexpectedly served the SPA: %d, %q", requestPath, response.Code, response.Body.String())
+		}
+	}
+	apiMissing := performRequest(handler, http.MethodGet, "/api/v1/missing", nil, nil)
+	if apiMissing.Header().Get("Content-Security-Policy") != "default-src 'none'; frame-ancestors 'none'" {
+		t.Fatalf("unknown API CSP = %q", apiMissing.Header().Get("Content-Security-Policy"))
+	}
+	postRoute := performRequest(handler, http.MethodPost, "/nodes", nil, nil)
+	if postRoute.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("POST SPA route status = %d", postRoute.Code)
 	}
 }
 
@@ -269,7 +317,7 @@ func TestNodeAndUserHTTPFlow(t *testing.T) {
 }
 
 func TestAuthorizationBindingAndAuditHTTPFlow(t *testing.T) {
-	handler, _ := newTestHandler(t)
+	handler, database := newTestHandler(t)
 	sessionCookie, csrfCookie := setupCookies(t, handler)
 	headers := map[string]string{"Content-Type": "application/json", "X-CSRF-Token": csrfCookie.Value}
 
@@ -297,6 +345,33 @@ func TestAuthorizationBindingAndAuditHTTPFlow(t *testing.T) {
 	decodeResponse(t, create, &created)
 	if !strings.HasPrefix(created.SubscriptionToken, "rws_") {
 		t.Fatalf("subscription token = %q", created.SubscriptionToken)
+	}
+	period, err := policyv1.CurrentPeriod(policyv1.ResetRule{Kind: policyv1.ResetNever, Timezone: "UTC"},
+		created.Authorization.CreatedAt, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("compute authorization period: %v", err)
+	}
+	if err := database.ApplyTrafficSnapshot(t.Context(), node.ID, agentv1.TrafficSnapshotEvent{
+		AuthorizationID: created.Authorization.ID, Period: period, Revision: 1,
+		UploadBytes: 1024, DownloadBytes: 2048,
+	}, time.Now().UTC(), time.Now().UTC()); err != nil {
+		t.Fatalf("apply authorization traffic: %v", err)
+	}
+	if err := database.RecordAuthorizationPolicyStatus(t.Context(), node.ID, agentv1.PolicyStatusEvent{
+		Generation: 2, AuthorizationID: created.Authorization.ID, Period: period,
+		UploadBytes: 1024, DownloadBytes: 2048, ServicesEnabled: true,
+		Reason: agentv1.PolicyReasonActive, ActiveIPCount: 1,
+	}, time.Now().UTC(), time.Now().UTC()); err != nil {
+		t.Fatalf("record authorization enforcement: %v", err)
+	}
+	authorizationStatus := performRequest(handler, http.MethodGet,
+		"/api/v1/authorizations/"+created.Authorization.ID, nil, nil, sessionCookie)
+	var enriched authorizationResponse
+	decodeResponse(t, authorizationStatus, &enriched)
+	if authorizationStatus.Code != http.StatusOK || enriched.CurrentTraffic == nil ||
+		enriched.CurrentTraffic.DownloadBytes != 2048 || enriched.Enforcement == nil ||
+		enriched.Enforcement.Generation != 2 || !enriched.Enforcement.ServicesEnabled {
+		t.Fatalf("enriched authorization status = %d, %+v", authorizationStatus.Code, enriched)
 	}
 	publicSubscription := performRequest(handler, http.MethodGet,
 		"/api/v1/subscriptions/"+created.SubscriptionToken, nil, nil)
@@ -346,6 +421,73 @@ func TestAuthorizationBindingAndAuditHTTPFlow(t *testing.T) {
 	}
 	if strings.Contains(audit.Body.String(), created.SubscriptionToken) {
 		t.Fatal("audit response contains a raw subscription token")
+	}
+}
+
+func TestRecentAccessEventsHTTPFlow(t *testing.T) {
+	handler, _, events := newTestHandlerWithEventStore(t)
+	unauthenticated := performRequest(handler, http.MethodGet, "/api/v1/events/access", nil, nil)
+	if unauthenticated.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated access events status = %d", unauthenticated.Code)
+	}
+	sessionCookie, csrfCookie := setupCookies(t, handler)
+	nodeRequest := performRequest(handler, http.MethodPost, "/api/v1/nodes", []byte(`{"name":"Edge"}`),
+		map[string]string{"Content-Type": "application/json", "X-CSRF-Token": csrfCookie.Value}, sessionCookie)
+	var node nodeResponse
+	decodeResponse(t, nodeRequest, &node)
+
+	observedAt := time.Date(2026, time.August, 2, 12, 0, 0, 0, time.UTC)
+	streamID := "0123456789abcdef0123456789abcdef"
+	for index, action := range []string{agentv1.AccessActionAccepted, agentv1.AccessActionBlocked} {
+		access := agentv1.AccessEvent{
+			SourceStreamID: streamID, SourceEventID: fmt.Sprintf("runtime-%d", index+1),
+			PluginID: "runtime.test", ServiceID: "vless-main",
+			AuthorizationID: "30000000-0000-4000-8000-000000000003", SourceIP: "192.0.2.10",
+			Destination: "example.com", DestinationPort: 443, Network: "tcp", Protocol: "tls", Action: action,
+		}
+		event, err := agentv1.NewEvent(node.ID, streamID, uint64(index+1), agentv1.EventAccess, observedAt.Add(time.Duration(index)*time.Second), access)
+		if err != nil {
+			t.Fatalf("NewEvent() error = %v", err)
+		}
+		if err := events.StoreAccessEvent(t.Context(), eventstore.StoredEvent{
+			RowID: int64(index + 1), NodeID: node.ID, StreamID: streamID, Event: event, ReceivedAt: observedAt.Add(time.Minute),
+		}, access); err != nil {
+			t.Fatalf("StoreAccessEvent() error = %v", err)
+		}
+	}
+
+	invalid := performRequest(handler, http.MethodGet, "/api/v1/events/access?limit=501", nil, nil, sessionCookie)
+	if invalid.Code != http.StatusBadRequest {
+		t.Fatalf("invalid access event query status = %d, body = %s", invalid.Code, invalid.Body.String())
+	}
+	unknown := performRequest(handler, http.MethodGet,
+		"/api/v1/events/access?node_id=40000000-0000-4000-8000-000000000004", nil, nil, sessionCookie)
+	if unknown.Code != http.StatusNotFound {
+		t.Fatalf("unknown access event node status = %d", unknown.Code)
+	}
+	firstPage := performRequest(handler, http.MethodGet,
+		"/api/v1/events/access?node_id="+node.ID+"&limit=1", nil, nil, sessionCookie)
+	if firstPage.Code != http.StatusOK {
+		t.Fatalf("first access event page status = %d, body = %s", firstPage.Code, firstPage.Body.String())
+	}
+	var first struct {
+		Items []accessEventResponse `json:"items"`
+	}
+	decodeResponse(t, firstPage, &first)
+	if len(first.Items) != 1 || first.Items[0].Action != agentv1.AccessActionBlocked {
+		t.Fatalf("first access event page = %+v", first.Items)
+	}
+	if strings.Contains(firstPage.Body.String(), "source_stream_id") || strings.Contains(firstPage.Body.String(), "agent_event_id") || strings.Contains(firstPage.Body.String(), "payload_sha256") {
+		t.Fatal("access event response exposes internal deduplication fields")
+	}
+	secondPage := performRequest(handler, http.MethodGet,
+		fmt.Sprintf("/api/v1/events/access?node_id=%s&before_id=%d&limit=1", node.ID, first.Items[0].ID), nil, nil, sessionCookie)
+	var second struct {
+		Items []accessEventResponse `json:"items"`
+	}
+	decodeResponse(t, secondPage, &second)
+	if secondPage.Code != http.StatusOK || len(second.Items) != 1 || second.Items[0].Action != agentv1.AccessActionAccepted {
+		t.Fatalf("second access event page status = %d, items = %+v", secondPage.Code, second.Items)
 	}
 }
 
@@ -459,7 +601,11 @@ func TestAgentRegistrationControlAndDuplicateSession(t *testing.T) {
 
 	second := connectTestAgent(t, server.URL, identity, "0.1.1")
 	defer second.Close()
-	_ = readTestAgentEnvelope(t, second)
+	secondHello := readTestAgentEnvelope(t, second)
+	secondSession, err := agentv1.DecodeEnvelopePayload[agentv1.CenterHello](secondHello)
+	if err != nil {
+		t.Fatalf("decode second center hello: %v", err)
+	}
 	online := performRequest(handler, http.MethodGet, "/api/v1/nodes/"+node.ID, nil, nil, sessionCookie)
 	var onlineNode nodeResponse
 	decodeResponse(t, online, &onlineNode)
@@ -482,11 +628,19 @@ func TestAgentRegistrationControlAndDuplicateSession(t *testing.T) {
 	if disabledNode.AgentStatus != "disabled" {
 		t.Fatalf("disabled node response = %+v", disabledNode)
 	}
-	if err := second.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
-		t.Fatalf("set disabled session deadline: %v", err)
+	disabledHeartbeat, err := agentv1.NewEnvelope(agentv1.MessageAgentHeartbeat, agentv1.Heartbeat{
+		SessionID: secondSession.SessionID, AgentVersion: "0.1.1", ObservedAt: time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatalf("create disabled node heartbeat: %v", err)
 	}
-	if _, _, err := second.ReadMessage(); err == nil {
-		t.Fatal("disabled node session remained open")
+	if err := second.WriteJSON(disabledHeartbeat); err != nil {
+		t.Fatalf("write disabled node heartbeat: %v", err)
+	}
+	disabledAck := readTestAgentEnvelope(t, second)
+	disabledAckPayload, err := agentv1.DecodeEnvelopePayload[agentv1.HeartbeatAck](disabledAck)
+	if err != nil || disabledAckPayload.MessageID != disabledHeartbeat.ID {
+		t.Fatalf("disabled node heartbeat acknowledgement = %+v, %v", disabledAckPayload, err)
 	}
 }
 
@@ -667,6 +821,15 @@ func newTestHandler(t *testing.T) (http.Handler, *store.Store) {
 }
 
 func newTestHandlerWithEventStore(t *testing.T) (http.Handler, *store.Store, *eventstore.Store) {
+	return newTestHandlerWithOptions(t, nil)
+}
+
+func newTestHandlerWithWebAssets(t *testing.T, assets fs.FS) http.Handler {
+	handler, _, _ := newTestHandlerWithOptions(t, assets)
+	return handler
+}
+
+func newTestHandlerWithOptions(t *testing.T, assets fs.FS) (http.Handler, *store.Store, *eventstore.Store) {
 	t.Helper()
 	directory := t.TempDir()
 	database, err := store.Open(context.Background(), filepath.Join(directory, "relayward.db"))
@@ -690,7 +853,7 @@ func newTestHandlerWithEventStore(t *testing.T) (http.Handler, *store.Store, *ev
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	return New(Options{
 		Version: "test", Store: database, EventStore: events, Auth: authentication,
-		Management: management.NewService(database, secrets), Secrets: secrets, Logger: logger,
+		Management: management.NewService(database, secrets), Secrets: secrets, Logger: logger, WebAssets: assets,
 	}), database, events
 }
 

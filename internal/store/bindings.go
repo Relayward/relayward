@@ -46,6 +46,22 @@ SELECT id, authorization_id, plugin_id, service_id, enabled, created_at, updated
 FROM service_bindings WHERE id = ?`, id))
 }
 
+func (store *Store) RequirePluginService(ctx context.Context, authorizationID, pluginID, serviceID string) error {
+	var exists int
+	err := store.db.QueryRowContext(ctx, `
+SELECT 1
+FROM authorizations a
+JOIN plugin_services s ON s.node_id = a.node_id
+WHERE a.id = ? AND s.plugin_id = ? AND s.service_id = ?`, authorizationID, pluginID, serviceID).Scan(&exists)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("check plugin service: %w", err)
+	}
+	return nil
+}
+
 func (store *Store) CreateServiceBinding(ctx context.Context, value ServiceBinding, now time.Time) error {
 	tx, err := store.db.BeginTx(ctx, nil)
 	if err != nil {

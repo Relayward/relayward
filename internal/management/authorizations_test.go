@@ -2,10 +2,14 @@ package management
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
 	"time"
+
+	agentv1 "github.com/Relayward/relayward-sdk/agent/v1"
+	nodepluginv1 "github.com/Relayward/relayward-sdk/nodeplugin/v1"
 
 	"github.com/Relayward/relayward/internal/auth"
 	"github.com/Relayward/relayward/internal/store"
@@ -129,6 +133,62 @@ func TestAuthorizationRuleValidation(t *testing.T) {
 				t.Fatalf("CreateAuthorization() error = %v, want field %q", err, test.field)
 			}
 		})
+	}
+}
+
+func TestAuthorizationPolicyCapabilityGate(t *testing.T) {
+	service := newTestService(t)
+	ctx := context.Background()
+	now := time.Date(2026, time.August, 2, 10, 0, 0, 0, time.UTC)
+	service.now = func() time.Time { return now }
+	node := registerManagedAgent(t, service, "Policy node", []string{
+		agentv1.CapabilityControlCommands, agentv1.CapabilityPluginSupervision,
+	})
+	pluginManifest := managedRuntimeManifest()
+	if err := service.store.CreatePluginInstallation(ctx, store.PluginInstallation{
+		PluginID: pluginManifest.ID, Repository: "https://github.com/Relayward/test-plugin",
+		Kind: string(pluginManifest.Kind), DesiredVersion: pluginManifest.Version,
+		ActiveVersion: pluginManifest.Version, Manifest: pluginManifest, State: "active",
+	}, now); err != nil {
+		t.Fatalf("CreatePluginInstallation() error = %v", err)
+	}
+	instance, err := service.ReconcileNodePlugin(ctx, node.ID, pluginManifest.ID, NodePluginInput{
+		DesiredState: agentv1.PluginStateRunning, Version: pluginManifest.Version,
+		Configuration: json.RawMessage(`{"enabled":true}`),
+	})
+	if err != nil {
+		t.Fatalf("ReconcileNodePlugin() error = %v", err)
+	}
+	authorization := store.Authorization{NodeID: node.ID}
+	recordCapabilities := func(at time.Time, values []string) {
+		t.Helper()
+		if err := service.store.RecordNodePluginStatus(ctx, node.ID, agentv1.PluginStatusEvent{
+			PluginID: pluginManifest.ID, Generation: instance.Generation, State: agentv1.PluginStateRunning,
+			Version: pluginManifest.Version, ConfigurationSHA256: instance.DesiredConfigurationSHA256,
+			Health: agentv1.PluginHealthHealthy, Capabilities: values,
+		}, at, at); err != nil {
+			t.Fatalf("RecordNodePluginStatus() error = %v", err)
+		}
+	}
+	recordCapabilities(now.Add(time.Second), []string{nodepluginv1.CapabilityServiceControl})
+	if err := service.validatePluginPolicyCapabilities(ctx, authorization, pluginManifest.ID, false); fieldName(err) != "plugin_id" {
+		t.Fatalf("traffic capability gate error = %v", err)
+	}
+	recordCapabilities(now.Add(2*time.Second), []string{
+		nodepluginv1.CapabilityServiceControl, nodepluginv1.CapabilityTrafficCounters,
+	})
+	if err := service.validatePluginPolicyCapabilities(ctx, authorization, pluginManifest.ID, false); err != nil {
+		t.Fatalf("base policy capabilities error = %v", err)
+	}
+	if err := service.validatePluginPolicyCapabilities(ctx, authorization, pluginManifest.ID, true); fieldName(err) != "plugin_id" {
+		t.Fatalf("soft IP capability gate error = %v", err)
+	}
+	recordCapabilities(now.Add(3*time.Second), []string{
+		nodepluginv1.CapabilityRecentActivity, nodepluginv1.CapabilityDynamicBlocking,
+		nodepluginv1.CapabilityServiceControl, nodepluginv1.CapabilityTrafficCounters,
+	})
+	if err := service.validatePluginPolicyCapabilities(ctx, authorization, pluginManifest.ID, true); err != nil {
+		t.Fatalf("complete policy capabilities error = %v", err)
 	}
 }
 

@@ -44,15 +44,30 @@ func (server *Server) receiveAgentEvents(w http.ResponseWriter, request *http.Re
 	}
 	pluginStatuses := make([]pluginStatusUpdate, 0)
 	for _, event := range batch.Events {
-		if event.Kind != agentv1.EventPluginStatus {
-			continue
+		switch event.Kind {
+		case agentv1.EventPluginStatus:
+			status, err := agentv1.DecodePluginStatusEvent(event.Payload)
+			if err != nil {
+				writeProblem(w, http.StatusBadRequest, protocol.ErrorInvalidArgument, "Invalid plugin status event.", false)
+				return
+			}
+			pluginStatuses = append(pluginStatuses, pluginStatusUpdate{status: status, observedAt: event.ObservedAt})
+		case agentv1.EventTrafficSnapshot:
+			if _, err := agentv1.DecodeTrafficSnapshotEvent(event.Payload); err != nil {
+				writeProblem(w, http.StatusBadRequest, protocol.ErrorInvalidArgument, "Invalid traffic snapshot event.", false)
+				return
+			}
+		case agentv1.EventPolicyStatus:
+			if _, err := agentv1.DecodePolicyStatusEvent(event.Payload); err != nil {
+				writeProblem(w, http.StatusBadRequest, protocol.ErrorInvalidArgument, "Invalid policy status event.", false)
+				return
+			}
+		case agentv1.EventAccess:
+			if _, err := agentv1.DecodeAccessEvent(event.Payload); err != nil {
+				writeProblem(w, http.StatusBadRequest, protocol.ErrorInvalidArgument, "Invalid access event.", false)
+				return
+			}
 		}
-		status, err := agentv1.DecodePluginStatusEvent(event.Payload)
-		if err != nil {
-			writeProblem(w, http.StatusBadRequest, protocol.ErrorInvalidArgument, "Invalid plugin status event.", false)
-			return
-		}
-		pluginStatuses = append(pluginStatuses, pluginStatusUpdate{status: status, observedAt: event.ObservedAt})
 	}
 	if server.eventStore == nil {
 		server.internalError(w, request, errors.New("event store is not configured"))

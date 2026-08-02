@@ -2,12 +2,14 @@ package management
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
 	"time"
 	_ "time/tzdata"
 
+	nodepluginv1 "github.com/Relayward/relayward-sdk/nodeplugin/v1"
 	"github.com/google/uuid"
 
 	"github.com/Relayward/relayward/internal/auth"
@@ -93,6 +95,9 @@ func (service *Service) CreateAuthorization(ctx context.Context, input Authoriza
 	now := service.currentTime()
 	value.CreatedAt = now
 	value.UpdatedAt = now
+	if value.ExpiresAt != nil && !value.ExpiresAt.After(value.CreatedAt) {
+		return CreatedAuthorization{}, invalid("expires_at", "must be after the authorization start")
+	}
 	if err := service.store.CreateAuthorization(ctx, value, now); err != nil {
 		return CreatedAuthorization{}, err
 	}
@@ -112,6 +117,14 @@ func (service *Service) UpdateAuthorization(ctx context.Context, id string, inpu
 	value, err := normalizeAuthorization(id, input)
 	if err != nil {
 		return store.Authorization{}, err
+	}
+	if value.ExpiresAt != nil && !value.ExpiresAt.After(current.CreatedAt) {
+		return store.Authorization{}, invalid("expires_at", "must be after the authorization start")
+	}
+	if value.SoftIPLimit != nil {
+		if err := service.validateAuthorizationBindingCapabilities(ctx, current, true); err != nil {
+			return store.Authorization{}, err
+		}
 	}
 	if err := service.store.UpdateAuthorization(ctx, value, service.currentTime()); err != nil {
 		return store.Authorization{}, err
@@ -170,6 +183,18 @@ func (service *Service) CreateServiceBinding(ctx context.Context, input ServiceB
 	if !componentIDPattern.MatchString(input.ServiceID) {
 		return store.ServiceBinding{}, invalid("service_id", "must be a lowercase component ID")
 	}
+	if err := service.store.RequirePluginService(ctx, input.AuthorizationID, input.PluginID, input.ServiceID); err != nil {
+		return store.ServiceBinding{}, err
+	}
+	authorization, err := service.store.AuthorizationByID(ctx, input.AuthorizationID)
+	if err != nil {
+		return store.ServiceBinding{}, err
+	}
+	if input.Enabled {
+		if err := service.validatePluginPolicyCapabilities(ctx, authorization, input.PluginID, authorization.SoftIPLimit != nil); err != nil {
+			return store.ServiceBinding{}, err
+		}
+	}
 	now := service.currentTime()
 	value := store.ServiceBinding{
 		ID: uuid.NewString(), AuthorizationID: input.AuthorizationID, PluginID: input.PluginID,
@@ -185,10 +210,59 @@ func (service *Service) UpdateServiceBinding(ctx context.Context, id string, ena
 	if err := validateID("binding_id", id); err != nil {
 		return store.ServiceBinding{}, err
 	}
+	if enabled {
+		binding, err := service.store.ServiceBindingByID(ctx, id)
+		if err != nil {
+			return store.ServiceBinding{}, err
+		}
+		authorization, err := service.store.AuthorizationByID(ctx, binding.AuthorizationID)
+		if err != nil {
+			return store.ServiceBinding{}, err
+		}
+		if err := service.validatePluginPolicyCapabilities(ctx, authorization, binding.PluginID, authorization.SoftIPLimit != nil); err != nil {
+			return store.ServiceBinding{}, err
+		}
+	}
 	if err := service.store.UpdateServiceBinding(ctx, id, enabled, service.currentTime()); err != nil {
 		return store.ServiceBinding{}, err
 	}
 	return service.store.ServiceBindingByID(ctx, id)
+}
+
+func (service *Service) validateAuthorizationBindingCapabilities(ctx context.Context, authorization store.Authorization, softIP bool) error {
+	bindings, err := service.store.ListServiceBindings(ctx, authorization.ID)
+	if err != nil {
+		return err
+	}
+	for _, binding := range bindings {
+		if !binding.Enabled {
+			continue
+		}
+		if err := service.validatePluginPolicyCapabilities(ctx, authorization, binding.PluginID, softIP); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (service *Service) validatePluginPolicyCapabilities(ctx context.Context, authorization store.Authorization, pluginID string, softIP bool) error {
+	capabilities, err := service.store.NodePluginRuntimeCapabilities(ctx, authorization.NodeID, pluginID)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) || errors.Is(err, store.ErrStateConflict) {
+			return invalid("plugin_id", "must reference a healthy running node plugin")
+		}
+		return err
+	}
+	required := []string{nodepluginv1.CapabilityServiceControl, nodepluginv1.CapabilityTrafficCounters}
+	if softIP {
+		required = append(required, nodepluginv1.CapabilityRecentActivity, nodepluginv1.CapabilityDynamicBlocking)
+	}
+	for _, capability := range required {
+		if !nodepluginv1.HasCapability(capabilities, capability) {
+			return invalid("plugin_id", "node plugin lacks required policy capability "+capability)
+		}
+	}
+	return nil
 }
 
 func (service *Service) DeleteServiceBinding(ctx context.Context, id string) error {

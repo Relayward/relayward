@@ -20,6 +20,7 @@ var ErrGap = errors.New("event batch has a sequence gap")
 var ErrConflict = errors.New("event conflicts with persisted data")
 
 type StoredEvent struct {
+	RowID      int64
 	NodeID     string
 	StreamID   string
 	Event      agentv1.Event
@@ -112,7 +113,7 @@ VALUES (?, ?, 0, ?)`, nodeID, batch.StreamID, receivedAt.UTC().Unix()); err != n
 		return 0, ErrGap
 	}
 	for _, event := range batch.Events {
-		if err := ingestEvent(ctx, transaction, nodeID, batch.StreamID, event, receivedAt); err != nil {
+		if err := ingestEvent(ctx, transaction, nodeID, batch.StreamID, event, receivedAt, event.Sequence <= highest); err != nil {
 			return 0, err
 		}
 	}
@@ -127,7 +128,7 @@ WHERE node_id = ? AND stream_id = ?`, highest, receivedAt.UTC().Unix(), nodeID, 
 	if err := transaction.Commit(); err != nil {
 		return 0, fmt.Errorf("commit event ingestion: %w", err)
 	}
-	return batch.LastSequence, nil
+	return highest, nil
 }
 
 func (store *Store) EventByID(ctx context.Context, eventID string) (StoredEvent, error) {
@@ -135,8 +136,8 @@ func (store *Store) EventByID(ctx context.Context, eventID string) (StoredEvent,
 	var raw []byte
 	var receivedAt int64
 	err := store.db.QueryRowContext(ctx, `
-SELECT node_id, stream_id, event_json, received_at FROM events WHERE event_id = ?`, eventID).
-		Scan(&value.NodeID, &value.StreamID, &raw, &receivedAt)
+	SELECT ingest_id, node_id, stream_id, event_json, received_at FROM events WHERE event_id = ?`, eventID).
+		Scan(&value.RowID, &value.NodeID, &value.StreamID, &raw, &receivedAt)
 	if err != nil {
 		return StoredEvent{}, err
 	}
@@ -162,7 +163,9 @@ SELECT highest_contiguous_sequence FROM event_streams WHERE node_id = ? AND stre
 	return uint64(highest), err
 }
 
-func ingestEvent(ctx context.Context, transaction *sql.Tx, nodeID, streamID string, event agentv1.Event, receivedAt time.Time) error {
+func ingestEvent(ctx context.Context, transaction *sql.Tx, nodeID, streamID string, event agentv1.Event,
+	receivedAt time.Time, allowPrunedReplay bool,
+) error {
 	raw, err := json.Marshal(event)
 	if err != nil {
 		return fmt.Errorf("encode event for storage: %w", err)
@@ -188,6 +191,9 @@ ON CONFLICT DO NOTHING`, event.EventID, nodeID, streamID, int64(event.Sequence),
 SELECT event_id, event_json FROM events WHERE node_id = ? AND stream_id = ? AND sequence = ?`,
 		nodeID, streamID, int64(event.Sequence)).Scan(&existingID, &existingRaw)
 	if errors.Is(err, sql.ErrNoRows) {
+		if allowPrunedReplay {
+			return nil
+		}
 		return ErrConflict
 	}
 	if err != nil {
@@ -199,6 +205,116 @@ SELECT event_id, event_json FROM events WHERE node_id = ? AND stream_id = ? AND 
 	return nil
 }
 
+type migration struct {
+	version int
+	sql     string
+}
+
+var migrations = []migration{
+	{version: 1, sql: `
+	CREATE TABLE event_streams (
+	    node_id TEXT NOT NULL,
+	    stream_id TEXT NOT NULL,
+	    highest_contiguous_sequence INTEGER NOT NULL DEFAULT 0 CHECK (highest_contiguous_sequence >= 0),
+	    updated_at INTEGER NOT NULL,
+	    PRIMARY KEY (node_id, stream_id)
+	);
+
+	CREATE TABLE events (
+	    event_id TEXT PRIMARY KEY CHECK (length(event_id) = 64),
+	    node_id TEXT NOT NULL,
+	    stream_id TEXT NOT NULL,
+	    sequence INTEGER NOT NULL CHECK (sequence > 0),
+	    kind TEXT NOT NULL,
+	    observed_at TEXT NOT NULL,
+	    event_json TEXT NOT NULL CHECK (json_valid(event_json)),
+	    received_at INTEGER NOT NULL,
+	    UNIQUE (node_id, stream_id, sequence)
+	);
+	CREATE INDEX events_received_idx ON events(received_at, event_id);
+	CREATE INDEX events_node_kind_idx ON events(node_id, kind, received_at);
+	`},
+	{version: 2, sql: `
+	CREATE TABLE consumer_cursors (
+	    consumer_id TEXT PRIMARY KEY,
+		    last_event_rowid INTEGER NOT NULL DEFAULT 0 CHECK (last_event_rowid >= 0),
+		    consecutive_failures INTEGER NOT NULL DEFAULT 0 CHECK (consecutive_failures >= 0),
+		    failed_event_rowid INTEGER,
+		    last_error TEXT NOT NULL DEFAULT '',
+	    retry_after INTEGER,
+	    updated_at INTEGER NOT NULL
+	);
+
+	CREATE TABLE normalized_access_events (
+	    id INTEGER PRIMARY KEY AUTOINCREMENT,
+	    node_id TEXT NOT NULL,
+	    plugin_id TEXT NOT NULL,
+	    source_stream_id TEXT NOT NULL,
+	    source_event_id TEXT NOT NULL,
+	    agent_event_id TEXT NOT NULL,
+	    service_id TEXT NOT NULL,
+	    authorization_id TEXT NOT NULL,
+	    source_ip TEXT NOT NULL DEFAULT '',
+	    destination TEXT NOT NULL DEFAULT '',
+	    destination_port INTEGER NOT NULL DEFAULT 0 CHECK (destination_port BETWEEN 0 AND 65535),
+	    network TEXT NOT NULL DEFAULT '',
+	    protocol TEXT NOT NULL DEFAULT '',
+	    action TEXT NOT NULL CHECK (action IN ('accepted', 'blocked')),
+	    observed_at_ns INTEGER NOT NULL,
+	    observed_day TEXT NOT NULL CHECK (length(observed_day) = 10),
+	    received_at INTEGER NOT NULL,
+	    payload_sha256 TEXT NOT NULL CHECK (length(payload_sha256) = 64),
+	    UNIQUE (node_id, plugin_id, source_stream_id, source_event_id)
+	);
+	CREATE INDEX normalized_access_recent_idx ON normalized_access_events(observed_at_ns DESC, id DESC);
+	CREATE INDEX normalized_access_node_recent_idx ON normalized_access_events(node_id, observed_at_ns DESC, id DESC);
+	CREATE INDEX normalized_access_archive_idx ON normalized_access_events(observed_day, id);
+
+	CREATE TABLE access_archive_days (
+	    day TEXT PRIMARY KEY CHECK (length(day) = 10),
+	    relative_path TEXT NOT NULL,
+	    event_count INTEGER NOT NULL CHECK (event_count > 0),
+	    max_access_id INTEGER NOT NULL CHECK (max_access_id > 0),
+	    sha256 TEXT NOT NULL CHECK (length(sha256) = 64),
+	    completed_at INTEGER NOT NULL,
+	    updated_at INTEGER NOT NULL
+	);
+	`},
+	{version: 3, sql: `
+	CREATE TABLE events_v3 (
+	    ingest_id INTEGER PRIMARY KEY AUTOINCREMENT,
+	    event_id TEXT NOT NULL UNIQUE CHECK (length(event_id) = 64),
+	    node_id TEXT NOT NULL,
+	    stream_id TEXT NOT NULL,
+	    sequence INTEGER NOT NULL CHECK (sequence > 0),
+	    kind TEXT NOT NULL,
+	    observed_at TEXT NOT NULL,
+	    event_json TEXT NOT NULL CHECK (json_valid(event_json)),
+	    received_at INTEGER NOT NULL,
+	    UNIQUE (node_id, stream_id, sequence)
+	);
+
+	INSERT INTO events_v3(
+	    ingest_id, event_id, node_id, stream_id, sequence, kind, observed_at, event_json, received_at
+	)
+	SELECT rowid, event_id, node_id, stream_id, sequence, kind, observed_at, event_json, received_at
+	FROM events ORDER BY rowid;
+
+	DELETE FROM sqlite_sequence WHERE name = 'events_v3';
+	INSERT INTO sqlite_sequence(name, seq)
+	SELECT 'events_v3', MAX(position) FROM (
+	    SELECT COALESCE(MAX(ingest_id), 0) AS position FROM events_v3
+	    UNION ALL
+	    SELECT COALESCE(MAX(last_event_rowid), 0) FROM consumer_cursors
+	);
+
+	DROP TABLE events;
+	ALTER TABLE events_v3 RENAME TO events;
+	CREATE INDEX events_received_idx ON events(received_at, event_id);
+	CREATE INDEX events_node_kind_idx ON events(node_id, kind, received_at);
+	`},
+}
+
 func migrate(ctx context.Context, database *sql.DB) error {
 	if _, err := database.ExecContext(ctx, `
 CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -207,49 +323,30 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
 );`); err != nil {
 		return fmt.Errorf("create event migration table: %w", err)
 	}
-	var applied int
-	err := database.QueryRowContext(ctx, "SELECT 1 FROM schema_migrations WHERE version = 1").Scan(&applied)
-	if err == nil {
-		return nil
-	}
-	if !errors.Is(err, sql.ErrNoRows) {
-		return fmt.Errorf("read event migration 1: %w", err)
-	}
-	transaction, err := database.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("begin event migration 1: %w", err)
-	}
-	defer transaction.Rollback()
-	if _, err := transaction.ExecContext(ctx, `
-CREATE TABLE event_streams (
-    node_id TEXT NOT NULL,
-    stream_id TEXT NOT NULL,
-    highest_contiguous_sequence INTEGER NOT NULL DEFAULT 0 CHECK (highest_contiguous_sequence >= 0),
-    updated_at INTEGER NOT NULL,
-    PRIMARY KEY (node_id, stream_id)
-);
-
-CREATE TABLE IF NOT EXISTS events (
-    event_id TEXT PRIMARY KEY CHECK (length(event_id) = 64),
-    node_id TEXT NOT NULL,
-    stream_id TEXT NOT NULL,
-    sequence INTEGER NOT NULL CHECK (sequence > 0),
-    kind TEXT NOT NULL,
-    observed_at TEXT NOT NULL,
-    event_json TEXT NOT NULL CHECK (json_valid(event_json)),
-    received_at INTEGER NOT NULL,
-    UNIQUE (node_id, stream_id, sequence)
-);
-CREATE INDEX events_received_idx ON events(received_at, event_id);
-CREATE INDEX events_node_kind_idx ON events(node_id, kind, received_at);
-`); err != nil {
-		return fmt.Errorf("apply event migration 1: %w", err)
-	}
-	if _, err := transaction.ExecContext(ctx, "INSERT INTO schema_migrations(version, applied_at) VALUES (1, unixepoch())"); err != nil {
-		return fmt.Errorf("record event migration 1: %w", err)
-	}
-	if err := transaction.Commit(); err != nil {
-		return fmt.Errorf("commit event migration 1: %w", err)
+	for _, item := range migrations {
+		var applied int
+		err := database.QueryRowContext(ctx, "SELECT 1 FROM schema_migrations WHERE version = ?", item.version).Scan(&applied)
+		if err == nil {
+			continue
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("read event migration %d: %w", item.version, err)
+		}
+		transaction, err := database.BeginTx(ctx, nil)
+		if err != nil {
+			return fmt.Errorf("begin event migration %d: %w", item.version, err)
+		}
+		if _, err := transaction.ExecContext(ctx, item.sql); err != nil {
+			transaction.Rollback()
+			return fmt.Errorf("apply event migration %d: %w", item.version, err)
+		}
+		if _, err := transaction.ExecContext(ctx, "INSERT INTO schema_migrations(version, applied_at) VALUES (?, unixepoch())", item.version); err != nil {
+			transaction.Rollback()
+			return fmt.Errorf("record event migration %d: %w", item.version, err)
+		}
+		if err := transaction.Commit(); err != nil {
+			return fmt.Errorf("commit event migration %d: %w", item.version, err)
+		}
 	}
 	return nil
 }

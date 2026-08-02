@@ -31,9 +31,19 @@ export interface Node {
   agent_os: string;
   agent_arch: string;
   capabilities: string[];
+  agent_started_at: string | null;
+  policy: NodePolicyState | null;
   registered_at: string | null;
   last_seen_at: string | null;
   created_at: string;
+  updated_at: string;
+}
+
+export interface NodePolicyState {
+  desired_generation: number;
+  applied_generation: number;
+  status: "not_configured" | "pending" | "applied" | "failed" | "unsupported";
+  last_problem?: Problem;
   updated_at: string;
 }
 
@@ -82,6 +92,7 @@ export interface NodePluginInstance {
   health: "healthy" | "unhealthy" | "unknown";
   reason: string;
   restart_count: number;
+  capabilities: string[];
   reconcile_status: "pending" | "succeeded" | "failed" | "expired";
   last_problem?: Problem;
   last_command_id: string;
@@ -205,8 +216,52 @@ export interface Authorization {
   soft_ip_limit: number | null;
   activity_window_seconds: number;
   block_duration_seconds: number;
+  current_traffic: TrafficPeriod | null;
+  enforcement: AuthorizationEnforcement | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface Period {
+  id: string;
+  starts_at: string;
+  ends_at: string | null;
+}
+
+export interface TrafficPeriod {
+  period: Period;
+  revision: number;
+  upload_bytes: number;
+  download_bytes: number;
+  observed_at: string;
+}
+
+export interface AuthorizationEnforcement {
+  generation: number;
+  period: Period;
+  upload_bytes: number;
+  download_bytes: number;
+  services_enabled: boolean;
+  reason: "active" | "administrator_disabled" | "expired" | "quota_exceeded";
+  active_ip_count: number;
+  blocked_ip_count: number;
+  observed_at: string;
+}
+
+export interface AccessEvent {
+  id: number;
+  node_id: string;
+  plugin_id: string;
+  service_id: string;
+  authorization_id: string;
+  source_ip?: string;
+  destination?: string;
+  destination_port?: number;
+  network?: string;
+  protocol?: string;
+  action: "accepted" | "blocked";
+  observed_at: string;
+  received_at: string;
 }
 
 export interface AuthorizationInput {
@@ -439,6 +494,15 @@ export async function listAuthorizations(filters: { userID?: string; nodeID?: st
   if (filters.nodeID) query.set("node_id", filters.nodeID);
   const suffix = query.size > 0 ? `?${query}` : "";
   const response = await request<{ items: Authorization[] }>(`/api/v1/authorizations${suffix}`);
+  return response.items;
+}
+
+export async function listAccessEvents(filters: { nodeID?: string; beforeID?: number; limit?: number } = {}): Promise<AccessEvent[]> {
+  const query = new URLSearchParams();
+  if (filters.nodeID) query.set("node_id", filters.nodeID);
+  if (filters.beforeID !== undefined) query.set("before_id", String(filters.beforeID));
+  query.set("limit", String(filters.limit ?? 100));
+  const response = await request<{ items: AccessEvent[] }>(`/api/v1/events/access?${query}`);
   return response.items;
 }
 

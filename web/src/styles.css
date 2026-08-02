@@ -844,7 +844,60 @@ button:disabled {
 }
 
 .authorization-table {
-  min-width: 900px;
+  min-width: 1120px;
+}
+
+.runtime-value {
+  display: grid;
+  gap: 3px;
+  white-space: nowrap;
+}
+
+.runtime-value small,
+.event-detail {
+  color: #68737b;
+  font-size: 11px;
+}
+
+.event-section-heading {
+  align-items: flex-end;
+}
+
+.event-controls,
+.event-controls label {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+}
+
+.event-controls label span {
+  color: #667078;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.event-controls select {
+  background: #ffffff;
+  border: 1px solid #bbc3c9;
+  border-radius: 4px;
+  color: #20252a;
+  height: 34px;
+  min-width: 160px;
+  padding: 0 8px;
+}
+
+.event-table {
+  min-width: 1050px;
+}
+
+.event-time,
+.event-address {
+  white-space: nowrap;
+}
+
+.event-detail {
+  display: block;
+  margin-top: 3px;
 }
 
 .audit-table {

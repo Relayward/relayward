@@ -131,6 +131,11 @@ func (server *Server) connectAgent(w http.ResponseWriter, request *http.Request)
 		server.closeAgentProtocol(connection, protocol.ErrorUnauthenticated, "Agent credentials are no longer valid.")
 		return
 	}
+	if server.policyCoordinator != nil {
+		if _, err := server.policyCoordinator.ReconcileNode(request.Context(), node.ID); err != nil {
+			server.logger.Warn("policy reconciliation on Agent connect failed", "node_id", node.ID, "error", err)
+		}
+	}
 	sessionID, err := protocol.NewID()
 	if err != nil {
 		server.closeAgentProtocol(connection, protocol.ErrorInternal, "The control session could not be created.")

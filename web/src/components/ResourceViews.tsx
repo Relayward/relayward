@@ -74,13 +74,14 @@ export function NodesView() {
   return (
     <section aria-labelledby="nodes-title">
       <ResourceHeading eyebrow="Infrastructure" title="Nodes" id="nodes-title" onAdd={() => setEditing("new")} />
-      <ResourceTable headers={["Name", "Address", "Agent", "Version", "Update", "State", "Actions"]} loading={loading} empty="No nodes have been created." error={error}>
+      <ResourceTable headers={["Name", "Address", "Agent", "Version", "Policy", "Update", "State", "Actions"]} loading={loading} empty="No nodes have been created." error={error}>
         {items.map((node) => (
           <tr key={node.id}>
             <td data-label="Name"><strong>{node.name}</strong></td>
             <td data-label="Address" className="secondary-cell">{node.public_address || "Not set"}</td>
             <td data-label="Agent"><Status value={agentStatusLabel(node.agent_status)} tone={agentStatusTone(node.agent_status)} /></td>
             <td data-label="Version" className="secondary-cell">{node.agent_version || "Not reported"}</td>
+            <td data-label="Policy"><NodePolicyStatus node={node} /></td>
             <td data-label="Update"><AgentUpdateStatus value={updates[node.id]} /></td>
             <td data-label="State"><Status value={node.enabled ? "Enabled" : "Disabled"} tone={node.enabled ? "ok" : "muted"} /></td>
             <td className="table-actions">
@@ -412,6 +413,27 @@ function AgentUpdateStatus({ value }: { value: AgentUpdate | null | undefined })
     <span className="agent-update-cell" title={value.problem?.message}>
       <Status value={agentUpdateStatusLabel(value.status)} tone={agentUpdateStatusTone(value.status)} />
       {detail ? <small>{detail}</small> : null}
+    </span>
+  );
+}
+
+function NodePolicyStatus({ node }: { node: Node }) {
+  const policy = node.policy;
+  if (!policy) return <Status value="Not configured" tone="muted" />;
+  const label = policy.status === "applied"
+    ? `Applied ${policy.applied_generation}`
+    : policy.status === "pending"
+      ? `Pending ${policy.applied_generation}/${policy.desired_generation}`
+      : policy.status === "not_configured"
+        ? "Not configured"
+        : policy.status.charAt(0).toUpperCase() + policy.status.slice(1);
+  const tone = policy.status === "applied" ? "ok"
+    : policy.status === "failed" || policy.status === "unsupported" ? "error"
+      : policy.status === "pending" ? "warning" : "muted";
+  return (
+    <span className="agent-update-cell" title={policy.last_problem?.message}>
+      <Status value={label} tone={tone} />
+      {policy.last_problem ? <small>{policy.last_problem.message}</small> : null}
     </span>
   );
 }

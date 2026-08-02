@@ -22,6 +22,7 @@ type Node struct {
 	AgentOS        string
 	AgentArch      string
 	Capabilities   []string
+	AgentStartedAt *time.Time
 	CreatedAt      time.Time
 	UpdatedAt      time.Time
 }
@@ -29,7 +30,8 @@ type Node struct {
 func (store *Store) ListNodes(ctx context.Context) ([]Node, error) {
 	rows, err := store.db.QueryContext(ctx, `
 SELECT id, name, public_address, enabled, credential_hash, registered_at, last_seen_at,
-       hostname, agent_version, agent_os, agent_arch, agent_capabilities_json, created_at, updated_at
+	       hostname, agent_version, agent_os, agent_arch, agent_capabilities_json, agent_started_at_ns,
+	       created_at, updated_at
 FROM nodes ORDER BY name COLLATE NOCASE, id`)
 	if err != nil {
 		return nil, fmt.Errorf("list nodes: %w", err)
@@ -53,7 +55,8 @@ FROM nodes ORDER BY name COLLATE NOCASE, id`)
 func (store *Store) NodeByID(ctx context.Context, id string) (Node, error) {
 	return scanNode(store.db.QueryRowContext(ctx, `
 SELECT id, name, public_address, enabled, credential_hash, registered_at, last_seen_at,
-       hostname, agent_version, agent_os, agent_arch, agent_capabilities_json, created_at, updated_at
+	       hostname, agent_version, agent_os, agent_arch, agent_capabilities_json, agent_started_at_ns,
+	       created_at, updated_at
 FROM nodes WHERE id = ?`, id))
 }
 
@@ -154,12 +157,12 @@ func scanNode(row rowScanner) (Node, error) {
 	var value Node
 	var enabled int
 	var credentialHash []byte
-	var registeredAt, lastSeenAt sql.NullInt64
+	var registeredAt, lastSeenAt, agentStartedAt sql.NullInt64
 	var capabilities []byte
 	var createdAt, updatedAt int64
 	if err := row.Scan(&value.ID, &value.Name, &value.PublicAddress, &enabled, &credentialHash,
 		&registeredAt, &lastSeenAt, &value.Hostname, &value.AgentVersion, &value.AgentOS, &value.AgentArch,
-		&capabilities, &createdAt, &updatedAt); err != nil {
+		&capabilities, &agentStartedAt, &createdAt, &updatedAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return Node{}, ErrNotFound
 		}
@@ -169,6 +172,10 @@ func scanNode(row rowScanner) (Node, error) {
 	value.CredentialHash = credentialHash
 	value.RegisteredAt = nullableTime(registeredAt)
 	value.LastSeenAt = nullableTime(lastSeenAt)
+	if agentStartedAt.Valid {
+		startedAt := time.Unix(0, agentStartedAt.Int64).UTC()
+		value.AgentStartedAt = &startedAt
+	}
 	if err := json.Unmarshal(capabilities, &value.Capabilities); err != nil {
 		return Node{}, fmt.Errorf("decode node capabilities: %w", err)
 	}

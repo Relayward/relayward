@@ -307,6 +307,51 @@ BEGIN
     DELETE FROM secrets
     WHERE owner_type = 'plugin_installation' AND owner_id = OLD.plugin_id;
 END;
+		`,
+	},
+	{
+		version: 8,
+		sql: `
+ALTER TABLE nodes ADD COLUMN agent_started_at_ns INTEGER;
+
+ALTER TABLE node_plugin_instances ADD COLUMN capabilities_json TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(capabilities_json));
+
+ALTER TABLE traffic_periods ADD COLUMN revision INTEGER NOT NULL DEFAULT 0 CHECK (revision >= 0);
+ALTER TABLE traffic_periods ADD COLUMN observed_at_ns INTEGER;
+
+CREATE TABLE node_policy_state (
+    node_id TEXT PRIMARY KEY REFERENCES nodes(id) ON DELETE CASCADE,
+    desired_generation INTEGER NOT NULL DEFAULT 0 CHECK (desired_generation >= 0),
+    desired_sha256 TEXT NOT NULL DEFAULT '' CHECK (desired_sha256 = '' OR length(desired_sha256) = 64),
+    applied_generation INTEGER NOT NULL DEFAULT 0 CHECK (applied_generation >= 0),
+    reconcile_status TEXT NOT NULL DEFAULT 'not_configured'
+        CHECK (reconcile_status IN ('not_configured', 'pending', 'applied', 'failed', 'unsupported')),
+    last_problem_json TEXT CHECK (last_problem_json IS NULL OR json_valid(last_problem_json)),
+    last_command_id TEXT,
+    issued_agent_started_at_ns INTEGER,
+    retry_after INTEGER,
+    updated_at INTEGER NOT NULL
+);
+
+CREATE TABLE authorization_policy_status (
+    authorization_id TEXT PRIMARY KEY REFERENCES authorizations(id) ON DELETE CASCADE,
+    generation INTEGER NOT NULL CHECK (generation > 0),
+    period_id TEXT NOT NULL CHECK (length(period_id) = 32),
+    starts_at INTEGER NOT NULL,
+    ends_at INTEGER,
+    upload_bytes INTEGER NOT NULL CHECK (upload_bytes >= 0),
+    download_bytes INTEGER NOT NULL CHECK (download_bytes >= 0),
+    services_enabled INTEGER NOT NULL CHECK (services_enabled IN (0, 1)),
+    reason TEXT NOT NULL CHECK (reason IN ('active', 'administrator_disabled', 'expired', 'quota_exceeded')),
+    active_ip_count INTEGER NOT NULL CHECK (active_ip_count >= 0),
+    blocked_ip_count INTEGER NOT NULL CHECK (blocked_ip_count >= 0),
+    observed_at_ns INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+
+CREATE UNIQUE INDEX agent_commands_one_pending_policy_reconcile_idx
+ON agent_commands(node_id)
+WHERE kind = 'policy.reconcile' AND status = 'pending';
 `,
 	},
 }

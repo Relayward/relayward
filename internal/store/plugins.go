@@ -158,6 +158,7 @@ type NodePluginInstance struct {
 	Health                     string
 	Reason                     string
 	RestartCount               uint64
+	Capabilities               []string
 	ReconcileStatus            string
 	LastProblem                *protocol.Problem
 	LastCommandID              string
@@ -307,6 +308,28 @@ ORDER BY json_extract(plugin_installations.manifest_json, '$.name') COLLATE NOCA
 func (store *Store) NodePluginInstanceByID(ctx context.Context, nodeID, pluginID string) (NodePluginInstance, error) {
 	return scanNodePluginInstance(store.db.QueryRowContext(ctx, nodePluginInstanceSelect+`
 WHERE node_plugin_instances.node_id = ? AND node_plugin_instances.plugin_id = ?`, nodeID, pluginID))
+}
+
+func (store *Store) NodePluginRuntimeCapabilities(ctx context.Context, nodeID, pluginID string) ([]string, error) {
+	var state, health string
+	var raw []byte
+	err := store.db.QueryRowContext(ctx, `
+SELECT actual_state, health, capabilities_json FROM node_plugin_instances
+WHERE node_id = ? AND plugin_id = ?`, nodeID, pluginID).Scan(&state, &health, &raw)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read node plugin policy capabilities: %w", err)
+	}
+	if state != agentv1.PluginStateRunning || health != agentv1.PluginHealthHealthy {
+		return nil, ErrStateConflict
+	}
+	var capabilities []string
+	if err := json.Unmarshal(raw, &capabilities); err != nil {
+		return nil, fmt.Errorf("decode node plugin policy capabilities: %w", err)
+	}
+	return capabilities, nil
 }
 
 func (store *Store) ApplyNodePluginDesired(ctx context.Context, desired NodePluginDesired, configurationCiphertext []byte,
@@ -488,8 +511,12 @@ func (store *Store) RecordNodePluginStatus(ctx context.Context, nodeID string, s
 	if err := agentv1.ValidatePluginStatusEvent(status); err != nil {
 		return fmt.Errorf("validate plugin status: %w", err)
 	}
+	capabilitiesJSON, err := json.Marshal(status.Capabilities)
+	if err != nil {
+		return fmt.Errorf("encode node plugin capabilities: %w", err)
+	}
 	var desiredGeneration, actualGeneration int64
-	err := store.db.QueryRowContext(ctx, `
+	err = store.db.QueryRowContext(ctx, `
 SELECT generation, actual_generation FROM node_plugin_instances WHERE node_id = ? AND plugin_id = ?`, nodeID, status.PluginID).Scan(
 		&desiredGeneration, &actualGeneration,
 	)
@@ -503,15 +530,16 @@ SELECT generation, actual_generation FROM node_plugin_instances WHERE node_id = 
 		return nil
 	}
 	result, err := store.db.ExecContext(ctx, `
-UPDATE node_plugin_instances SET
-    active_version = NULLIF(?, ''), actual_state = ?, actual_generation = ?,
-    actual_configuration_sha256 = ?, health = ?, reason = ?, restart_count = ?,
-    actual_observed_at_ns = ?, updated_at = ?
+	UPDATE node_plugin_instances SET
+	    active_version = NULLIF(?, ''), actual_state = ?, actual_generation = ?,
+	    actual_configuration_sha256 = ?, health = ?, reason = ?, restart_count = ?,
+	    capabilities_json = ?, actual_observed_at_ns = ?, updated_at = ?
 WHERE node_id = ? AND plugin_id = ?
   AND (actual_generation < ? OR
        (actual_generation = ? AND (actual_observed_at_ns IS NULL OR actual_observed_at_ns <= ?)))`,
 		status.Version, status.State, int64(status.Generation), status.ConfigurationSHA256,
-		status.Health, status.Reason, int64(status.RestartCount), observedAt.UTC().UnixNano(), unixTime(receivedAt),
+		status.Health, status.Reason, int64(status.RestartCount), string(capabilitiesJSON),
+		observedAt.UTC().UnixNano(), unixTime(receivedAt),
 		nodeID, status.PluginID, int64(status.Generation), int64(status.Generation), observedAt.UTC().UnixNano(),
 	)
 	if err != nil {
@@ -591,8 +619,9 @@ SELECT node_plugin_instances.node_id, node_plugin_instances.plugin_id,
        node_plugin_instances.generation, node_plugin_instances.desired_configuration_sha256,
        node_plugin_instances.artifact_size, node_plugin_instances.artifact_sha256,
        node_plugin_instances.actual_generation, node_plugin_instances.actual_configuration_sha256,
-       node_plugin_instances.health, node_plugin_instances.reason, node_plugin_instances.restart_count,
-       node_plugin_instances.reconcile_status, node_plugin_instances.last_problem_json,
+	       node_plugin_instances.health, node_plugin_instances.reason, node_plugin_instances.restart_count,
+	       node_plugin_instances.capabilities_json,
+	       node_plugin_instances.reconcile_status, node_plugin_instances.last_problem_json,
        node_plugin_instances.last_command_id,
        COALESCE(agent_commands.status, ''), COALESCE(agent_commands.attempts, 0),
        agent_commands.last_sent_at, agent_commands.completed_at,
@@ -608,12 +637,13 @@ func scanNodePluginInstance(row rowScanner) (NodePluginInstance, error) {
 	var activeVersion, problem sql.NullString
 	var lastSentAt, completedAt, actualObservedAt sql.NullInt64
 	var generation, actualGeneration, restartCount int64
+	var capabilitiesJSON []byte
 	var updatedAt int64
 	if err := row.Scan(
 		&value.NodeID, &value.PluginID, &value.NodeName, &value.PluginName, &value.DesiredVersion, &activeVersion,
 		&value.DesiredState, &value.ActualState, &generation, &value.DesiredConfigurationSHA256,
 		&value.ArtifactSize, &value.ArtifactSHA256, &actualGeneration, &value.ActualConfigurationSHA256,
-		&value.Health, &value.Reason, &restartCount, &value.ReconcileStatus, &problem,
+		&value.Health, &value.Reason, &restartCount, &capabilitiesJSON, &value.ReconcileStatus, &problem,
 		&value.LastCommandID, &value.CommandStatus, &value.CommandAttempts, &lastSentAt, &completedAt,
 		&actualObservedAt, &updatedAt,
 	); err != nil {
@@ -633,6 +663,9 @@ func scanNodePluginInstance(row rowScanner) (NodePluginInstance, error) {
 	value.Generation = uint64(generation)
 	value.ActualGeneration = uint64(actualGeneration)
 	value.RestartCount = uint64(restartCount)
+	if err := json.Unmarshal(capabilitiesJSON, &value.Capabilities); err != nil {
+		return NodePluginInstance{}, fmt.Errorf("decode node plugin capabilities: %w", err)
+	}
 	value.CommandLastSentAt = nullableTime(lastSentAt)
 	value.CommandCompletedAt = nullableTime(completedAt)
 	if actualObservedAt.Valid {

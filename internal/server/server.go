@@ -1,10 +1,12 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"mime"
 	"net"
@@ -26,27 +28,35 @@ const (
 )
 
 type Options struct {
-	Version      string
-	Store        *store.Store
-	EventStore   *eventstore.Store
-	Auth         *auth.Service
-	Management   *management.Service
-	Secrets      *secretbox.Manager
-	Logger       *slog.Logger
-	SecureCookie bool
+	Version           string
+	Store             *store.Store
+	EventStore        *eventstore.Store
+	Auth              *auth.Service
+	Management        *management.Service
+	Secrets           *secretbox.Manager
+	Logger            *slog.Logger
+	SecureCookie      bool
+	WebAssets         fs.FS
+	PolicyCoordinator interface {
+		ReconcileNode(context.Context, string) (bool, error)
+	}
 }
 
 type Server struct {
-	version       string
-	store         *store.Store
-	eventStore    *eventstore.Store
-	auth          *auth.Service
-	management    *management.Service
-	secrets       *secretbox.Manager
-	logger        *slog.Logger
-	secureCookie  bool
-	loginLimiter  *attemptLimiter
-	agentSessions *agentSessionHub
+	version           string
+	store             *store.Store
+	eventStore        *eventstore.Store
+	auth              *auth.Service
+	management        *management.Service
+	secrets           *secretbox.Manager
+	logger            *slog.Logger
+	secureCookie      bool
+	webAssets         fs.FS
+	loginLimiter      *attemptLimiter
+	agentSessions     *agentSessionHub
+	policyCoordinator interface {
+		ReconcileNode(context.Context, string) (bool, error)
+	}
 }
 
 type systemInfo struct {
@@ -57,16 +67,18 @@ type systemInfo struct {
 
 func New(options Options) http.Handler {
 	server := &Server{
-		version:       options.Version,
-		store:         options.Store,
-		eventStore:    options.EventStore,
-		auth:          options.Auth,
-		management:    options.Management,
-		secrets:       options.Secrets,
-		logger:        options.Logger,
-		secureCookie:  options.SecureCookie,
-		loginLimiter:  newAttemptLimiter(5, 5*time.Minute),
-		agentSessions: newAgentSessionHub(),
+		version:           options.Version,
+		store:             options.Store,
+		eventStore:        options.EventStore,
+		auth:              options.Auth,
+		management:        options.Management,
+		secrets:           options.Secrets,
+		logger:            options.Logger,
+		secureCookie:      options.SecureCookie,
+		webAssets:         options.WebAssets,
+		loginLimiter:      newAttemptLimiter(5, 5*time.Minute),
+		agentSessions:     newAgentSessionHub(),
+		policyCoordinator: options.PolicyCoordinator,
 	}
 	if server.logger == nil {
 		server.logger = slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -118,11 +130,15 @@ func New(options Options) http.Handler {
 	mux.HandleFunc("POST /api/v1/authorizations/{authorization_id}/service-bindings", server.withAuthentication(server.withCSRF(server.createServiceBinding)))
 	mux.HandleFunc("PUT /api/v1/service-bindings/{binding_id}", server.withAuthentication(server.withCSRF(server.updateServiceBinding)))
 	mux.HandleFunc("DELETE /api/v1/service-bindings/{binding_id}", server.withAuthentication(server.withCSRF(server.deleteServiceBinding)))
+	mux.HandleFunc("GET /api/v1/events/access", server.withAuthentication(server.listRecentAccessEvents))
 	mux.HandleFunc("GET /api/v1/audit", server.withAuthentication(server.listAudit))
 	mux.HandleFunc("GET /api/v1/subscriptions/{subscription_token}", server.subscription)
 	mux.HandleFunc("POST /api/v1/agent/register", server.registerAgent)
 	mux.HandleFunc("POST /api/v1/agent/events/{node_id}", server.receiveAgentEvents)
 	mux.HandleFunc("GET /api/v1/agent/connect/{node_id}", server.connectAgent)
+	if server.webAssets != nil {
+		mux.HandleFunc("GET /", server.serveWeb)
+	}
 	return server.securityHeaders(mux)
 }
 

@@ -19,20 +19,22 @@ type nodeRequest struct {
 }
 
 type nodeResponse struct {
-	ID            string     `json:"id"`
-	Name          string     `json:"name"`
-	PublicAddress string     `json:"public_address"`
-	Enabled       bool       `json:"enabled"`
-	AgentStatus   string     `json:"agent_status"`
-	Hostname      string     `json:"hostname"`
-	AgentVersion  string     `json:"agent_version"`
-	AgentOS       string     `json:"agent_os"`
-	AgentArch     string     `json:"agent_arch"`
-	Capabilities  []string   `json:"capabilities"`
-	RegisteredAt  *time.Time `json:"registered_at"`
-	LastSeenAt    *time.Time `json:"last_seen_at"`
-	CreatedAt     time.Time  `json:"created_at"`
-	UpdatedAt     time.Time  `json:"updated_at"`
+	ID             string              `json:"id"`
+	Name           string              `json:"name"`
+	PublicAddress  string              `json:"public_address"`
+	Enabled        bool                `json:"enabled"`
+	AgentStatus    string              `json:"agent_status"`
+	Hostname       string              `json:"hostname"`
+	AgentVersion   string              `json:"agent_version"`
+	AgentOS        string              `json:"agent_os"`
+	AgentArch      string              `json:"agent_arch"`
+	Capabilities   []string            `json:"capabilities"`
+	AgentStartedAt *time.Time          `json:"agent_started_at"`
+	Policy         *nodePolicyResponse `json:"policy"`
+	RegisteredAt   *time.Time          `json:"registered_at"`
+	LastSeenAt     *time.Time          `json:"last_seen_at"`
+	CreatedAt      time.Time           `json:"created_at"`
+	UpdatedAt      time.Time           `json:"updated_at"`
 }
 
 func (server *Server) listNodes(w http.ResponseWriter, request *http.Request, _ auth.Authenticated) {
@@ -41,9 +43,19 @@ func (server *Server) listNodes(w http.ResponseWriter, request *http.Request, _ 
 		server.internalError(w, request, err)
 		return
 	}
+	policyStates, err := server.store.ListNodePolicyStates(request.Context())
+	if err != nil {
+		server.internalError(w, request, err)
+		return
+	}
+	policies := make(map[string]store.NodePolicyState, len(policyStates))
+	for _, state := range policyStates {
+		policies[state.NodeID] = state
+	}
 	items := make([]nodeResponse, len(values))
 	for index, value := range values {
-		items[index] = server.nodeView(value)
+		state, exists := policies[value.ID]
+		items[index] = server.nodeViewWithPolicy(value, state, exists)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": items})
 }
@@ -54,7 +66,12 @@ func (server *Server) getNode(w http.ResponseWriter, request *http.Request, _ au
 		server.resourceError(w, request, err, "Node")
 		return
 	}
-	writeJSON(w, http.StatusOK, server.nodeView(value))
+	state, stateErr := server.store.NodePolicyStateByID(request.Context(), value.ID)
+	if stateErr != nil && !errors.Is(stateErr, store.ErrNotFound) {
+		server.internalError(w, request, stateErr)
+		return
+	}
+	writeJSON(w, http.StatusOK, server.nodeViewWithPolicy(value, state, stateErr == nil))
 }
 
 func (server *Server) createNode(w http.ResponseWriter, request *http.Request, _ auth.Authenticated) {
@@ -93,8 +110,11 @@ func (server *Server) updateNode(w http.ResponseWriter, request *http.Request, _
 		server.resourceError(w, request, err, "Node")
 		return
 	}
-	if !value.Enabled {
-		server.agentSessions.disconnect(value.ID)
+	if server.policyCoordinator != nil {
+		if _, err := server.policyCoordinator.ReconcileNode(request.Context(), value.ID); err != nil {
+			server.internalError(w, request, err)
+			return
+		}
 	}
 	writeJSON(w, http.StatusOK, server.nodeView(value))
 }
@@ -119,6 +139,18 @@ func (server *Server) createNodeRegistrationToken(w http.ResponseWriter, request
 }
 
 func (server *Server) nodeView(value store.Node) nodeResponse {
+	return server.nodeViewWithPolicy(value, store.NodePolicyState{}, false)
+}
+
+type nodePolicyResponse struct {
+	DesiredGeneration uint64            `json:"desired_generation"`
+	AppliedGeneration uint64            `json:"applied_generation"`
+	Status            string            `json:"status"`
+	LastProblem       *protocol.Problem `json:"last_problem,omitempty"`
+	UpdatedAt         time.Time         `json:"updated_at"`
+}
+
+func (server *Server) nodeViewWithPolicy(value store.Node, policy store.NodePolicyState, hasPolicy bool) nodeResponse {
 	status := "pending"
 	if !value.Enabled {
 		status = "disabled"
@@ -131,10 +163,18 @@ func (server *Server) nodeView(value store.Node) nodeResponse {
 	if capabilities == nil {
 		capabilities = []string{}
 	}
+	var policyView *nodePolicyResponse
+	if hasPolicy {
+		policyView = &nodePolicyResponse{
+			DesiredGeneration: policy.DesiredGeneration, AppliedGeneration: policy.AppliedGeneration,
+			Status: policy.ReconcileStatus, LastProblem: policy.LastProblem, UpdatedAt: policy.UpdatedAt,
+		}
+	}
 	return nodeResponse{
 		ID: value.ID, Name: value.Name, PublicAddress: value.PublicAddress, Enabled: value.Enabled,
 		AgentStatus: status, Hostname: value.Hostname, AgentVersion: value.AgentVersion,
 		AgentOS: value.AgentOS, AgentArch: value.AgentArch, Capabilities: capabilities,
+		AgentStartedAt: value.AgentStartedAt, Policy: policyView,
 		RegisteredAt: value.RegisteredAt, LastSeenAt: value.LastSeenAt, CreatedAt: value.CreatedAt, UpdatedAt: value.UpdatedAt,
 	}
 }

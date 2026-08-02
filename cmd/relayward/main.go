@@ -16,11 +16,13 @@ import (
 
 	"github.com/Relayward/relayward/internal/auth"
 	"github.com/Relayward/relayward/internal/buildinfo"
+	"github.com/Relayward/relayward/internal/eventprocessor"
 	"github.com/Relayward/relayward/internal/eventstore"
 	"github.com/Relayward/relayward/internal/githubrelease"
 	"github.com/Relayward/relayward/internal/management"
 	"github.com/Relayward/relayward/internal/pluginartifact"
 	"github.com/Relayward/relayward/internal/pluginruntime"
+	"github.com/Relayward/relayward/internal/policycoordinator"
 	"github.com/Relayward/relayward/internal/secretbox"
 	"github.com/Relayward/relayward/internal/server"
 	"github.com/Relayward/relayward/internal/store"
@@ -58,7 +60,10 @@ func serve(args []string, logger *slog.Logger) error {
 	flags.SetOutput(io.Discard)
 	listen := flags.String("listen", "127.0.0.1:8080", "HTTP listen address")
 	dataDir := flags.String("data", "./data", "persistent data directory")
+	webDir := flags.String("web", "./web/dist", "built web asset directory")
 	insecureCookie := flags.Bool("insecure-cookie", false, "allow session cookies over plain HTTP for local development")
+	eventHotRetention := flags.Duration("event-hot-retention", 24*time.Hour, "hot event retention")
+	eventArchiveRetention := flags.Duration("event-archive-retention", 90*24*time.Hour, "access archive retention")
 	if err := flags.Parse(args); err != nil {
 		return fmt.Errorf("parse serve flags: %w", err)
 	}
@@ -69,6 +74,17 @@ func serve(args []string, logger *slog.Logger) error {
 	absoluteDataDir, err := filepath.Abs(*dataDir)
 	if err != nil {
 		return fmt.Errorf("resolve data directory: %w", err)
+	}
+	absoluteWebDir, err := filepath.Abs(*webDir)
+	if err != nil {
+		return fmt.Errorf("resolve web asset directory: %w", err)
+	}
+	indexInfo, err := os.Stat(filepath.Join(absoluteWebDir, "index.html"))
+	if err != nil {
+		return fmt.Errorf("open web entrypoint: %w", err)
+	}
+	if !indexInfo.Mode().IsRegular() {
+		return fmt.Errorf("web entrypoint is not a regular file: %s", filepath.Join(absoluteWebDir, "index.html"))
 	}
 	ctx := context.Background()
 	database, err := store.Open(ctx, filepath.Join(absoluteDataDir, "relayward.db"))
@@ -101,6 +117,21 @@ func serve(args []string, logger *slog.Logger) error {
 		return err
 	}
 	manager := management.NewService(database, secrets)
+	policies, err := policycoordinator.New(database, logger)
+	if err != nil {
+		return err
+	}
+	eventProcessor, err := eventprocessor.New(events, database, logger)
+	if err != nil {
+		return err
+	}
+	eventArchiver, err := eventprocessor.NewArchiver(events, logger, eventprocessor.ArchiveOptions{
+		Directory: filepath.Join(absoluteDataDir, "event-archive"), HotRetention: *eventHotRetention,
+		ArchiveRetention: *eventArchiveRetention,
+	})
+	if err != nil {
+		return err
+	}
 	artifacts, err := pluginartifact.Open(filepath.Join(absoluteDataDir, "plugins"))
 	if err != nil {
 		return err
@@ -118,6 +149,21 @@ func serve(args []string, logger *slog.Logger) error {
 	if err := pluginSupervisor.Start(signalContext); err != nil {
 		return fmt.Errorf("start center plugin supervisor: %w", err)
 	}
+	go func() {
+		if err := policies.Run(signalContext); err != nil && signalContext.Err() == nil {
+			logger.Error("policy coordinator stopped", "error", err)
+		}
+	}()
+	go func() {
+		if err := eventProcessor.Run(signalContext); err != nil && signalContext.Err() == nil {
+			logger.Error("event processor stopped", "error", err)
+		}
+	}()
+	go func() {
+		if err := eventArchiver.Run(signalContext); err != nil && signalContext.Err() == nil {
+			logger.Error("event archiver stopped", "error", err)
+		}
+	}()
 	defer func() {
 		closeContext, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
@@ -129,14 +175,16 @@ func serve(args []string, logger *slog.Logger) error {
 	httpServer := &http.Server{
 		Addr: *listen,
 		Handler: server.New(server.Options{
-			Version:      buildinfo.Version,
-			Store:        database,
-			EventStore:   events,
-			Auth:         authentication,
-			Management:   manager,
-			Secrets:      secrets,
-			Logger:       logger,
-			SecureCookie: !*insecureCookie,
+			Version:           buildinfo.Version,
+			Store:             database,
+			EventStore:        events,
+			Auth:              authentication,
+			Management:        manager,
+			Secrets:           secrets,
+			Logger:            logger,
+			SecureCookie:      !*insecureCookie,
+			WebAssets:         os.DirFS(absoluteWebDir),
+			PolicyCoordinator: policies,
 		}),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,

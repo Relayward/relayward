@@ -66,18 +66,19 @@ export function AuthorizationsView() {
       <FormError message={error} />
       <div className="table-frame">
         <table className="resource-table authorization-table">
-          <thead><tr><th>User</th><th>Node</th><th>Quota</th><th>Reset</th><th>Expiry</th><th>State</th><th>Actions</th></tr></thead>
+          <thead><tr><th>User</th><th>Node</th><th>Traffic</th><th>Reset</th><th>Expiry</th><th>Enforcement</th><th>IP slots</th><th>Actions</th></tr></thead>
           <tbody>
-            {loading ? <tr><td colSpan={7} className="empty-cell">Loading...</td></tr> : null}
-            {!loading && items.length === 0 ? <tr><td colSpan={7} className="empty-cell">No authorizations have been created.</td></tr> : null}
+            {loading ? <tr><td colSpan={8} className="empty-cell">Loading...</td></tr> : null}
+            {!loading && items.length === 0 ? <tr><td colSpan={8} className="empty-cell">No authorizations have been created.</td></tr> : null}
             {items.map((authorization) => (
               <tr key={authorization.id}>
                 <td><strong>{userNames.get(authorization.user_id) ?? "Unknown user"}</strong></td>
                 <td className="secondary-cell">{nodeNames.get(authorization.node_id) ?? "Unknown node"}</td>
-                <td>{formatQuota(authorization.traffic_limit_bytes)}</td>
+                <td><TrafficUsage value={authorization} /></td>
                 <td className="secondary-cell">{formatReset(authorization)}</td>
                 <td className="secondary-cell">{authorization.expires_at ? new Date(authorization.expires_at).toLocaleDateString() : "Never"}</td>
                 <td><AuthorizationStatus value={authorization} /></td>
+                <td><IPStatus value={authorization} /></td>
                 <td className="table-actions">
                   <IconAction label="Rotate subscription token" onClick={() => setRotating(authorization)}><KeyRound size={17} /></IconAction>
                   <IconAction label="Edit authorization" onClick={() => setEditing(authorization)}><Pencil size={17} /></IconAction>
@@ -305,10 +306,46 @@ function TokenDialog({ title, token, onClose }: { title: string; token: string; 
 }
 
 function AuthorizationStatus({ value }: { value: Authorization }) {
-  const expired = value.expires_at !== null && new Date(value.expires_at).getTime() <= Date.now();
-  const label = !value.enabled ? "Disabled" : expired ? "Expired" : "Enabled";
-  const tone = !value.enabled ? "muted" : expired ? "warning" : "ok";
-  return <span className="inline-status"><span className={`status-dot status-dot--${tone}`} />{label}</span>;
+  const status = value.enforcement;
+  if (!status) return <span className="inline-status"><span className="status-dot status-dot--warning" />Not reported</span>;
+  const labels = {
+    active: "Active",
+    administrator_disabled: "Disabled",
+    expired: "Expired",
+    quota_exceeded: "Quota reached",
+  } as const;
+  const tone = status.reason === "active" && status.services_enabled ? "ok"
+    : status.reason === "administrator_disabled" ? "muted" : "warning";
+  return (
+    <span className="runtime-value" title={`Observed ${new Date(status.observed_at).toLocaleString()}`}>
+      <span className="inline-status"><span className={`status-dot status-dot--${tone}`} />{labels[status.reason]}</span>
+      <small>Generation {status.generation}</small>
+    </span>
+  );
+}
+
+function TrafficUsage({ value }: { value: Authorization }) {
+  const traffic = value.current_traffic;
+  if (!traffic) return <span className="secondary-cell">No data / {formatQuota(value.traffic_limit_bytes)}</span>;
+  const total = traffic.upload_bytes + traffic.download_bytes;
+  const periodEnd = traffic.period.ends_at ? new Date(traffic.period.ends_at).toLocaleString() : "No end";
+  return (
+    <span className="runtime-value" title={`${new Date(traffic.period.starts_at).toLocaleString()} - ${periodEnd}; observed ${new Date(traffic.observed_at).toLocaleString()}`}>
+      <strong>{formatBytes(total)}</strong>
+      <small>of {formatQuota(value.traffic_limit_bytes)}</small>
+    </span>
+  );
+}
+
+function IPStatus({ value }: { value: Authorization }) {
+  if (value.soft_ip_limit === null) return <span className="secondary-cell">Not limited</span>;
+  if (!value.enforcement) return <span className="secondary-cell">Not reported / {value.soft_ip_limit}</span>;
+  return (
+    <span className="runtime-value">
+      <strong>{value.enforcement.active_ip_count} / {value.soft_ip_limit}</strong>
+      <small>{value.enforcement.blocked_ip_count} blocked</small>
+    </span>
+  );
 }
 
 function IconAction({ label, danger = false, onClick, children }: { label: string; danger?: boolean; onClick: () => void; children: ReactNode }) {
@@ -321,6 +358,18 @@ function formatQuota(value: number | null): string {
   if (value === null) return "Unlimited";
   const gib = value / gibibyte;
   return `${Number.isInteger(gib) ? gib : gib.toFixed(2)} GiB`;
+}
+
+function formatBytes(value: number): string {
+  if (value < 1024) return `${value} B`;
+  const units = ["KiB", "MiB", "GiB", "TiB", "PiB"];
+  let current = value;
+  let unit = -1;
+  do {
+    current /= 1024;
+    unit++;
+  } while (current >= 1024 && unit < units.length - 1);
+  return `${current >= 10 ? current.toFixed(1) : current.toFixed(2)} ${units[unit]}`;
 }
 
 function formatReset(value: Authorization): string {

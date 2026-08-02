@@ -71,19 +71,23 @@ WHERE id = ? AND enabled = 1`, registration.CredentialHash, unixTime(now), regis
 
 func (store *Store) AuthenticateAgent(ctx context.Context, nodeID string, credentialHash []byte) (Node, error) {
 	return scanNode(store.db.QueryRowContext(ctx, `
-SELECT id, name, public_address, enabled, credential_hash, registered_at, last_seen_at,
-       hostname, agent_version, agent_os, agent_arch, agent_capabilities_json, created_at, updated_at
-FROM nodes WHERE id = ? AND enabled = 1 AND credential_hash = ?`, nodeID, credentialHash))
+	SELECT id, name, public_address, enabled, credential_hash, registered_at, last_seen_at,
+	       hostname, agent_version, agent_os, agent_arch, agent_capabilities_json, agent_started_at_ns,
+	       created_at, updated_at
+	FROM nodes WHERE id = ? AND credential_hash = ?`, nodeID, credentialHash))
 }
 
-func (store *Store) RecordAgentHello(ctx context.Context, nodeID string, credentialHash []byte, agentVersion string, capabilities []string, observedAt time.Time) error {
+func (store *Store) RecordAgentHello(ctx context.Context, nodeID string, credentialHash []byte, agentVersion string,
+	capabilities []string, startedAt, observedAt time.Time,
+) error {
 	encodedCapabilities, err := json.Marshal(capabilities)
 	if err != nil {
 		return fmt.Errorf("encode Agent capabilities: %w", err)
 	}
 	result, err := store.db.ExecContext(ctx, `
-UPDATE nodes SET agent_version = ?, agent_capabilities_json = ?, updated_at = ?
-WHERE id = ? AND enabled = 1 AND credential_hash = ?`, agentVersion, string(encodedCapabilities), unixTime(observedAt), nodeID, credentialHash)
+	UPDATE nodes SET agent_version = ?, agent_capabilities_json = ?, agent_started_at_ns = ?, updated_at = ?
+	WHERE id = ? AND credential_hash = ?`, agentVersion, string(encodedCapabilities),
+		startedAt.UTC().UnixNano(), unixTime(observedAt), nodeID, credentialHash)
 	if err != nil {
 		return fmt.Errorf("record Agent hello: %w", err)
 	}
@@ -93,7 +97,7 @@ WHERE id = ? AND enabled = 1 AND credential_hash = ?`, agentVersion, string(enco
 func (store *Store) RecordAgentHeartbeat(ctx context.Context, nodeID string, credentialHash []byte, agentVersion string, observedAt time.Time) error {
 	result, err := store.db.ExecContext(ctx, `
 UPDATE nodes SET last_seen_at = ?, agent_version = ?, updated_at = ?
-WHERE id = ? AND enabled = 1 AND credential_hash = ?`, unixTime(observedAt), agentVersion, unixTime(observedAt), nodeID, credentialHash)
+WHERE id = ? AND credential_hash = ?`, unixTime(observedAt), agentVersion, unixTime(observedAt), nodeID, credentialHash)
 	if err != nil {
 		return fmt.Errorf("record Agent heartbeat: %w", err)
 	}

@@ -3,9 +3,10 @@ module github.com/Relayward/relayward
 go 1.26.0
 
 require (
-	github.com/Relayward/relayward-sdk v0.0.0-20260802121112-e72643a95796
+	github.com/Relayward/relayward-sdk v0.0.0-20260802132441-dcd853f2814c
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
+	github.com/klauspost/compress v1.18.4
 	golang.org/x/crypto v0.54.0
 	google.golang.org/grpc v1.83.0
 	modernc.org/sqlite v1.55.0
