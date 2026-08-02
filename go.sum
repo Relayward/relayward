@@ -1,5 +1,5 @@
-github.com/Relayward/relayward-sdk v0.0.0-20260802082525-bb2cf0377a3f h1:DUIYKqNnGJzvn2BsFOUTTyw+I8rej1jHkH+zIDVmCJI=
-github.com/Relayward/relayward-sdk v0.0.0-20260802082525-bb2cf0377a3f/go.mod h1:i9cfCbYnR19g3+/WZNTOjwpDrtQCzWolPEzQfhLM7v8=
+github.com/Relayward/relayward-sdk v0.0.0-20260802085132-4c3393332a88 h1:9OxD2xEaxCxmooK1Akf1IZhbZyrZVRE7Rfewr7uNNGQ=
+github.com/Relayward/relayward-sdk v0.0.0-20260802085132-4c3393332a88/go.mod h1:i9cfCbYnR19g3+/WZNTOjwpDrtQCzWolPEzQfhLM7v8=
 github.com/dustin/go-humanize v1.0.1 h1:GzkhY7T5VNhEkwH0PVJgjz+fX1rhBrR7pRT3mDkpeCY=
 github.com/dustin/go-humanize v1.0.1/go.mod h1:Mu1zIs6XwVuF/gI1OepvI0qD18qycQx+mFykh5fBlto=
 github.com/google/pprof v0.0.0-20250317173921-a4b03ec1a45e h1:ijClszYn+mADRFY17kjQEVQ1XRhq2/JR1M3sGqeJoxs=

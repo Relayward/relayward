@@ -16,6 +16,7 @@ import (
 
 	"github.com/Relayward/relayward/internal/auth"
 	"github.com/Relayward/relayward/internal/buildinfo"
+	"github.com/Relayward/relayward/internal/eventstore"
 	"github.com/Relayward/relayward/internal/management"
 	"github.com/Relayward/relayward/internal/secretbox"
 	"github.com/Relayward/relayward/internal/server"
@@ -72,6 +73,11 @@ func serve(args []string, logger *slog.Logger) error {
 		return err
 	}
 	defer database.Close()
+	events, err := eventstore.Open(ctx, filepath.Join(absoluteDataDir, "events.db"))
+	if err != nil {
+		return err
+	}
+	defer events.Close()
 	if err := database.DeleteExpiredSessions(ctx, time.Now()); err != nil {
 		return err
 	}
@@ -98,6 +104,7 @@ func serve(args []string, logger *slog.Logger) error {
 		Handler: server.New(server.Options{
 			Version:      buildinfo.Version,
 			Store:        database,
+			EventStore:   events,
 			Auth:         authentication,
 			Management:   manager,
 			Secrets:      secrets,

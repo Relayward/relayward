@@ -13,6 +13,7 @@ import (
 
 	"github.com/Relayward/relayward-sdk/protocol"
 	"github.com/Relayward/relayward/internal/auth"
+	"github.com/Relayward/relayward/internal/eventstore"
 	"github.com/Relayward/relayward/internal/management"
 	"github.com/Relayward/relayward/internal/secretbox"
 	"github.com/Relayward/relayward/internal/store"
@@ -27,6 +28,7 @@ const (
 type Options struct {
 	Version      string
 	Store        *store.Store
+	EventStore   *eventstore.Store
 	Auth         *auth.Service
 	Management   *management.Service
 	Secrets      *secretbox.Manager
@@ -37,6 +39,7 @@ type Options struct {
 type Server struct {
 	version       string
 	store         *store.Store
+	eventStore    *eventstore.Store
 	auth          *auth.Service
 	management    *management.Service
 	secrets       *secretbox.Manager
@@ -56,6 +59,7 @@ func New(options Options) http.Handler {
 	server := &Server{
 		version:       options.Version,
 		store:         options.Store,
+		eventStore:    options.EventStore,
 		auth:          options.Auth,
 		management:    options.Management,
 		secrets:       options.Secrets,
@@ -104,6 +108,7 @@ func New(options Options) http.Handler {
 	mux.HandleFunc("GET /api/v1/audit", server.withAuthentication(server.listAudit))
 	mux.HandleFunc("GET /api/v1/subscriptions/{subscription_token}", server.subscription)
 	mux.HandleFunc("POST /api/v1/agent/register", server.registerAgent)
+	mux.HandleFunc("POST /api/v1/agent/events/{node_id}", server.receiveAgentEvents)
 	mux.HandleFunc("GET /api/v1/agent/connect/{node_id}", server.connectAgent)
 	return server.securityHeaders(mux)
 }
@@ -111,6 +116,16 @@ func New(options Options) http.Handler {
 func (server *Server) health(w http.ResponseWriter, request *http.Request) {
 	if err := server.store.Ping(request.Context()); err != nil {
 		server.logger.Error("database health check failed", "error", err)
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"status": "unavailable"})
+		return
+	}
+	if server.eventStore == nil {
+		server.logger.Error("event database health check failed", "error", "event store is not configured")
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"status": "unavailable"})
+		return
+	}
+	if err := server.eventStore.Ping(request.Context()); err != nil {
+		server.logger.Error("event database health check failed", "error", err)
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"status": "unavailable"})
 		return
 	}

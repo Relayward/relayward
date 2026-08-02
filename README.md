@@ -38,6 +38,8 @@ npm run dev
 
 The Vite server proxies API requests to `127.0.0.1:8080`. Production session cookies require HTTPS; `-insecure-cookie` exists only for loopback development.
 
+The persistent data directory contains the primary `relayward.db`, the independent hot-event `events.db`, and the instance encryption key. Back up and restore the directory as one unit.
+
 If the persisted instance key is lost and no recovery code is available, reset TOTP locally and revoke all administrator sessions:
 
 ```bash

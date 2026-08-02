@@ -23,6 +23,7 @@ import (
 	agentv1 "github.com/Relayward/relayward-sdk/agent/v1"
 	"github.com/Relayward/relayward-sdk/protocol"
 	"github.com/Relayward/relayward/internal/auth"
+	"github.com/Relayward/relayward/internal/eventstore"
 	"github.com/Relayward/relayward/internal/management"
 	"github.com/Relayward/relayward/internal/secretbox"
 	"github.com/Relayward/relayward/internal/store"
@@ -661,6 +662,11 @@ func readTestAgentEnvelope(t *testing.T, connection *websocket.Conn) protocol.En
 }
 
 func newTestHandler(t *testing.T) (http.Handler, *store.Store) {
+	handler, database, _ := newTestHandlerWithEventStore(t)
+	return handler, database
+}
+
+func newTestHandlerWithEventStore(t *testing.T) (http.Handler, *store.Store, *eventstore.Store) {
 	t.Helper()
 	directory := t.TempDir()
 	database, err := store.Open(context.Background(), filepath.Join(directory, "relayward.db"))
@@ -668,6 +674,11 @@ func newTestHandler(t *testing.T) (http.Handler, *store.Store) {
 		t.Fatalf("store.Open() error = %v", err)
 	}
 	t.Cleanup(func() { _ = database.Close() })
+	events, err := eventstore.Open(context.Background(), filepath.Join(directory, "events.db"))
+	if err != nil {
+		t.Fatalf("eventstore.Open() error = %v", err)
+	}
+	t.Cleanup(func() { _ = events.Close() })
 	secrets, err := secretbox.Open(directory, 0)
 	if err != nil {
 		t.Fatalf("secretbox.Open() error = %v", err)
@@ -677,7 +688,10 @@ func newTestHandler(t *testing.T) (http.Handler, *store.Store) {
 		t.Fatalf("auth.NewService() error = %v", err)
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	return New(Options{Version: "test", Store: database, Auth: authentication, Management: management.NewService(database), Secrets: secrets, Logger: logger}), database
+	return New(Options{
+		Version: "test", Store: database, EventStore: events, Auth: authentication,
+		Management: management.NewService(database), Secrets: secrets, Logger: logger,
+	}), database, events
 }
 
 func performRequest(handler http.Handler, method, path string, body []byte, headers map[string]string, cookies ...*http.Cookie) *httptest.ResponseRecorder {
