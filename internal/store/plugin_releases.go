@@ -158,6 +158,42 @@ func (store *Store) PluginVersionByID(ctx context.Context, pluginID, version str
 WHERE plugin_id = ? AND version = ?`, pluginID, version))
 }
 
+func (store *Store) ReplacePluginGitHubToken(ctx context.Context, pluginID string, ciphertext []byte, now time.Time) error {
+	if err := contract.ValidatePluginID(pluginID); err != nil {
+		return err
+	}
+	if len(ciphertext) == 0 {
+		return errors.New("encrypted GitHub token must not be empty")
+	}
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin plugin GitHub token replacement: %w", err)
+	}
+	defer tx.Rollback()
+	var repository string
+	if err := tx.QueryRowContext(ctx, `SELECT repository FROM plugin_installations WHERE plugin_id = ?`, pluginID).Scan(&repository); errors.Is(err, sql.ErrNoRows) {
+		return ErrNotFound
+	} else if err != nil {
+		return fmt.Errorf("read plugin before GitHub token replacement: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `
+INSERT INTO secrets(owner_type, owner_id, name, ciphertext, updated_at)
+VALUES (?, ?, ?, ?, ?)
+ON CONFLICT(owner_type, owner_id, name) DO UPDATE SET
+    ciphertext = excluded.ciphertext, updated_at = excluded.updated_at`,
+		PluginInstallationSecretOwnerType, pluginID, PluginInstallationGitHubToken, ciphertext, unixTime(now)); err != nil {
+		return fmt.Errorf("replace encrypted plugin GitHub token: %w", err)
+	}
+	if err := appendAuditTx(ctx, tx, AuditEntry{
+		OccurredAt: now, ActorType: "administrator", ActorID: "1", Action: "plugin.github_token.replace",
+		TargetType: "plugin_installation", TargetID: pluginID, Outcome: "success",
+		Metadata: map[string]any{"repository": repository},
+	}); err != nil {
+		return err
+	}
+	return commit(tx, "plugin GitHub token replacement")
+}
+
 func (store *Store) ListPluginVersions(ctx context.Context, pluginID string) ([]PluginVersion, error) {
 	rows, err := store.db.QueryContext(ctx, pluginVersionSelect+`
 WHERE plugin_id = ? ORDER BY installed_at DESC, version`, pluginID)

@@ -28,6 +28,10 @@ type pluginUpgradeRequest struct {
 	ApprovedPermissions []string `json:"approved_permissions"`
 }
 
+type pluginGitHubTokenRequest struct {
+	GitHubToken string `json:"github_token"`
+}
+
 type pluginReleaseCandidateResponse struct {
 	Repository string            `json:"repository"`
 	ReleaseID  int64             `json:"release_id"`
@@ -133,6 +137,21 @@ func (server *Server) upgradePlugin(w http.ResponseWriter, request *http.Request
 		return
 	}
 	writeJSON(w, http.StatusOK, pluginInstallationView(value))
+}
+
+func (server *Server) replacePluginGitHubToken(w http.ResponseWriter, request *http.Request, _ auth.Authenticated) {
+	var input pluginGitHubTokenRequest
+	if err := decodeJSON(request, &input); err != nil {
+		writeProblem(w, http.StatusBadRequest, protocol.ErrorInvalidArgument, "Invalid GitHub token request.", false)
+		return
+	}
+	if err := server.management.ReplacePluginGitHubToken(
+		request.Context(), request.PathValue("plugin_id"), input.GitHubToken,
+	); err != nil {
+		server.resourceError(w, request, err, "Plugin")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (server *Server) uninstallPlugin(w http.ResponseWriter, request *http.Request, _ auth.Authenticated) {

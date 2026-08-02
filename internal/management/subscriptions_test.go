@@ -21,7 +21,9 @@ type subscriptionRuntimeStub struct {
 	err   error
 }
 
-func (*subscriptionRuntimeStub) Switch(context.Context, store.PluginVersion) error { return nil }
+func (*subscriptionRuntimeStub) Switch(context.Context, store.PluginVersion) (bool, error) {
+	return false, nil
+}
 func (*subscriptionRuntimeStub) Rollback(context.Context, string, *store.PluginVersion) error {
 	return nil
 }

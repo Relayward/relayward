@@ -1,11 +1,12 @@
 import { type FormEvent, useEffect, useState } from "react";
-import { ExternalLink, PackagePlus, RefreshCw, Trash2 } from "lucide-react";
+import { ExternalLink, KeyRound, PackagePlus, RefreshCw, Trash2 } from "lucide-react";
 
 import {
   APIError,
   inspectPluginRelease,
   installPlugin,
   listPluginInstallations,
+  replacePluginGitHubToken,
   uninstallPlugin,
   upgradePlugin,
   type PluginInstallation,
@@ -46,6 +47,7 @@ function PluginInstallationsView({ onOpen }: { onOpen: (plugin: PluginInstallati
   const [installing, setInstalling] = useState(false);
   const [upgrading, setUpgrading] = useState<PluginInstallation>();
   const [removing, setRemoving] = useState<PluginInstallation>();
+  const [replacingToken, setReplacingToken] = useState<PluginInstallation>();
 
   useEffect(() => {
     let active = true;
@@ -104,6 +106,9 @@ function PluginInstallationsView({ onOpen }: { onOpen: (plugin: PluginInstallati
                     <button className="icon-button" aria-label={`Upgrade ${item.manifest.name}`} title="Check for upgrade" onClick={() => setUpgrading(item)} type="button">
                       <RefreshCw size={17} />
                     </button>
+                    <button className="icon-button" aria-label={`Replace GitHub token for ${item.manifest.name}`} title="Replace GitHub token" onClick={() => setReplacingToken(item)} type="button">
+                      <KeyRound size={17} />
+                    </button>
                     <button className="icon-button icon-button--danger" aria-label={`Uninstall ${item.manifest.name}`} title="Uninstall plugin" onClick={() => setRemoving(item)} type="button">
                       <Trash2 size={17} />
                     </button>
@@ -116,6 +121,7 @@ function PluginInstallationsView({ onOpen }: { onOpen: (plugin: PluginInstallati
       </div>
       {installing ? <PluginReleaseDialog onClose={() => setInstalling(false)} onSaved={(value) => { replace(value); setInstalling(false); }} /> : null}
       {upgrading ? <PluginReleaseDialog existing={upgrading} onClose={() => setUpgrading(undefined)} onSaved={(value) => { replace(value); setUpgrading(undefined); }} /> : null}
+      {replacingToken ? <PluginTokenDialog plugin={replacingToken} onClose={() => setReplacingToken(undefined)} /> : null}
       {removing ? (
         <PluginUninstallDialog
           plugin={removing}
@@ -127,6 +133,41 @@ function PluginInstallationsView({ onOpen }: { onOpen: (plugin: PluginInstallati
         />
       ) : null}
     </>
+  );
+}
+
+function PluginTokenDialog({ plugin, onClose }: { plugin: PluginInstallation; onClose: () => void }) {
+  const [token, setToken] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string>();
+
+  async function save(event: FormEvent) {
+    event.preventDefault();
+    setBusy(true);
+    setError(undefined);
+    try {
+      await replacePluginGitHubToken(plugin.plugin_id, token);
+      onClose();
+    } catch (cause) {
+      setError(errorMessage(cause));
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Modal title={`Replace token for ${plugin.manifest.name}`} onClose={onClose}>
+      <form onSubmit={save}>
+        <label className="field">
+          <span>GitHub token</span>
+          <input value={token} onChange={(event) => setToken(event.target.value)} type="password" autoComplete="off" required autoFocus />
+        </label>
+        <FormError message={error} />
+        <div className="dialog-actions">
+          <button className="quiet-button" onClick={onClose} type="button">Cancel</button>
+          <button className="primary-button compact" disabled={busy || token.trim() === ""} type="submit">{busy ? "Saving..." : "Replace"}</button>
+        </div>
+      </form>
+    </Modal>
   );
 }
 

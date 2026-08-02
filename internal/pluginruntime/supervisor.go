@@ -39,9 +39,14 @@ type artifactStore interface {
 	RuntimeDirectory(string) (string, error)
 }
 
+type eventPublisher interface {
+	PublishPluginEvents(context.Context, string, *centerpluginv1.PublishEventsRequest, time.Time) error
+}
+
 type Supervisor struct {
 	database  database
 	artifacts artifactStore
+	events    eventPublisher
 	logger    *slog.Logger
 
 	mu             sync.Mutex
@@ -61,15 +66,15 @@ type pluginActor struct {
 	crashStreak  uint
 }
 
-func New(database database, artifacts artifactStore, logger *slog.Logger) (*Supervisor, error) {
-	if database == nil || artifacts == nil {
-		return nil, errors.New("plugin runtime database and artifact store are required")
+func New(database database, artifacts artifactStore, events eventPublisher, logger *slog.Logger) (*Supervisor, error) {
+	if database == nil || artifacts == nil || events == nil {
+		return nil, errors.New("plugin runtime database, artifact store, and event store are required")
 	}
 	if logger == nil {
 		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
 	return &Supervisor{
-		database: database, artifacts: artifacts, logger: logger,
+		database: database, artifacts: artifacts, events: events, logger: logger,
 		actors: make(map[string]*pluginActor), healthInterval: defaultHealthInterval,
 	}, nil
 }
@@ -128,34 +133,34 @@ func (supervisor *Supervisor) Start(parent context.Context) error {
 	return nil
 }
 
-func (supervisor *Supervisor) Switch(ctx context.Context, version store.PluginVersion) error {
+func (supervisor *Supervisor) Switch(ctx context.Context, version store.PluginVersion) (bool, error) {
 	if !supervisor.isRunning() {
-		return ErrPluginUnavailable
+		return false, ErrPluginUnavailable
 	}
 	actor := supervisor.actor(version.PluginID)
 	actor.mu.Lock()
 	defer actor.mu.Unlock()
 	if !supervisor.isRunning() {
-		return ErrPluginUnavailable
+		return false, ErrPluginUnavailable
 	}
 	previous := cloneVersion(actor.version)
 	if err := supervisor.detachAndStop(ctx, actor); err != nil {
-		return fmt.Errorf("stop previous center plugin: %w", err)
+		return false, fmt.Errorf("stop previous center plugin: %w", err)
 	}
 	process, err := supervisor.startProcess(ctx, version)
 	if err != nil {
 		restoreErr := supervisor.restoreLocked(ctx, actor, previous)
 		if restoreErr != nil {
-			return errors.Join(fmt.Errorf("activate center plugin: %w", err), fmt.Errorf("restore previous center plugin: %w", restoreErr))
+			return false, errors.Join(fmt.Errorf("activate center plugin: %w", err), fmt.Errorf("restore previous center plugin: %w", restoreErr))
 		}
-		return fmt.Errorf("activate center plugin: %w", err)
+		return previous != nil, fmt.Errorf("activate center plugin: %w", err)
 	}
 	actor.process = process
 	actor.version = cloneVersion(&version)
 	actor.restartCount = 0
 	actor.crashStreak = 0
 	supervisor.watch(version.PluginID, actor, process)
-	return nil
+	return false, nil
 }
 
 func (supervisor *Supervisor) Rollback(ctx context.Context, pluginID string, previous *store.PluginVersion) error {

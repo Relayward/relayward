@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
@@ -21,6 +22,7 @@ import (
 	"github.com/Relayward/relayward-sdk/manifest"
 	nodepluginv1 "github.com/Relayward/relayward-sdk/nodeplugin/v1"
 
+	"github.com/Relayward/relayward/internal/eventstore"
 	"github.com/Relayward/relayward/internal/githubrelease"
 	"github.com/Relayward/relayward/internal/pluginartifact"
 	"github.com/Relayward/relayward/internal/pluginruntime"
@@ -58,7 +60,12 @@ func TestPluginLifecycleRunsRealReleaseAndRestoresAfterBadUpgrade(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	runtime, err := pluginruntime.New(service.store, artifacts, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	events, err := eventstore.Open(t.Context(), filepath.Join(root, "events.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer events.Close()
+	runtime, err := pluginruntime.New(service.store, artifacts, events, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -93,7 +100,7 @@ func TestPluginLifecycleRunsRealReleaseAndRestoresAfterBadUpgrade(t *testing.T) 
 	}
 	installed, err := service.InstallPluginRelease(t.Context(), PluginReleaseInput{
 		Repository: releases.release.Repository.URL(), Version: "1.2.3", GitHubToken: "private-token",
-		ApprovedPermissions: []string{centerpluginv1.PermissionNodesRead, centerpluginv1.PermissionServicesWrite},
+		ApprovedPermissions: []string{centerpluginv1.PermissionEventsWrite, centerpluginv1.PermissionNodesRead, centerpluginv1.PermissionServicesWrite},
 	})
 	if err != nil {
 		t.Fatalf("InstallPluginRelease() error = %v", err)
@@ -123,6 +130,14 @@ func TestPluginLifecycleRunsRealReleaseAndRestoresAfterBadUpgrade(t *testing.T) 
 	raw, err := service.InvokePluginUI(t.Context(), installed.PluginID, "nodes.summary", []byte(`{}`))
 	if err != nil || string(raw) != `{"count":1}` {
 		t.Fatalf("InvokePluginUI() = %s, %v", raw, err)
+	}
+	eventInput := []byte(fmt.Sprintf(`{"node_id":%q,"source_event_id":"contract-event-1","observed_at_unix_nano":%d}`, node.ID, time.Now().UTC().UnixNano()))
+	raw, err = service.InvokePluginUI(t.Context(), installed.PluginID, "events.publish", eventInput)
+	if err != nil || string(raw) != `{"event_count":1}` {
+		t.Fatalf("InvokePluginUI(events.publish) = %s, %v", raw, err)
+	}
+	if count, err := events.Count(t.Context()); err != nil || count != 1 {
+		t.Fatalf("published event count = %d, %v", count, err)
 	}
 	file, _, err := service.OpenPluginUIFile(t.Context(), installed.PluginID, "index.html")
 	if err != nil {
@@ -167,7 +182,7 @@ func TestPluginLifecycleRunsRealReleaseAndRestoresAfterBadUpgrade(t *testing.T) 
 	releases.release, releases.assets = integrationRelease("1.2.4", executable, ui)
 	if _, err := service.InstallPluginRelease(t.Context(), PluginReleaseInput{
 		Repository: releases.release.Repository.URL(), Version: "1.2.4",
-		ApprovedPermissions: []string{centerpluginv1.PermissionNodesRead, centerpluginv1.PermissionServicesWrite},
+		ApprovedPermissions: []string{centerpluginv1.PermissionEventsWrite, centerpluginv1.PermissionNodesRead, centerpluginv1.PermissionServicesWrite},
 	}); fieldName(err) != "release" {
 		t.Fatalf("bad upgrade error = %v", err)
 	}
@@ -244,6 +259,7 @@ func integrationRelease(version string, executable, ui []byte) (githubrelease.Re
 		Version: version, Kind: manifest.KindRuntime,
 		Requires: manifest.Requirements{ControlAPI: 1, AgentAPI: &agentAPI, UIAPI: &uiAPI},
 		Permissions: []manifest.Permission{
+			{Name: centerpluginv1.PermissionEventsWrite, Reason: "Exercise event publication."},
 			{Name: centerpluginv1.PermissionNodesRead, Reason: "Exercise node access."},
 			{Name: centerpluginv1.PermissionServicesWrite, Reason: "Exercise service registration."},
 		},

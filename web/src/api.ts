@@ -480,6 +480,13 @@ export async function upgradePlugin(pluginID: string, input: PluginUpgradeInput)
   });
 }
 
+export async function replacePluginGitHubToken(pluginID: string, githubToken: string): Promise<void> {
+  return request(`/api/v1/plugins/${encodeURIComponent(pluginID)}/github-token`, {
+    method: "PUT",
+    body: JSON.stringify({ github_token: githubToken }),
+  });
+}
+
 export async function uninstallPlugin(pluginID: string): Promise<void> {
   return request(`/api/v1/plugins/${encodeURIComponent(pluginID)}`, { method: "DELETE" });
 }

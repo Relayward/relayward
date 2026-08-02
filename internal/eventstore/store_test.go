@@ -8,6 +8,7 @@ import (
 	"time"
 
 	agentv1 "github.com/Relayward/relayward-sdk/agent/v1"
+	centerpluginv1 "github.com/Relayward/relayward-sdk/centerplugin/v1"
 )
 
 const testNodeID = "123e4567-e89b-42d3-a456-426614174000"
@@ -36,6 +37,46 @@ func TestIngestPersistsAndIdempotentlyReplaysContiguousEvents(t *testing.T) {
 	stored, err := store.EventByID(ctx, batch.Events[0].EventID)
 	if err != nil || stored.NodeID != testNodeID || stored.Event.Sequence != 1 || !stored.ReceivedAt.Equal(now.Truncate(time.Second)) {
 		t.Fatalf("EventByID() = %+v, %v", stored, err)
+	}
+}
+
+func TestPublishPluginEventsIsAtomicAndIdempotent(t *testing.T) {
+	ctx := context.Background()
+	store, err := Open(ctx, filepath.Join(t.TempDir(), "events.db"))
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	defer store.Close()
+	now := time.Date(2026, time.August, 2, 16, 0, 0, 0, time.UTC)
+	pluginID := "io.relayward.risk"
+	request := &centerpluginv1.PublishEventsRequest{Events: []*centerpluginv1.PublishedEvent{
+		{SourceEventId: "event-1", NodeId: testNodeID, Kind: centerpluginv1.EventNotificationRequest, ObservedAtUnixNano: now.UnixNano(),
+			Json: []byte(`{"severity":"warning","subject":"Risk window","body":"Review required.","dedup_key":"risk:1"}`)},
+		{SourceEventId: "event-2", NodeId: testNodeID, Kind: "plugin.io.relayward.risk.window", ObservedAtUnixNano: now.Add(time.Second).UnixNano(),
+			Json: []byte(`{"risk_count":1}`)},
+	}}
+	if err := store.PublishPluginEvents(ctx, pluginID, request, now.Add(2*time.Second)); err != nil {
+		t.Fatalf("PublishPluginEvents() error = %v", err)
+	}
+	if err := store.PublishPluginEvents(ctx, pluginID, request, now.Add(3*time.Second)); err != nil {
+		t.Fatalf("replayed PublishPluginEvents() error = %v", err)
+	}
+	count, err := store.Count(ctx)
+	if err != nil || count != 2 {
+		t.Fatalf("Count() = %d, %v", count, err)
+	}
+	stored, err := store.EventByID(ctx, pluginEventID(pluginID, "event-1"))
+	if err != nil || stored.NodeID != testNodeID || stored.Event.Sequence != 1 || stored.Event.Kind != centerpluginv1.EventNotificationRequest {
+		t.Fatalf("EventByID() = %+v, %v", stored, err)
+	}
+
+	request.Events[0].Json = []byte(`{"severity":"warning","subject":"Risk window","body":"Changed."}`)
+	if err := store.PublishPluginEvents(ctx, pluginID, request, now.Add(4*time.Second)); !errors.Is(err, ErrConflict) {
+		t.Fatalf("conflicting PublishPluginEvents() error = %v", err)
+	}
+	count, err = store.Count(ctx)
+	if err != nil || count != 2 {
+		t.Fatalf("Count() after conflict = %d, %v", count, err)
 	}
 }
 

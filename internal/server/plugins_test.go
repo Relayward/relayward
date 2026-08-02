@@ -91,9 +91,9 @@ type serverPluginRuntime struct {
 	renderErr   error
 }
 
-func (runtime *serverPluginRuntime) Switch(_ context.Context, value store.PluginVersion) error {
+func (runtime *serverPluginRuntime) Switch(_ context.Context, value store.PluginVersion) (bool, error) {
 	runtime.active = &value
-	return nil
+	return false, nil
 }
 
 func (runtime *serverPluginRuntime) Rollback(_ context.Context, _ string, value *store.PluginVersion) error {
@@ -172,6 +172,11 @@ func TestPluginLifecycleHTTPFlowDoesNotExposeSecrets(t *testing.T) {
 	if detail.Code != http.StatusOK || strings.Contains(detail.Body.String(), "private-token") {
 		t.Fatalf("detail status = %d, body = %s", detail.Code, detail.Body.String())
 	}
+	replacedToken := performRequest(handler, http.MethodPut, "/api/v1/plugins/"+installation.PluginID+"/github-token",
+		[]byte(`{"github_token":"replacement-token"}`), headers, sessionCookie)
+	if replacedToken.Code != http.StatusNoContent || strings.Contains(replacedToken.Body.String(), "replacement-token") {
+		t.Fatalf("replace token status = %d, body = %s", replacedToken.Code, replacedToken.Body.String())
+	}
 	ui := performRequest(handler, http.MethodPost, "/api/v1/plugins/"+installation.PluginID+"/ui/status.read",
 		[]byte(`{}`), headers, sessionCookie)
 	if ui.Code != http.StatusOK || strings.TrimSpace(ui.Body.String()) != `{"ok":true}` {
@@ -194,7 +199,7 @@ func TestPluginLifecycleHTTPFlowDoesNotExposeSecrets(t *testing.T) {
 		t.Fatalf("upgrade status = %d, body = %s", upgraded.Code, upgraded.Body.String())
 	}
 	decodeResponse(t, upgraded, &installation)
-	if installation.ActiveVersion != "1.2.4" || installation.PreviousVersion != "1.2.3" || releases.token != "private-token" {
+	if installation.ActiveVersion != "1.2.4" || installation.PreviousVersion != "1.2.3" || releases.token != "replacement-token" {
 		t.Fatalf("upgraded installation = %+v, reused token = %q", installation, releases.token)
 	}
 	uninstalled := performRequest(handler, http.MethodDelete, "/api/v1/plugins/"+installation.PluginID, nil,

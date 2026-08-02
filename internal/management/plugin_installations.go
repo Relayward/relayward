@@ -33,7 +33,7 @@ type pluginArtifactStore interface {
 }
 
 type centerPluginRuntime interface {
-	Switch(context.Context, store.PluginVersion) error
+	Switch(context.Context, store.PluginVersion) (bool, error)
 	Rollback(context.Context, string, *store.PluginVersion) error
 	StopPlugin(context.Context, string) error
 	InvokeUI(context.Context, string, string, []byte) ([]byte, error)
@@ -146,11 +146,27 @@ func (service *Service) InstallPluginRelease(ctx context.Context, input PluginRe
 		}
 		previous = &value
 	}
-	if err := service.pluginRuntime.Switch(ctx, version); err != nil {
-		if newRelease {
-			_ = service.pluginArtifacts.RemoveRelease(version.PluginID, version.Version)
+	previousRestored, err := service.pluginRuntime.Switch(ctx, version)
+	if err != nil {
+		var rollbackErr error
+		var rollbackSucceeded *bool
+		if previous != nil {
+			if !previousRestored {
+				rollbackErr = service.rollbackPluginActivation(version.PluginID, previous)
+				previousRestored = rollbackErr == nil
+			}
+			rollbackSucceeded = &previousRestored
 		}
-		return store.PluginInstallation{}, invalid("release", "center plugin activation or health checks failed")
+		auditErr := service.recordPluginReleaseFailure(
+			version, release.Repository.URL(), existing, "activation", rollbackSucceeded,
+		)
+		var cleanupErr error
+		if newRelease {
+			cleanupErr = service.pluginArtifacts.RemoveRelease(version.PluginID, version.Version)
+		}
+		return store.PluginInstallation{}, errors.Join(
+			invalid("release", "center plugin activation or health checks failed"), rollbackErr, auditErr, cleanupErr,
+		)
 	}
 	installation := store.PluginInstallation{
 		PluginID: version.PluginID, Repository: release.Repository.URL(), Kind: string(version.Manifest.Kind),
@@ -162,10 +178,14 @@ func (service *Service) InstallPluginRelease(ctx context.Context, input PluginRe
 		return committed, nil
 	}
 	rollbackErr := service.rollbackPluginActivation(version.PluginID, previous)
+	rollbackSucceeded := rollbackErr == nil
+	auditErr := service.recordPluginReleaseFailure(
+		version, release.Repository.URL(), existing, "persistence", &rollbackSucceeded,
+	)
 	if newRelease {
 		rollbackErr = errors.Join(rollbackErr, service.pluginArtifacts.RemoveRelease(version.PluginID, version.Version))
 	}
-	return store.PluginInstallation{}, errors.Join(err, rollbackErr)
+	return store.PluginInstallation{}, errors.Join(err, rollbackErr, auditErr)
 }
 
 func (service *Service) ListPluginInstallations(ctx context.Context) ([]store.PluginInstallation, error) {
@@ -177,6 +197,26 @@ func (service *Service) PluginInstallation(ctx context.Context, pluginID string)
 		return store.PluginInstallation{}, invalid("plugin_id", err.Error())
 	}
 	return service.store.PluginInstallationByID(ctx, pluginID)
+}
+
+func (service *Service) ReplacePluginGitHubToken(ctx context.Context, pluginID, token string) error {
+	if err := contract.ValidatePluginID(pluginID); err != nil {
+		return invalid("plugin_id", err.Error())
+	}
+	normalized, err := normalizedRequired("github_token", token, 4096)
+	if err != nil {
+		return err
+	}
+	if service.secrets == nil || !service.secrets.Available() {
+		return secretbox.ErrUnavailable
+	}
+	ciphertext, err := service.secrets.Encrypt(
+		store.PluginInstallationSecretOwnerType, pluginID, store.PluginInstallationGitHubToken, []byte(normalized),
+	)
+	if err != nil {
+		return fmt.Errorf("encrypt GitHub token: %w", err)
+	}
+	return service.store.ReplacePluginGitHubToken(ctx, pluginID, ciphertext, service.currentTime())
 }
 
 func (service *Service) UninstallPlugin(ctx context.Context, pluginID string) error {
@@ -290,8 +330,12 @@ func (service *Service) inspectPluginRelease(ctx context.Context, input PluginRe
 		return githubrelease.Release{}, "", nil, translateGitHubReleaseError(err)
 	}
 	for _, permission := range release.Manifest.Permissions {
-		if permission.Name != centerpluginv1.PermissionNodesRead && permission.Name != centerpluginv1.PermissionServicesWrite {
+		if permission.Name != centerpluginv1.PermissionEventsRead && permission.Name != centerpluginv1.PermissionEventsWrite &&
+			permission.Name != centerpluginv1.PermissionNodesRead && permission.Name != centerpluginv1.PermissionServicesWrite {
 			return githubrelease.Release{}, "", nil, invalid("repository", "release requests an unsupported permission: "+permission.Name)
+		}
+		if permission.Name == centerpluginv1.PermissionEventsRead && release.Manifest.Kind != manifest.KindFeature {
+			return githubrelease.Release{}, "", nil, invalid("repository", "only feature plugins can request core.events.read")
 		}
 	}
 	existing, err := service.store.PluginInstallationByID(ctx, release.Manifest.ID)
@@ -334,6 +378,39 @@ func (service *Service) rollbackPluginActivation(pluginID string, previous *stor
 	rollbackContext, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
 	return service.pluginRuntime.Rollback(rollbackContext, pluginID, previous)
+}
+
+func (service *Service) recordPluginReleaseFailure(version store.PluginVersion, repository string,
+	existing *store.PluginInstallation, stage string, rollbackSucceeded *bool,
+) error {
+	now := service.currentTime()
+	auditContext, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	action := "plugin.install"
+	metadata := map[string]any{"repository": repository, "version": version.Version, "stage": stage}
+	if existing != nil {
+		action = "plugin.upgrade"
+		metadata["previous_version"] = existing.ActiveVersion
+	}
+	attemptErr := service.store.AppendAudit(auditContext, store.AuditEntry{
+		OccurredAt: now, ActorType: "administrator", ActorID: "1", Action: action,
+		TargetType: "plugin_installation", TargetID: version.PluginID, Outcome: "failure", Metadata: metadata,
+	})
+	if rollbackSucceeded == nil || existing == nil {
+		return attemptErr
+	}
+	outcome := "failure"
+	if *rollbackSucceeded {
+		outcome = "success"
+	}
+	rollbackErr := service.store.AppendAudit(auditContext, store.AuditEntry{
+		OccurredAt: now, ActorType: "system", Action: "plugin.rollback",
+		TargetType: "plugin_installation", TargetID: version.PluginID, Outcome: outcome,
+		Metadata: map[string]any{
+			"failed_version": version.Version, "restored_version": existing.ActiveVersion, "trigger": stage + "_failure",
+		},
+	})
+	return errors.Join(attemptErr, rollbackErr)
 }
 
 func (service *Service) requirePluginLifecycle() error {

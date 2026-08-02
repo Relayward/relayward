@@ -1,8 +1,11 @@
 package eventstore
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,6 +17,7 @@ import (
 	_ "modernc.org/sqlite"
 
 	agentv1 "github.com/Relayward/relayward-sdk/agent/v1"
+	centerpluginv1 "github.com/Relayward/relayward-sdk/centerplugin/v1"
 )
 
 var ErrGap = errors.New("event batch has a sequence gap")
@@ -129,6 +133,123 @@ WHERE node_id = ? AND stream_id = ?`, highest, receivedAt.UTC().Unix(), nodeID, 
 		return 0, fmt.Errorf("commit event ingestion: %w", err)
 	}
 	return highest, nil
+}
+
+func (store *Store) PublishPluginEvents(ctx context.Context, pluginID string, request *centerpluginv1.PublishEventsRequest, receivedAt time.Time) error {
+	if err := centerpluginv1.ValidatePublishEventsRequest(request, pluginID); err != nil {
+		return fmt.Errorf("validate published events: %w", err)
+	}
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin plugin event publication: %w", err)
+	}
+	defer tx.Rollback()
+	streamID := pluginStreamID(pluginID)
+	highestByNode := make(map[string]uint64)
+	for _, source := range request.Events {
+		payload, err := compactJSON(source.Json)
+		if err != nil {
+			return fmt.Errorf("compact published event %q: %w", source.SourceEventId, err)
+		}
+		eventID := pluginEventID(pluginID, source.SourceEventId)
+		observedAt := time.Unix(0, source.ObservedAtUnixNano).UTC()
+		existing, existingNode, existingStream, err := publishedEventByID(ctx, tx, eventID)
+		if err == nil {
+			if existingNode != source.NodeId || existingStream != streamID || existing.Kind != source.Kind || !existing.ObservedAt.Equal(observedAt) ||
+				string(existing.Payload) != string(payload) {
+				return ErrConflict
+			}
+			continue
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("read published event %q: %w", source.SourceEventId, err)
+		}
+		highest, exists := highestByNode[source.NodeId]
+		if !exists {
+			highest, err = ensurePluginStream(ctx, tx, source.NodeId, streamID, receivedAt)
+			if err != nil {
+				return err
+			}
+		}
+		if highest >= agentv1.MaximumEventSequence {
+			return errors.New("plugin event stream sequence exhausted")
+		}
+		highest++
+		event := agentv1.Event{
+			Sequence: highest, EventID: eventID, Kind: source.Kind, ObservedAt: observedAt, Payload: payload,
+		}
+		if err := agentv1.ValidateEvent(event); err != nil {
+			return fmt.Errorf("validate published event %q: %w", source.SourceEventId, err)
+		}
+		raw, err := json.Marshal(event)
+		if err != nil {
+			return fmt.Errorf("encode published event %q: %w", source.SourceEventId, err)
+		}
+		if _, err := tx.ExecContext(ctx, `
+INSERT INTO events(event_id, node_id, stream_id, sequence, kind, observed_at, event_json, received_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, event.EventID, source.NodeId, streamID, int64(event.Sequence), event.Kind,
+			event.ObservedAt.Format(time.RFC3339Nano), string(raw), receivedAt.UTC().Unix()); err != nil {
+			return fmt.Errorf("insert published event %q: %w", source.SourceEventId, err)
+		}
+		if _, err := tx.ExecContext(ctx, `
+UPDATE event_streams SET highest_contiguous_sequence = ?, updated_at = ?
+WHERE node_id = ? AND stream_id = ?`, int64(highest), receivedAt.UTC().Unix(), source.NodeId, streamID); err != nil {
+			return fmt.Errorf("advance plugin event stream: %w", err)
+		}
+		highestByNode[source.NodeId] = highest
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit plugin event publication: %w", err)
+	}
+	return nil
+}
+
+func ensurePluginStream(ctx context.Context, tx *sql.Tx, nodeID, streamID string, now time.Time) (uint64, error) {
+	highest, err := streamCursor(ctx, tx, nodeID, streamID)
+	if err == nil {
+		return highest, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return 0, fmt.Errorf("read plugin event stream: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `
+INSERT INTO event_streams(node_id, stream_id, highest_contiguous_sequence, updated_at)
+VALUES (?, ?, 0, ?)`, nodeID, streamID, now.UTC().Unix()); err != nil {
+		return 0, fmt.Errorf("create plugin event stream: %w", err)
+	}
+	return 0, nil
+}
+
+func publishedEventByID(ctx context.Context, tx *sql.Tx, eventID string) (agentv1.Event, string, string, error) {
+	var raw []byte
+	var nodeID, streamID string
+	if err := tx.QueryRowContext(ctx, "SELECT event_json, node_id, stream_id FROM events WHERE event_id = ?", eventID).Scan(&raw, &nodeID, &streamID); err != nil {
+		return agentv1.Event{}, "", "", err
+	}
+	var event agentv1.Event
+	if err := json.Unmarshal(raw, &event); err != nil {
+		return agentv1.Event{}, "", "", fmt.Errorf("decode existing published event: %w", err)
+	}
+	event.Payload, _ = compactJSON(event.Payload)
+	return event, nodeID, streamID, nil
+}
+
+func compactJSON(raw []byte) (json.RawMessage, error) {
+	var buffer bytes.Buffer
+	if err := json.Compact(&buffer, raw); err != nil {
+		return nil, err
+	}
+	return json.RawMessage(buffer.String()), nil
+}
+
+func pluginStreamID(pluginID string) string {
+	digest := sha256.Sum256([]byte("relayward.center-plugin.stream.v1\x00" + pluginID))
+	return hex.EncodeToString(digest[:16])
+}
+
+func pluginEventID(pluginID, sourceEventID string) string {
+	digest := sha256.Sum256([]byte("relayward.center-plugin.event.v1\x00" + pluginID + "\x00" + sourceEventID))
+	return hex.EncodeToString(digest[:])
 }
 
 func (store *Store) EventByID(ctx context.Context, eventID string) (StoredEvent, error) {

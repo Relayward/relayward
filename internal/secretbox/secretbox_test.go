@@ -1,6 +1,7 @@
 package secretbox
 
 import (
+	"bytes"
 	"errors"
 	"os"
 	"path/filepath"
@@ -84,5 +85,31 @@ func TestInvalidKeyIsDegraded(t *testing.T) {
 	}
 	if manager.Available() || !errors.Is(manager.Status(), ErrUnavailable) {
 		t.Fatalf("manager status = %v, available = %v", manager.Status(), manager.Available())
+	}
+}
+
+func TestVerifyDetectsAWellFormedWrongKey(t *testing.T) {
+	directory := t.TempDir()
+	first, err := Open(directory, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ciphertext, err := first.Encrypt("plugin_installation", "io.relayward.test", "github_token", []byte("secret"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(directory, "secrets", "instance.key")
+	if err := os.WriteFile(path, bytes.Repeat([]byte{0x5a}, keySize), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	second, err := Open(directory, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := second.Verify("plugin_installation", "io.relayward.test", "github_token", ciphertext); !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("Verify() error = %v, want ErrUnavailable", err)
+	}
+	if second.Available() {
+		t.Fatal("Available() = true after ciphertext verification failure")
 	}
 }

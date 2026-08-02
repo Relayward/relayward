@@ -40,13 +40,11 @@ The Vite server proxies API requests to `127.0.0.1:8080`. Production session coo
 
 The persistent data directory contains the primary `relayward.db`, the independent hot-event `events.db`, and the instance encryption key. Back up and restore the directory as one unit.
 
-If the persisted instance key is lost and no recovery code is available, reset TOTP locally and revoke all administrator sessions:
-
-```bash
-go run ./cmd/relayward admin reset-totp -data ./data
-```
+If the persisted instance key is lost or cannot authenticate stored ciphertext, Relayward starts in a degraded state instead of replacing it silently. Follow the destructive recovery procedure in [docs/operations.md](docs/operations.md); ordinary TOTP reset does not discard other unrecoverable ciphertext.
 
 The approved product scope and implementation sequence are maintained in the Relayward workspace plan. This repository does not provide compatibility with 3x-ui or the previous xui-stack databases.
+
+Production installation, backup, upgrade, rollback, and instance-key recovery procedures are documented in [docs/operations.md](docs/operations.md).
 
 ## Docker Compose
 
@@ -61,5 +59,7 @@ docker compose exec relayward relayward healthcheck
 The example binds `127.0.0.1:8080` by default. Terminate HTTPS at a reverse proxy and forward all paths, including WebSocket upgrades, to that address. Do not expose the plain HTTP port directly to the Internet. Production session cookies are always marked secure.
 
 All databases, the instance encryption key, plugin artifacts, plugin state, and event archives live in the `relayward-data` volume. Back up and restore that volume as one unit. Stop the container or use a storage snapshot that preserves a point-in-time consistent volume.
+
+Each center plugin process receives hard limits of 512 MiB writable memory and 2,048 open files, with core dumps disabled. The 64-process limit is shared by processes running under the Relayward service account, and the example container additionally has a 256-PID cgroup limit. RPC messages, artifact extraction, event batches, and subscription output have separate contract-level size and deadline limits. These limits are containment for administrator-approved plugins, not a sandbox for hostile code; plugins share the Relayward service account and must be treated as trusted executables.
 
 To upgrade, change `RELAYWARD_VERSION`, then run `docker compose pull && docker compose up -d`. To roll back the center, restore the previous version value and recreate the container. Database migrations are forward-only, so retain a matching volume snapshot before upgrading across released versions.

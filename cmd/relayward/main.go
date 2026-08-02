@@ -32,6 +32,12 @@ func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
+		case "plugin-exec":
+			if err := pluginruntime.RunLimitedPlugin(os.Args[2:]); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				os.Exit(1)
+			}
+			return
 		case "version":
 			fmt.Fprintln(os.Stdout, buildinfo.Version)
 			return
@@ -140,13 +146,18 @@ func serve(args []string, logger *slog.Logger) error {
 		return err
 	}
 
-	secretCount, err := database.CountSecrets(ctx)
+	secretRecords, err := database.ListSecrets(ctx)
 	if err != nil {
 		return err
 	}
-	secrets, err := secretbox.Open(absoluteDataDir, secretCount)
+	secrets, err := secretbox.Open(absoluteDataDir, len(secretRecords))
 	if err != nil {
 		return err
+	}
+	for _, record := range secretRecords {
+		if err := secrets.Verify(record.OwnerType, record.OwnerID, record.Name, record.Ciphertext); err != nil {
+			break
+		}
 	}
 	if !secrets.Available() {
 		logger.Warn("encrypted secrets unavailable", "error", secrets.Status())
@@ -164,7 +175,7 @@ func serve(args []string, logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	pluginSupervisor, err := pluginruntime.New(database, artifacts, logger)
+	pluginSupervisor, err := pluginruntime.New(database, artifacts, events, logger)
 	if err != nil {
 		return err
 	}
@@ -255,14 +266,26 @@ func serve(args []string, logger *slog.Logger) error {
 }
 
 func runAdmin(args []string, stdout, stderr io.Writer) error {
-	if len(args) == 0 || args[0] != "reset-totp" {
-		fmt.Fprintln(stderr, "usage: relayward admin reset-totp [-data <directory>]")
+	if len(args) == 0 {
+		printAdminUsage(stderr)
 		return fmt.Errorf("unknown admin command")
 	}
+	switch args[0] {
+	case "reset-totp":
+		return runAdminResetTOTP(args[1:], stdout, stderr)
+	case "recover-secrets":
+		return runAdminRecoverSecrets(args[1:], stdout, stderr)
+	default:
+		printAdminUsage(stderr)
+		return fmt.Errorf("unknown admin command")
+	}
+}
+
+func runAdminResetTOTP(args []string, stdout, stderr io.Writer) error {
 	flags := flag.NewFlagSet("relayward admin reset-totp", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	dataDir := flags.String("data", "./data", "persistent data directory")
-	if err := flags.Parse(args[1:]); err != nil {
+	if err := flags.Parse(args); err != nil {
 		return err
 	}
 	if flags.NArg() != 0 {
@@ -289,4 +312,76 @@ func runAdmin(args []string, stdout, stderr io.Writer) error {
 	}
 	fmt.Fprintln(stdout, "TOTP reset; all administrator sessions were revoked.")
 	return nil
+}
+
+func runAdminRecoverSecrets(args []string, stdout, stderr io.Writer) error {
+	flags := flag.NewFlagSet("relayward admin recover-secrets", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	dataDir := flags.String("data", "./data", "persistent data directory")
+	confirmed := flags.Bool("confirm-discard-encrypted-secrets", false, "confirm deletion of ciphertext that cannot be recovered")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if flags.NArg() != 0 {
+		return fmt.Errorf("unexpected recover-secrets argument %q", flags.Arg(0))
+	}
+	if !*confirmed {
+		return fmt.Errorf("recover-secrets requires -confirm-discard-encrypted-secrets")
+	}
+	absoluteDataDir, err := filepath.Abs(*dataDir)
+	if err != nil {
+		return fmt.Errorf("resolve data directory: %w", err)
+	}
+	database, err := store.Open(context.Background(), filepath.Join(absoluteDataDir, "relayward.db"))
+	if err != nil {
+		return err
+	}
+	defer database.Close()
+	initialized, err := database.HasAdministrator(context.Background())
+	if err != nil {
+		return err
+	}
+	if !initialized {
+		return fmt.Errorf("Relayward is not initialized")
+	}
+	records, err := database.ListSecrets(context.Background())
+	if err != nil {
+		return err
+	}
+	manager, err := secretbox.Open(absoluteDataDir, len(records))
+	if err != nil {
+		return err
+	}
+	for _, record := range records {
+		if err := manager.Verify(record.OwnerType, record.OwnerID, record.Name, record.Ciphertext); err != nil {
+			break
+		}
+	}
+	if manager.Available() {
+		return fmt.Errorf("instance key is available; refusing to discard encrypted secrets")
+	}
+	result, err := database.DiscardUnrecoverableSecrets(context.Background(), time.Now())
+	if err != nil {
+		return err
+	}
+	if err := secretbox.DiscardKey(absoluteDataDir); err != nil {
+		return err
+	}
+	replacement, err := secretbox.Open(absoluteDataDir, 0)
+	if err != nil {
+		return err
+	}
+	if !replacement.Available() {
+		return fmt.Errorf("replacement instance key is unavailable: %w", replacement.Status())
+	}
+	fmt.Fprintf(stdout,
+		"Instance key replaced; discarded %d encrypted secrets, expired %d pending commands, and marked %d plugin configurations for re-entry. All administrator sessions were revoked.\n",
+		result.DiscardedSecrets, result.ExpiredCommands, result.PluginsRequiringConfiguration,
+	)
+	return nil
+}
+
+func printAdminUsage(output io.Writer) {
+	fmt.Fprintln(output, "usage: relayward admin reset-totp [-data <directory>]")
+	fmt.Fprintln(output, "       relayward admin recover-secrets [-data <directory>] -confirm-discard-encrypted-secrets")
 }

@@ -130,6 +130,26 @@ func (manager *Manager) Status() error {
 	return manager.statusErr
 }
 
+func (manager *Manager) Verify(ownerType, ownerID, name string, ciphertext []byte) error {
+	if !manager.Available() {
+		return manager.Status()
+	}
+	if _, err := manager.Decrypt(ownerType, ownerID, name, ciphertext); err != nil {
+		manager.aead = nil
+		manager.statusErr = fmt.Errorf("%w: stored ciphertext authentication failed", ErrUnavailable)
+		return manager.statusErr
+	}
+	return nil
+}
+
+func DiscardKey(dataDir string) error {
+	path := filepath.Join(dataDir, "secrets", "instance.key")
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("discard unusable instance key: %w", err)
+	}
+	return nil
+}
+
 func (manager *Manager) Encrypt(ownerType, ownerID, name string, plaintext []byte) ([]byte, error) {
 	if !manager.Available() {
 		return nil, ErrUnavailable

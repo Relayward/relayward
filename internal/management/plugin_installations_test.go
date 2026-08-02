@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	agentv1 "github.com/Relayward/relayward-sdk/agent/v1"
 	centerpluginv1 "github.com/Relayward/relayward-sdk/centerplugin/v1"
@@ -100,9 +101,9 @@ type pluginRuntimeStub struct {
 	switchErr  error
 }
 
-func (runtime *pluginRuntimeStub) Switch(_ context.Context, value store.PluginVersion) error {
+func (runtime *pluginRuntimeStub) Switch(_ context.Context, value store.PluginVersion) (bool, error) {
 	runtime.switched = &value
-	return runtime.switchErr
+	return false, runtime.switchErr
 }
 
 func (runtime *pluginRuntimeStub) Rollback(context.Context, string, *store.PluginVersion) error {
@@ -180,6 +181,49 @@ func TestPublicPluginInspectionDoesNotRequireSecretRecovery(t *testing.T) {
 	}
 }
 
+func TestReplacePluginGitHubTokenEncryptsAndAuditsWithoutTokenMaterial(t *testing.T) {
+	service := newTestService(t)
+	now := time.Date(2026, time.August, 2, 18, 30, 0, 0, time.UTC)
+	service.now = func() time.Time { return now }
+	pluginManifest := managedRuntimeManifest()
+	if err := service.store.CreatePluginInstallation(t.Context(), store.PluginInstallation{
+		PluginID: pluginManifest.ID, Repository: "https://github.com/Relayward/test-plugin",
+		Kind: string(pluginManifest.Kind), DesiredVersion: pluginManifest.Version,
+		ActiveVersion: pluginManifest.Version, Manifest: pluginManifest, State: "active",
+	}, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.ReplacePluginGitHubToken(t.Context(), pluginManifest.ID, " replacement-token "); err != nil {
+		t.Fatal(err)
+	}
+	ciphertext, err := service.store.Secret(
+		t.Context(), store.PluginInstallationSecretOwnerType, pluginManifest.ID, store.PluginInstallationGitHubToken,
+	)
+	if err != nil || strings.Contains(string(ciphertext), "replacement-token") {
+		t.Fatalf("stored ciphertext = %q, %v", ciphertext, err)
+	}
+	plaintext, err := service.secrets.Decrypt(
+		store.PluginInstallationSecretOwnerType, pluginManifest.ID, store.PluginInstallationGitHubToken, ciphertext,
+	)
+	if err != nil || string(plaintext) != "replacement-token" {
+		t.Fatalf("decrypted token = %q, %v", plaintext, err)
+	}
+	audit, err := service.store.ListAudit(t.Context(), 0, 10)
+	if err != nil || len(audit) < 1 || audit[0].Action != "plugin.github_token.replace" {
+		t.Fatalf("token audit = %+v, %v", audit, err)
+	}
+	encoded, err := json.Marshal(audit[0].Metadata)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if encoded := strings.ToLower(string(encoded)); strings.Contains(encoded, "replacement-token") || strings.Contains(encoded, "github_token") {
+		t.Fatalf("token audit contains token material: %s", encoded)
+	}
+	if err := service.ReplacePluginGitHubToken(t.Context(), pluginManifest.ID, " "); fieldName(err) != "github_token" {
+		t.Fatalf("empty token error = %v", err)
+	}
+}
+
 func TestPluginInstallActivationFailureRemovesNewRelease(t *testing.T) {
 	service := newTestService(t)
 	pluginManifest := managedRuntimeManifest()
@@ -200,6 +244,58 @@ func TestPluginInstallActivationFailureRemovesNewRelease(t *testing.T) {
 	if _, err := service.store.PluginInstallationByID(t.Context(), pluginManifest.ID); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("failed plugin installation error = %v", err)
 	}
+	audit, err := service.store.ListAudit(t.Context(), 0, 10)
+	if err != nil || len(audit) != 1 || audit[0].Action != "plugin.install" || audit[0].Outcome != "failure" ||
+		audit[0].Metadata["stage"] != "activation" {
+		t.Fatalf("failed installation audit = %+v, %v", audit, err)
+	}
+}
+
+func TestPluginUpgradeFailureAuditsAutomaticRollback(t *testing.T) {
+	service := newTestService(t)
+	service.now = func() time.Time { return time.Date(2026, time.August, 2, 18, 0, 0, 0, time.UTC) }
+	pluginManifest := managedRuntimeManifest()
+	releases := &releaseClientStub{release: managedRelease(pluginManifest)}
+	artifacts := &artifactStoreStub{}
+	runtime := &pluginRuntimeStub{}
+	if err := service.ConfigurePluginLifecycle(releases, artifacts, runtime); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.InstallPluginRelease(t.Context(), PluginReleaseInput{
+		Repository: "https://github.com/Relayward/test-plugin", Version: pluginManifest.Version,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	upgradeManifest := pluginManifest
+	upgradeManifest.Version = "1.2.4"
+	releases.release = managedRelease(upgradeManifest)
+	releases.release.ID = 11
+	runtime.switchErr = errors.New("unhealthy")
+	if _, err := service.InstallPluginRelease(t.Context(), PluginReleaseInput{
+		Repository: "https://github.com/Relayward/test-plugin", Version: upgradeManifest.Version,
+	}); fieldName(err) != "release" {
+		t.Fatalf("InstallPluginRelease() upgrade error = %v", err)
+	}
+	if !runtime.rolledBack {
+		t.Fatal("failed upgrade did not explicitly restore the active release")
+	}
+	retained, err := service.PluginInstallation(t.Context(), pluginManifest.ID)
+	if err != nil || retained.ActiveVersion != pluginManifest.Version {
+		t.Fatalf("retained plugin = %+v, %v", retained, err)
+	}
+	audit, err := service.store.ListAudit(t.Context(), 0, 10)
+	if err != nil || len(audit) != 3 {
+		t.Fatalf("upgrade audit = %+v, %v", audit, err)
+	}
+	if audit[0].Action != "plugin.rollback" || audit[0].Outcome != "success" || audit[0].ActorType != "system" ||
+		audit[0].Metadata["failed_version"] != "1.2.4" || audit[0].Metadata["restored_version"] != "1.2.3" {
+		t.Fatalf("rollback audit = %+v", audit[0])
+	}
+	if audit[1].Action != "plugin.upgrade" || audit[1].Outcome != "failure" ||
+		audit[1].Metadata["stage"] != "activation" || audit[1].Metadata["previous_version"] != "1.2.3" {
+		t.Fatalf("failed upgrade audit = %+v", audit[1])
+	}
 }
 
 func TestPluginInspectRejectsUnsupportedPermissions(t *testing.T) {
@@ -215,6 +311,51 @@ func TestPluginInspectRejectsUnsupportedPermissions(t *testing.T) {
 		Repository: "https://github.com/Relayward/test-plugin", Version: "1.2.3",
 	}); fieldName(err) != "repository" {
 		t.Fatalf("InspectPluginRelease() unsupported permission error = %v", err)
+	}
+}
+
+func TestPluginInspectAcceptsFeatureEventPermissions(t *testing.T) {
+	service := newTestService(t)
+	pluginManifest := managedRuntimeManifest()
+	pluginManifest.Kind = manifest.KindFeature
+	pluginManifest.Requires.AgentAPI = nil
+	pluginManifest.Artifacts = pluginManifest.Artifacts[:1]
+	pluginManifest.Permissions = []manifest.Permission{
+		{Name: centerpluginv1.PermissionEventsRead, Reason: "Consume standard events."},
+		{Name: centerpluginv1.PermissionEventsWrite, Reason: "Publish structured results."},
+	}
+	release := githubrelease.Release{
+		ID: 10, Repository: githubrelease.Repository{Owner: "Relayward", Name: "test-plugin"}, Tag: "v" + pluginManifest.Version,
+		Manifest: pluginManifest, Assets: map[manifest.ArtifactRole]githubrelease.Asset{
+			manifest.ArtifactCenter: {ID: 2, Name: "center", Size: pluginManifest.Artifacts[0].Size},
+		},
+	}
+	if err := service.ConfigurePluginLifecycle(
+		&releaseClientStub{release: release}, &artifactStoreStub{}, &pluginRuntimeStub{},
+	); err != nil {
+		t.Fatal(err)
+	}
+	inspected, err := service.InspectPluginRelease(t.Context(), PluginReleaseInput{
+		Repository: "https://github.com/Relayward/test-plugin", Version: pluginManifest.Version,
+	})
+	if err != nil || inspected.Manifest.Kind != manifest.KindFeature || len(inspected.Manifest.Permissions) != 2 {
+		t.Fatalf("InspectPluginRelease() = %+v, %v", inspected, err)
+	}
+}
+
+func TestPluginInspectRejectsEventConsumptionForRuntimePlugin(t *testing.T) {
+	service := newTestService(t)
+	pluginManifest := managedRuntimeManifest()
+	pluginManifest.Permissions = []manifest.Permission{{Name: centerpluginv1.PermissionEventsRead, Reason: "Invalid runtime event access."}}
+	if err := service.ConfigurePluginLifecycle(
+		&releaseClientStub{release: managedRelease(pluginManifest)}, &artifactStoreStub{}, &pluginRuntimeStub{},
+	); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.InspectPluginRelease(t.Context(), PluginReleaseInput{
+		Repository: "https://github.com/Relayward/test-plugin", Version: pluginManifest.Version,
+	}); fieldName(err) != "repository" {
+		t.Fatalf("InspectPluginRelease() runtime event permission error = %v", err)
 	}
 }
 

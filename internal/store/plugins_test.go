@@ -283,6 +283,79 @@ func TestPluginInstallationRejectsRepositoryCredentials(t *testing.T) {
 	}
 }
 
+func TestDiscardUnrecoverableSecretsPreservesRuntimeStateAndRequiresConfiguration(t *testing.T) {
+	ctx := context.Background()
+	database, err := Open(ctx, filepath.Join(t.TempDir(), "relayward.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	now := time.Date(2026, time.August, 2, 19, 0, 0, 0, time.UTC)
+	if _, err := database.InitializeAdministrator(ctx, "admin", "password-hash", now); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.EnableTOTP(ctx, []byte("encrypted-totp"), [][]byte{make([]byte, 32)}, 1, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.CreateSession(ctx, Session{
+		TokenHash: make([]byte, 32), CSRFHash: make([]byte, 32), AdministratorID: 1,
+		CreatedAt: now, LastSeenAt: now, ExpiresAt: now.Add(time.Hour),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	credential := make([]byte, 32)
+	credential[0] = 1
+	preparePluginStore(t, database, credential, now)
+	if err := database.PutSecret(ctx, PluginInstallationSecretOwnerType, "io.relayward.test", PluginInstallationGitHubToken, []byte("encrypted-token"), now); err != nil {
+		t.Fatal(err)
+	}
+	configuration := json.RawMessage(`{"enabled":true}`)
+	digest, err := agentv1.PluginConfigurationDigest(configuration)
+	if err != nil {
+		t.Fatal(err)
+	}
+	command := testPluginCommand(t, 1, agentv1.PluginStateRunning, configuration, now)
+	if _, err := database.ApplyNodePluginDesired(ctx, NodePluginDesired{
+		NodeID: "node-id", PluginID: "io.relayward.test", Generation: 1,
+		DesiredState: agentv1.PluginStateRunning, DesiredVersion: "1.2.3",
+		DesiredConfigurationSHA256: digest, ArtifactSize: 1234, ArtifactSHA256: strings.Repeat("b", 64),
+	}, []byte("encrypted-configuration"), "recovery-command", command, []byte("encrypted-command"), now); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := database.DiscardUnrecoverableSecrets(ctx, now.Add(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.DiscardedSecrets != 4 || result.ExpiredCommands != 1 || result.PluginsRequiringConfiguration != 1 {
+		t.Fatalf("recovery result = %+v", result)
+	}
+	if count, err := database.CountSecrets(ctx); err != nil || count != 0 {
+		t.Fatalf("secret count = %d, %v", count, err)
+	}
+	administrator, err := database.AdministratorByID(ctx, 1)
+	if err != nil || administrator.TOTPEnabled {
+		t.Fatalf("administrator after recovery = %+v, %v", administrator, err)
+	}
+	var sessions int
+	if err := database.db.QueryRowContext(ctx, "SELECT count(*) FROM sessions").Scan(&sessions); err != nil || sessions != 0 {
+		t.Fatalf("session count = %d, %v", sessions, err)
+	}
+	storedCommand, err := database.AgentCommandByID(ctx, "recovery-command")
+	if err != nil || storedCommand.Status != AgentCommandExpired {
+		t.Fatalf("command after recovery = %+v, %v", storedCommand, err)
+	}
+	instance, err := database.NodePluginInstanceByID(ctx, "node-id", "io.relayward.test")
+	if err != nil || instance.DesiredState != agentv1.PluginStateRunning || instance.DesiredConfigurationSHA256 != "" ||
+		instance.ReconcileStatus != AgentCommandFailed || instance.LastProblem == nil {
+		t.Fatalf("plugin instance after recovery = %+v, %v", instance, err)
+	}
+	audit, err := database.ListAudit(ctx, 0, 1)
+	if err != nil || len(audit) != 1 || audit[0].Action != "system.secrets.recover" {
+		t.Fatalf("recovery audit = %+v, %v", audit, err)
+	}
+}
+
 func preparePluginStore(t *testing.T, database *Store, credential []byte, now time.Time) {
 	t.Helper()
 	ctx := context.Background()

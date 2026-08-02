@@ -51,7 +51,8 @@ func TestSupervisorRunsRealPluginHostUIAndRestoresPreviousVersion(t *testing.T) 
 	if err := database.RecordPluginRuntimeStatus(t.Context(), version.PluginID, "failed", "unhealthy", 2, nil, now.Add(time.Second)); err != nil {
 		t.Fatal(err)
 	}
-	supervisor, err := New(database, artifacts, nil)
+	events := openEventStore(t, root)
+	supervisor, err := New(database, artifacts, events, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,7 +91,8 @@ func TestSupervisorRunsRealPluginHostUIAndRestoresPreviousVersion(t *testing.T) 
 	incompatible := installTestExecutable(t, artifacts, "1.2.4")
 	switchContext, switchCancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer switchCancel()
-	if err := supervisor.Switch(switchContext, incompatible); err == nil || !strings.Contains(err.Error(), "identity") {
+	restored, err := supervisor.Switch(switchContext, incompatible)
+	if err == nil || !strings.Contains(err.Error(), "identity") || !restored {
 		t.Fatalf("Switch() identity mismatch error = %v", err)
 	}
 	raw, err = supervisor.InvokeUI(t.Context(), version.PluginID, "nodes.summary", []byte(`{}`))
@@ -125,7 +127,8 @@ func TestSupervisorRetriesPreviousVersionAfterImmediateRestoreFailure(t *testing
 	if _, err := database.CommitPluginRelease(t.Context(), installation, previous, nil, now); err != nil {
 		t.Fatal(err)
 	}
-	supervisor, err := New(database, artifacts, nil)
+	events := openEventStore(t, root)
+	supervisor, err := New(database, artifacts, events, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -157,9 +160,9 @@ func TestSupervisorRetriesPreviousVersionAfterImmediateRestoreFailure(t *testing
 	}
 	incompatible := installTestExecutable(t, artifacts, "1.2.4")
 	switchContext, switchCancel := context.WithTimeout(t.Context(), 10*time.Second)
-	err = supervisor.Switch(switchContext, incompatible)
+	restored, err := supervisor.Switch(switchContext, incompatible)
 	switchCancel()
-	if err == nil || !strings.Contains(err.Error(), "restore previous center plugin") {
+	if err == nil || !strings.Contains(err.Error(), "restore previous center plugin") || restored {
 		t.Fatalf("Switch() restore error = %v", err)
 	}
 	if err := os.Remove(previousPaths.Executable); err != nil {
@@ -186,7 +189,7 @@ func TestHostRequiresDeclaredPermission(t *testing.T) {
 	root := shortRuntimeRoot(t)
 	database, _ := store.Open(t.Context(), filepath.Join(root, "relayward.db"))
 	defer database.Close()
-	host := newHostService(database, "io.relayward.test", nil)
+	host := newHostService(database, nil, "io.relayward.test", nil)
 	if _, err := host.ListNodes(t.Context(), &centerpluginv1.ListNodesRequest{}); status.Code(err) != codes.PermissionDenied {
 		t.Fatalf("ListNodes() permission error = %v", err)
 	}
@@ -267,7 +270,7 @@ func (*hostDatabaseStub) RecordPluginRuntimeStatus(context.Context, string, stri
 
 func TestHostBindsPluginIdentityWhenReplacingServices(t *testing.T) {
 	database := &hostDatabaseStub{}
-	host := newHostService(database, "io.relayward.expected", []string{centerpluginv1.PermissionServicesWrite})
+	host := newHostService(database, nil, "io.relayward.expected", []string{centerpluginv1.PermissionServicesWrite})
 	request := &centerpluginv1.ReplaceServicesRequest{
 		NodeId: "10000000-0000-4000-8000-000000000001",
 		Services: []*centerpluginv1.PluginService{{
@@ -283,6 +286,58 @@ func TestHostBindsPluginIdentityWhenReplacingServices(t *testing.T) {
 		len(database.services) != 1 || database.services[0].PluginID != "io.relayward.expected" {
 		t.Fatalf("captured service replacement = %+v", database)
 	}
+}
+
+func TestHostPublishesPermissionBoundEvents(t *testing.T) {
+	root := shortRuntimeRoot(t)
+	database, err := store.Open(t.Context(), filepath.Join(root, "relayward.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	nodeID := "10000000-0000-4000-8000-000000000001"
+	if err := database.CreateNode(t.Context(), store.Node{ID: nodeID, Name: "Edge", Enabled: true}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	events := openEventStore(t, root)
+	host := newHostService(database, events, "io.relayward.risk", []string{centerpluginv1.PermissionEventsWrite})
+	request := &centerpluginv1.PublishEventsRequest{Events: []*centerpluginv1.PublishedEvent{{
+		SourceEventId: "risk-1", NodeId: nodeID, Kind: centerpluginv1.EventNotificationRequest,
+		ObservedAtUnixNano: time.Now().UTC().UnixNano(), Json: []byte(`{"severity":"warning","subject":"Risk","body":"Review required."}`),
+	}}}
+	response, err := host.PublishEvents(t.Context(), request)
+	if err != nil || response.EventCount != 1 {
+		t.Fatalf("PublishEvents() = %+v, %v", response, err)
+	}
+	if response, err = host.PublishEvents(t.Context(), request); err != nil || response.EventCount != 1 {
+		t.Fatalf("replayed PublishEvents() = %+v, %v", response, err)
+	}
+	count, err := events.Count(t.Context())
+	if err != nil || count != 1 {
+		t.Fatalf("event count = %d, %v", count, err)
+	}
+
+	request.Events[0].Json = []byte(`{"severity":"warning","subject":"Risk","body":"Changed."}`)
+	if _, err := host.PublishEvents(t.Context(), request); status.Code(err) != codes.AlreadyExists {
+		t.Fatalf("conflicting PublishEvents() error = %v", err)
+	}
+	unknown := &centerpluginv1.PublishedEvent{
+		SourceEventId: "risk-2", NodeId: "20000000-0000-4000-8000-000000000002", Kind: centerpluginv1.EventNotificationRequest,
+		ObservedAtUnixNano: request.Events[0].ObservedAtUnixNano, Json: append([]byte(nil), request.Events[0].Json...),
+	}
+	if _, err := host.PublishEvents(t.Context(), &centerpluginv1.PublishEventsRequest{Events: []*centerpluginv1.PublishedEvent{unknown}}); status.Code(err) != codes.FailedPrecondition {
+		t.Fatalf("unknown-node PublishEvents() error = %v", err)
+	}
+}
+
+func openEventStore(t *testing.T, root string) *eventstore.Store {
+	t.Helper()
+	events, err := eventstore.Open(t.Context(), filepath.Join(root, "events.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = events.Close() })
+	return events
 }
 
 func installTestExecutable(t *testing.T, artifacts *pluginartifact.Store, version string) store.PluginVersion {

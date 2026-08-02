@@ -113,6 +113,7 @@ func New(options Options) http.Handler {
 	mux.HandleFunc("POST /api/v1/plugins", server.withAuthentication(server.withCSRF(server.installPlugin)))
 	mux.HandleFunc("GET /api/v1/plugins/{plugin_id}", server.withAuthentication(server.getPluginInstallation))
 	mux.HandleFunc("POST /api/v1/plugins/{plugin_id}/upgrade", server.withAuthentication(server.withCSRF(server.upgradePlugin)))
+	mux.HandleFunc("PUT /api/v1/plugins/{plugin_id}/github-token", server.withAuthentication(server.withCSRF(server.replacePluginGitHubToken)))
 	mux.HandleFunc("DELETE /api/v1/plugins/{plugin_id}", server.withAuthentication(server.withCSRF(server.uninstallPlugin)))
 	mux.HandleFunc("POST /api/v1/plugins/{plugin_id}/ui/{method}", server.withAuthentication(server.withCSRF(server.invokePluginUI)))
 	mux.HandleFunc("GET /api/v1/plugins/{plugin_id}/ui/{path...}", server.withAuthentication(server.servePluginUI))

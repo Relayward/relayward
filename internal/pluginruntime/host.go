@@ -10,23 +10,58 @@ import (
 
 	agentv1 "github.com/Relayward/relayward-sdk/agent/v1"
 	centerpluginv1 "github.com/Relayward/relayward-sdk/centerplugin/v1"
+	"github.com/Relayward/relayward/internal/eventstore"
 	"github.com/Relayward/relayward/internal/store"
 )
 
 type hostService struct {
 	centerpluginv1.UnimplementedPluginHostServer
 	database    database
+	events      eventPublisher
 	pluginID    string
 	permissions map[string]struct{}
 	now         func() time.Time
 }
 
-func newHostService(database database, pluginID string, permissions []string) *hostService {
+func newHostService(database database, events eventPublisher, pluginID string, permissions []string) *hostService {
 	approved := make(map[string]struct{}, len(permissions))
 	for _, permission := range permissions {
 		approved[permission] = struct{}{}
 	}
-	return &hostService{database: database, pluginID: pluginID, permissions: approved, now: func() time.Time { return time.Now().UTC() }}
+	return &hostService{database: database, events: events, pluginID: pluginID, permissions: approved, now: func() time.Time { return time.Now().UTC() }}
+}
+
+func (service *hostService) PublishEvents(ctx context.Context, request *centerpluginv1.PublishEventsRequest) (*centerpluginv1.EventsPublished, error) {
+	if _, approved := service.permissions[centerpluginv1.PermissionEventsWrite]; !approved {
+		return nil, status.Error(codes.PermissionDenied, "core.events.write permission is required")
+	}
+	if err := centerpluginv1.ValidatePublishEventsRequest(request, service.pluginID); err != nil {
+		return nil, status.Error(codes.InvalidArgument, "invalid published event batch")
+	}
+	nodes, err := service.database.ListNodes(ctx)
+	if err != nil {
+		return nil, status.Error(codes.Internal, "node state is unavailable")
+	}
+	knownNodes := make(map[string]struct{}, len(nodes))
+	for _, node := range nodes {
+		knownNodes[node.ID] = struct{}{}
+	}
+	for _, event := range request.Events {
+		if _, exists := knownNodes[event.NodeId]; !exists {
+			return nil, status.Error(codes.FailedPrecondition, "published event references an unknown node")
+		}
+	}
+	if err := service.events.PublishPluginEvents(ctx, service.pluginID, request, service.now()); err != nil {
+		if errors.Is(err, eventstore.ErrConflict) {
+			return nil, status.Error(codes.AlreadyExists, "published event ID conflicts with existing content")
+		}
+		return nil, status.Error(codes.Internal, "published events are unavailable")
+	}
+	response := &centerpluginv1.EventsPublished{EventCount: uint32(len(request.Events))}
+	if err := centerpluginv1.ValidateEventsPublished(request, service.pluginID, response); err != nil {
+		return nil, status.Error(codes.Internal, "published event result is invalid")
+	}
+	return response, nil
 }
 
 func (service *hostService) ReplaceServices(ctx context.Context, request *centerpluginv1.ReplaceServicesRequest) (*centerpluginv1.ServicesReplaced, error) {

@@ -6,11 +6,13 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/Relayward/relayward/internal/secretbox"
 	"github.com/Relayward/relayward/internal/store"
 )
 
@@ -55,6 +57,63 @@ func TestRunAdminResetTOTP(t *testing.T) {
 	}
 	if _, err := database.Secret(context.Background(), "administrator", "1", "totp"); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("Secret() error = %v, want ErrNotFound", err)
+	}
+}
+
+func TestRunAdminRecoverSecretsReplacesWrongKeyAndDiscardsCiphertext(t *testing.T) {
+	directory := t.TempDir()
+	database, err := store.Open(context.Background(), filepath.Join(directory, "relayward.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	if _, err := database.InitializeAdministrator(context.Background(), "admin", "hash", now); err != nil {
+		t.Fatal(err)
+	}
+	manager, err := secretbox.Open(directory, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ciphertext, err := manager.Encrypt("plugin_installation", "io.relayward.test", "github_token", []byte("private-token"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := database.PutSecret(context.Background(), "plugin_installation", "io.relayward.test", "github_token", ciphertext, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(directory, "secrets", "instance.key"), bytes.Repeat([]byte{0x3c}, 32), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	if err := runAdmin([]string{
+		"recover-secrets", "-data", directory, "-confirm-discard-encrypted-secrets",
+	}, &stdout, &stderr); err != nil {
+		t.Fatalf("runAdmin(recover-secrets) error = %v, stderr = %q", err, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "discarded 1 encrypted secrets") {
+		t.Fatalf("stdout = %q", stdout.String())
+	}
+	database, err = store.Open(context.Background(), filepath.Join(directory, "relayward.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	if count, err := database.CountSecrets(context.Background()); err != nil || count != 0 {
+		t.Fatalf("secret count = %d, %v", count, err)
+	}
+	replacement, err := secretbox.Open(directory, 0)
+	if err != nil || !replacement.Available() {
+		t.Fatalf("replacement key status = %v, %v", replacement.Status(), err)
+	}
+	if err := runAdmin([]string{
+		"recover-secrets", "-data", directory, "-confirm-discard-encrypted-secrets",
+	}, &stdout, &stderr); err == nil || !strings.Contains(err.Error(), "instance key is available") {
+		t.Fatalf("second recover-secrets error = %v", err)
 	}
 }
 
