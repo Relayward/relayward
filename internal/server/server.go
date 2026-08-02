@@ -90,6 +90,8 @@ func New(options Options) http.Handler {
 	mux.HandleFunc("PUT /api/v1/nodes/{node_id}", server.withAuthentication(server.withCSRF(server.updateNode)))
 	mux.HandleFunc("DELETE /api/v1/nodes/{node_id}", server.withAuthentication(server.withCSRF(server.deleteNode)))
 	mux.HandleFunc("POST /api/v1/nodes/{node_id}/registration-tokens", server.withAuthentication(server.withCSRF(server.createNodeRegistrationToken)))
+	mux.HandleFunc("POST /api/v1/nodes/{node_id}/agent-updates", server.withAuthentication(server.withCSRF(server.requestAgentUpdate)))
+	mux.HandleFunc("GET /api/v1/nodes/{node_id}/agent-updates/latest", server.withAuthentication(server.latestAgentUpdate))
 	mux.HandleFunc("GET /api/v1/users", server.withAuthentication(server.listUsers))
 	mux.HandleFunc("POST /api/v1/users", server.withAuthentication(server.withCSRF(server.createUser)))
 	mux.HandleFunc("GET /api/v1/users/{user_id}", server.withAuthentication(server.getUser))

@@ -48,6 +48,20 @@ export interface NodeRegistrationToken {
   expires_at: string;
 }
 
+export interface AgentUpdate {
+  id: string;
+  node_id: string;
+  version: string;
+  status: "pending" | "succeeded" | "failed" | "expired";
+  attempts: number;
+  last_sent_at: string | null;
+  problem?: Problem;
+  completed_at: string | null;
+  expires_at: string;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface User {
   id: string;
   display_name: string;
@@ -235,6 +249,22 @@ export async function deleteNode(id: string): Promise<void> {
 
 export async function createNodeRegistrationToken(id: string): Promise<NodeRegistrationToken> {
   return request(`/api/v1/nodes/${encodeURIComponent(id)}/registration-tokens`, { method: "POST" });
+}
+
+export async function requestAgentUpdate(id: string, version: string): Promise<AgentUpdate> {
+  return request(`/api/v1/nodes/${encodeURIComponent(id)}/agent-updates`, {
+    method: "POST",
+    body: JSON.stringify({ version }),
+  });
+}
+
+export async function getLatestAgentUpdate(id: string): Promise<AgentUpdate | null> {
+  try {
+    return await request(`/api/v1/nodes/${encodeURIComponent(id)}/agent-updates/latest`);
+  } catch (cause) {
+    if (cause instanceof APIError && cause.status === 404) return null;
+    throw cause;
+  }
 }
 
 export async function listUsers(): Promise<User[]> {

@@ -225,6 +225,14 @@ CREATE TABLE agent_commands (
 CREATE INDEX agent_commands_dispatch_idx ON agent_commands(node_id, status, created_at, id);
 `,
 	},
+	{
+		version: 5,
+		sql: `
+CREATE UNIQUE INDEX agent_commands_one_pending_update_idx
+ON agent_commands(node_id)
+WHERE kind = 'agent.update' AND status = 'pending';
+`,
+	},
 }
 
 func migrate(ctx context.Context, db *sql.DB) error {

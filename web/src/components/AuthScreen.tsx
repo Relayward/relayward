@@ -97,10 +97,11 @@ interface FieldProps {
   type?: string;
   autoComplete?: string;
   autoFocus?: boolean;
+  disabled?: boolean;
   required?: boolean;
 }
 
-export function Field({ label, value, onChange, type = "text", autoComplete, autoFocus, required = true }: FieldProps) {
+export function Field({ label, value, onChange, type = "text", autoComplete, autoFocus, disabled = false, required = true }: FieldProps) {
   return (
     <label className="field">
       <span>{label}</span>
@@ -110,6 +111,7 @@ export function Field({ label, value, onChange, type = "text", autoComplete, aut
         onChange={(event) => onChange(event.target.value)}
         autoComplete={autoComplete}
         autoFocus={autoFocus}
+        disabled={disabled}
         required={required}
       />
     </label>

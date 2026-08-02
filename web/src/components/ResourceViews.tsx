@@ -1,5 +1,5 @@
 import { type FormEvent, type ReactNode, useEffect, useState } from "react";
-import { KeyRound, Pencil, Plus, Trash2 } from "lucide-react";
+import { KeyRound, Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
 
 import {
   APIError,
@@ -8,10 +8,13 @@ import {
   createUser,
   deleteNode,
   deleteUser,
+  getLatestAgentUpdate,
   listNodes,
   listUsers,
+  requestAgentUpdate,
   updateNode,
   updateUser,
+  type AgentUpdate,
   type Node,
   type NodeInput,
   type NodeRegistrationToken,
@@ -29,23 +32,29 @@ export function NodesView() {
   const [deleting, setDeleting] = useState<Node>();
   const [token, setToken] = useState<NodeRegistrationToken>();
   const [tokenNode, setTokenNode] = useState<Node>();
+  const [updatingNodeID, setUpdatingNodeID] = useState<string>();
+  const [updates, setUpdates] = useState<Record<string, AgentUpdate | null>>({});
+  const updating = items.find((node) => node.id === updatingNodeID);
 
   useEffect(() => {
     let active = true;
-    const refresh = () => {
-      listNodes().then((values) => {
+    const refresh = async () => {
+      try {
+        const values = await listNodes();
+        const latest = await Promise.all(values.map(async (node) => [node.id, await getLatestAgentUpdate(node.id)] as const));
         if (active) {
           setItems(values);
+          setUpdates(Object.fromEntries(latest));
           setError(undefined);
         }
-      }, (cause) => {
+      } catch (cause) {
         if (active) setError(errorMessage(cause));
-      }).finally(() => {
+      } finally {
         if (active) setLoading(false);
-      });
+      }
     };
-    refresh();
-    const timer = window.setInterval(refresh, 10_000);
+    void refresh();
+    const timer = window.setInterval(() => { void refresh(); }, 10_000);
     return () => {
       active = false;
       window.clearInterval(timer);
@@ -65,16 +74,23 @@ export function NodesView() {
   return (
     <section aria-labelledby="nodes-title">
       <ResourceHeading eyebrow="Infrastructure" title="Nodes" id="nodes-title" onAdd={() => setEditing("new")} />
-      <ResourceTable headers={["Name", "Address", "Agent", "Version", "State", "Actions"]} loading={loading} empty="No nodes have been created." error={error}>
+      <ResourceTable headers={["Name", "Address", "Agent", "Version", "Update", "State", "Actions"]} loading={loading} empty="No nodes have been created." error={error}>
         {items.map((node) => (
           <tr key={node.id}>
             <td data-label="Name"><strong>{node.name}</strong></td>
             <td data-label="Address" className="secondary-cell">{node.public_address || "Not set"}</td>
             <td data-label="Agent"><Status value={agentStatusLabel(node.agent_status)} tone={agentStatusTone(node.agent_status)} /></td>
             <td data-label="Version" className="secondary-cell">{node.agent_version || "Not reported"}</td>
+            <td data-label="Update"><AgentUpdateStatus value={updates[node.id]} /></td>
             <td data-label="State"><Status value={node.enabled ? "Enabled" : "Disabled"} tone={node.enabled ? "ok" : "muted"} /></td>
             <td className="table-actions">
               <IconAction label="Create registration token" onClick={() => issueToken(node)}><KeyRound size={17} /></IconAction>
+              <IconAction
+                label="Update Agent"
+                title={agentUpdateUnavailable(node)}
+                disabled={agentUpdateUnavailable(node) !== undefined}
+                onClick={() => setUpdatingNodeID(node.id)}
+              ><RefreshCw size={17} /></IconAction>
               <IconAction label="Edit node" onClick={() => setEditing(node)}><Pencil size={17} /></IconAction>
               <IconAction label="Delete node" danger onClick={() => setDeleting(node)}><Trash2 size={17} /></IconAction>
             </td>
@@ -104,6 +120,14 @@ export function NodesView() {
         />
       ) : null}
       {token && tokenNode ? <TokenDialog node={tokenNode} token={token} onClose={() => { setToken(undefined); setTokenNode(undefined); }} /> : null}
+      {updating ? (
+        <AgentUpdateDialog
+          node={updating}
+          latest={updates[updating.id]}
+          onClose={() => setUpdatingNodeID(undefined)}
+          onUpdated={(value) => setUpdates((current) => ({ ...current, [value.node_id]: value }))}
+        />
+      ) : null}
     </section>
   );
 }
@@ -323,11 +347,87 @@ function TokenDialog({ node, token, onClose }: { node: Node; token: NodeRegistra
   );
 }
 
-function IconAction({ label, danger = false, onClick, children }: { label: string; danger?: boolean; onClick: () => void; children: ReactNode }) {
-  return <button className={`icon-button${danger ? " icon-button--danger" : ""}`} aria-label={label} title={label} onClick={onClick} type="button">{children}</button>;
+function AgentUpdateDialog({ node, latest, onClose, onUpdated }: {
+  node: Node;
+  latest: AgentUpdate | null | undefined;
+  onClose: () => void;
+  onUpdated: (value: AgentUpdate) => void;
+}) {
+  const [version, setVersion] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string>();
+  const pending = latest?.status === "pending";
+
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    setBusy(true);
+    setError(undefined);
+    try {
+      const value = await requestAgentUpdate(node.id, version);
+      onUpdated(value);
+      setVersion("");
+    } catch (cause) {
+      setError(errorMessage(cause));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Modal title={`${node.name} Agent update`} onClose={onClose}>
+      <dl className="agent-update-details">
+        <div><dt>Current version</dt><dd>{node.agent_version || "Not reported"}</dd></div>
+        {latest ? (
+          <>
+            <div><dt>Target version</dt><dd>{latest.version}</dd></div>
+            <div><dt>Status</dt><dd><Status value={agentUpdateStatusLabel(latest.status)} tone={agentUpdateStatusTone(latest.status)} /></dd></div>
+            <div><dt>Delivery attempts</dt><dd>{latest.attempts}</dd></div>
+            <div><dt>Last sent</dt><dd>{formatOptionalTime(latest.last_sent_at)}</dd></div>
+            <div><dt>Completed</dt><dd>{formatOptionalTime(latest.completed_at)}</dd></div>
+            <div><dt>Expires</dt><dd>{new Date(latest.expires_at).toLocaleString()}</dd></div>
+          </>
+        ) : null}
+      </dl>
+      {latest?.problem ? <p className="agent-update-problem" role="alert">{latest.problem.message}</p> : null}
+      <form onSubmit={submit}>
+        <div className="dialog-fields">
+          <Field label="Target version" value={version} onChange={setVersion} autoFocus disabled={pending || busy} />
+        </div>
+        <FormError message={error} />
+        <div className="dialog-actions">
+          <button className="quiet-button" onClick={onClose} type="button">Close</button>
+          <button className="primary-button compact" disabled={pending || busy} type="submit">{busy ? "Queuing..." : "Queue update"}</button>
+        </div>
+      </form>
+    </Modal>
+  );
 }
 
-function Status({ value, tone }: { value: string; tone: "ok" | "warning" | "muted" }) {
+function AgentUpdateStatus({ value }: { value: AgentUpdate | null | undefined }) {
+  if (!value) return <span className="secondary-cell">Never</span>;
+  const detail = value.status === "pending"
+    ? (value.attempts === 0 ? "Waiting" : `${value.attempts} sent`)
+    : value.problem?.message;
+  return (
+    <span className="agent-update-cell" title={value.problem?.message}>
+      <Status value={agentUpdateStatusLabel(value.status)} tone={agentUpdateStatusTone(value.status)} />
+      {detail ? <small>{detail}</small> : null}
+    </span>
+  );
+}
+
+function IconAction({ label, title, danger = false, disabled = false, onClick, children }: {
+  label: string;
+  title?: string;
+  danger?: boolean;
+  disabled?: boolean;
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  return <button className={`icon-button${danger ? " icon-button--danger" : ""}`} aria-label={label} title={title ?? label} disabled={disabled} onClick={onClick} type="button">{children}</button>;
+}
+
+function Status({ value, tone }: { value: string; tone: "ok" | "warning" | "error" | "muted" }) {
   return <span className="inline-status"><span className={`status-dot status-dot--${tone}`} />{value}</span>;
 }
 
@@ -339,6 +439,29 @@ function agentStatusTone(status: Node["agent_status"]): "ok" | "warning" | "mute
   if (status === "online") return "ok";
   if (status === "disabled") return "muted";
   return "warning";
+}
+
+function agentUpdateStatusLabel(status: AgentUpdate["status"]) {
+  return status.charAt(0).toUpperCase() + status.slice(1);
+}
+
+function agentUpdateStatusTone(status: AgentUpdate["status"]): "ok" | "warning" | "error" | "muted" {
+  if (status === "succeeded") return "ok";
+  if (status === "failed") return "error";
+  if (status === "pending") return "warning";
+  return "muted";
+}
+
+function agentUpdateUnavailable(node: Node): string | undefined {
+  if (!node.enabled) return "Enable the node before updating its Agent";
+  if (node.registered_at === null) return "Register the Agent before updating it";
+  if (!node.capabilities.includes("control.commands")) return "The Agent does not support durable commands";
+  if (!node.capabilities.includes("agent.self_update")) return "The Agent does not support self-update";
+  return undefined;
+}
+
+function formatOptionalTime(value: string | null) {
+  return value ? new Date(value).toLocaleString() : "Not yet";
 }
 
 function byName(left: Node, right: Node) {

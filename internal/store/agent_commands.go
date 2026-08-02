@@ -48,6 +48,21 @@ func (store *Store) CreateAgentCommand(ctx context.Context, commandID, nodeID st
 	if err != nil {
 		return AgentCommand{}, fmt.Errorf("encode Agent command: %w", err)
 	}
+	auditAction := "node.command.create"
+	auditTargetType := "agent_command"
+	auditTargetID := commandID
+	auditMetadata := map[string]any{"node_id": nodeID, "kind": request.Kind}
+	if request.Kind == agentv1.CommandAgentUpdate {
+		update, err := agentv1.DecodeAgentUpdateCommand(request)
+		if err != nil {
+			return AgentCommand{}, fmt.Errorf("validate Agent update command: %w", err)
+		}
+		auditAction = "node.agent_update.request"
+		auditTargetType = "node"
+		auditTargetID = nodeID
+		auditMetadata["command_id"] = commandID
+		auditMetadata["version"] = update.Version
+	}
 	tx, err := store.db.BeginTx(ctx, nil)
 	if err != nil {
 		return AgentCommand{}, fmt.Errorf("begin Agent command creation: %w", err)
@@ -58,10 +73,18 @@ func (store *Store) CreateAgentCommand(ctx context.Context, commandID, nodeID st
 	} else if !exists {
 		return AgentCommand{}, ErrNotFound
 	}
+	if request.Kind == agentv1.CommandAgentUpdate {
+		if _, err := tx.ExecContext(ctx, `
+UPDATE agent_commands SET status = 'expired', completed_at = ?, updated_at = ?
+WHERE node_id = ? AND kind = ? AND status = 'pending' AND expires_at <= ?`,
+			unixTime(now), unixTime(now), nodeID, request.Kind, unixTime(now)); err != nil {
+			return AgentCommand{}, fmt.Errorf("expire previous Agent update command: %w", err)
+		}
+	}
 	result, err := tx.ExecContext(ctx, `
-INSERT INTO agent_commands(id, node_id, kind, request_json, request_sha256, expires_at, created_at, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-ON CONFLICT(id) DO NOTHING`, commandID, nodeID, request.Kind, string(raw), digest,
+	INSERT INTO agent_commands(id, node_id, kind, request_json, request_sha256, expires_at, created_at, updated_at)
+	VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+	ON CONFLICT DO NOTHING`, commandID, nodeID, request.Kind, string(raw), digest,
 		unixTime(request.ExpiresAt), unixTime(now), unixTime(now))
 	if err != nil {
 		return AgentCommand{}, fmt.Errorf("insert Agent command: %w", err)
@@ -73,7 +96,9 @@ ON CONFLICT(id) DO NOTHING`, commandID, nodeID, request.Kind, string(raw), diges
 	if inserted == 0 {
 		var existingNodeID, existingDigest string
 		if err := tx.QueryRowContext(ctx, "SELECT node_id, request_sha256 FROM agent_commands WHERE id = ?", commandID).
-			Scan(&existingNodeID, &existingDigest); err != nil {
+			Scan(&existingNodeID, &existingDigest); errors.Is(err, sql.ErrNoRows) {
+			return AgentCommand{}, ErrConflict
+		} else if err != nil {
 			return AgentCommand{}, fmt.Errorf("read existing Agent command: %w", err)
 		}
 		if existingNodeID != nodeID || existingDigest != digest {
@@ -85,9 +110,9 @@ ON CONFLICT(id) DO NOTHING`, commandID, nodeID, request.Kind, string(raw), diges
 		return store.AgentCommandByID(ctx, commandID)
 	}
 	if err := appendAuditTx(ctx, tx, AuditEntry{
-		OccurredAt: now, ActorType: "administrator", ActorID: "1", Action: "node.command.create",
-		TargetType: "agent_command", TargetID: commandID, Outcome: "success",
-		Metadata: map[string]any{"node_id": nodeID, "kind": request.Kind},
+		OccurredAt: now, ActorType: "administrator", ActorID: "1", Action: auditAction,
+		TargetType: auditTargetType, TargetID: auditTargetID, Outcome: "success",
+		Metadata: auditMetadata,
 	}); err != nil {
 		return AgentCommand{}, err
 	}
@@ -99,6 +124,18 @@ ON CONFLICT(id) DO NOTHING`, commandID, nodeID, request.Kind, string(raw), diges
 
 func (store *Store) AgentCommandByID(ctx context.Context, commandID string) (AgentCommand, error) {
 	return scanAgentCommand(store.db.QueryRowContext(ctx, agentCommandSelect+" WHERE id = ?", commandID))
+}
+
+func (store *Store) LatestAgentCommandByKind(ctx context.Context, nodeID, kind string, now time.Time) (AgentCommand, error) {
+	if _, err := store.db.ExecContext(ctx, `
+UPDATE agent_commands SET status = 'expired', completed_at = ?, updated_at = ?
+WHERE node_id = ? AND kind = ? AND status = 'pending' AND expires_at <= ?`,
+		unixTime(now), unixTime(now), nodeID, kind, unixTime(now)); err != nil {
+		return AgentCommand{}, fmt.Errorf("expire Agent commands by kind: %w", err)
+	}
+	return scanAgentCommand(store.db.QueryRowContext(ctx, agentCommandSelect+`
+ WHERE node_id = ? AND kind = ?
+ ORDER BY agent_commands.created_at DESC, agent_commands.rowid DESC LIMIT 1`, nodeID, kind))
 }
 
 func (store *Store) NextAgentCommand(ctx context.Context, nodeID string, now time.Time) (AgentCommand, error) {
@@ -116,7 +153,7 @@ WHERE node_id = ? AND status = 'pending' AND expires_at <= ?`,
 	value, err := scanAgentCommand(tx.QueryRowContext(ctx, agentCommandSelect+`
  JOIN nodes ON nodes.id = agent_commands.node_id
  WHERE agent_commands.node_id = ? AND agent_commands.status = 'pending' AND nodes.enabled = 1
- ORDER BY agent_commands.created_at, agent_commands.id LIMIT 1`, nodeID))
+ ORDER BY agent_commands.created_at, agent_commands.rowid LIMIT 1`, nodeID))
 	if errors.Is(err, ErrNotFound) {
 		if err := tx.Commit(); err != nil {
 			return AgentCommand{}, fmt.Errorf("commit expired Agent commands: %w", err)
@@ -155,13 +192,13 @@ func (store *Store) CompleteAgentCommand(ctx context.Context, nodeID string, cre
 		return fmt.Errorf("begin Agent command completion: %w", err)
 	}
 	defer tx.Rollback()
-	var kind, digest, status string
+	var kind, digest, status, requestJSON string
 	var existingResult sql.NullString
 	err = tx.QueryRowContext(ctx, `
-SELECT agent_commands.kind, agent_commands.request_sha256, agent_commands.status, agent_commands.result_json
+	SELECT agent_commands.kind, agent_commands.request_sha256, agent_commands.status, agent_commands.request_json, agent_commands.result_json
 FROM agent_commands JOIN nodes ON nodes.id = agent_commands.node_id
 WHERE agent_commands.id = ? AND agent_commands.node_id = ? AND nodes.enabled = 1 AND nodes.credential_hash = ?`,
-		result.CommandID, nodeID, credentialHash).Scan(&kind, &digest, &status, &existingResult)
+		result.CommandID, nodeID, credentialHash).Scan(&kind, &digest, &status, &requestJSON, &existingResult)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ErrNotFound
 	}
@@ -170,6 +207,34 @@ WHERE agent_commands.id = ? AND agent_commands.node_id = ? AND nodes.enabled = 1
 	}
 	if digest != result.RequestSHA256 {
 		return ErrConflict
+	}
+	auditAction := "node.command.complete"
+	auditTargetType := "agent_command"
+	auditTargetID := result.CommandID
+	auditMetadata := map[string]any{"kind": kind}
+	if kind == agentv1.CommandAgentUpdate {
+		var request agentv1.Command
+		if err := json.Unmarshal([]byte(requestJSON), &request); err != nil {
+			return fmt.Errorf("decode completed Agent update command: %w", err)
+		}
+		update, err := agentv1.DecodeAgentUpdateCommand(request)
+		if err != nil {
+			return fmt.Errorf("validate completed Agent update command: %w", err)
+		}
+		if result.Status == agentv1.CommandStatusSucceeded {
+			output, err := agentv1.DecodeAgentUpdateOutput(result.Output)
+			if err != nil {
+				return fmt.Errorf("validate Agent update result: %w", err)
+			}
+			if output.Version != update.Version {
+				return fmt.Errorf("validate Agent update result: activated version %q does not match requested version %q", output.Version, update.Version)
+			}
+		}
+		auditAction = "node.agent_update.complete"
+		auditTargetType = "node"
+		auditTargetID = nodeID
+		auditMetadata["command_id"] = result.CommandID
+		auditMetadata["version"] = update.Version
 	}
 	if status != AgentCommandPending {
 		if (status == AgentCommandSucceeded || status == AgentCommandFailed) && existingResult.Valid && bytes.Equal([]byte(existingResult.String), raw) {
@@ -192,9 +257,9 @@ WHERE id = ? AND node_id = ? AND status = 'pending'`, status, string(raw), unixT
 		return ErrStateConflict
 	}
 	if err := appendAuditTx(ctx, tx, AuditEntry{
-		OccurredAt: now, ActorType: "agent", ActorID: nodeID, Action: "node.command.complete",
-		TargetType: "agent_command", TargetID: result.CommandID, Outcome: result.Status,
-		Metadata: map[string]any{"kind": kind},
+		OccurredAt: now, ActorType: "agent", ActorID: nodeID, Action: auditAction,
+		TargetType: auditTargetType, TargetID: auditTargetID, Outcome: result.Status,
+		Metadata: auditMetadata,
 	}); err != nil {
 		return err
 	}
