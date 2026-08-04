@@ -1,4 +1,4 @@
-import { type FormEvent, type ReactNode, useEffect, useMemo, useState } from "react";
+import { type FormEvent, type ReactNode, useEffect, useId, useMemo, useState } from "react";
 import { KeyRound, ListChecks, Pencil, Plus, Trash2 } from "lucide-react";
 
 import {
@@ -23,8 +23,16 @@ import {
   type ServiceBinding,
 } from "../api";
 import { useI18n } from "../i18n";
+import { cn } from "../lib/utils";
 import { FormError } from "./AuthScreen";
 import { Modal } from "./Modal";
+import { Button } from "./ui/button";
+import { Checkbox } from "./ui/checkbox";
+import { DialogFooter } from "./ui/dialog";
+import { Input } from "./ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "./ui/table";
+import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 
 const gibibyte = 1024 ** 3;
 type Translate = ReturnType<typeof useI18n>["t"];
@@ -63,42 +71,42 @@ export function AuthorizationsView() {
 
   return (
     <section aria-labelledby="authorizations-title">
-      <div className="section-heading">
-        <div><p className="eyebrow">{t("Access")}</p><h1 id="authorizations-title">{t("Authorizations")}</h1></div>
-        <button
-          className="primary-button compact button-with-icon"
+      <div className="mb-6 flex items-end justify-between gap-4 max-[440px]:flex-col max-[440px]:items-start">
+        <div><p className="m-0 text-xs font-semibold text-muted-foreground">{t("Access")}</p><h1 className="mt-0.5 mb-0 text-[25px] font-semibold" id="authorizations-title">{t("Authorizations")}</h1></div>
+        <Button
+          size="sm"
           disabled={!canAdd}
           onClick={() => setEditing("new")}
           title={canAdd ? t("Add authorization") : t("A node and user are required")}
           type="button"
-        ><Plus size={17} />{t("Add")}</button>
+        ><Plus size={17} />{t("Add")}</Button>
       </div>
-      <FormError message={error !== undefined ? t(error) : undefined} />
-      <div className="table-frame">
-        <table className="resource-table authorization-table">
-          <thead><tr><th>{t("User")}</th><th>{t("Node")}</th><th>{t("Traffic")}</th><th>{t("Reset")}</th><th>{t("Expiry")}</th><th>{t("Enforcement")}</th><th>{t("IP slots")}</th><th>{t("Actions")}</th></tr></thead>
-          <tbody>
-            {loading ? <tr><td colSpan={8} className="empty-cell">{t("Loading...")}</td></tr> : null}
-            {!loading && items.length === 0 ? <tr><td colSpan={8} className="empty-cell">{t("No authorizations have been created.")}</td></tr> : null}
+      {error ? <div className="mb-3"><FormError message={t(error)} /></div> : null}
+      <div className="overflow-hidden rounded-md border border-border bg-card">
+        <Table className="min-w-[1000px]">
+          <TableHeader><TableRow className="hover:bg-transparent"><TableHead>{t("User")}</TableHead><TableHead>{t("Node")}</TableHead><TableHead>{t("Traffic")}</TableHead><TableHead>{t("Reset")}</TableHead><TableHead>{t("Expiry")}</TableHead><TableHead>{t("Enforcement")}</TableHead><TableHead>{t("IP slots")}</TableHead><TableHead className="text-right">{t("Actions")}</TableHead></TableRow></TableHeader>
+          <TableBody>
+            {loading ? <TableRow><TableCell colSpan={8} className="h-24 text-center text-muted-foreground">{t("Loading...")}</TableCell></TableRow> : null}
+            {!loading && items.length === 0 ? <TableRow><TableCell colSpan={8} className="h-24 text-center text-muted-foreground">{t("No authorizations have been created.")}</TableCell></TableRow> : null}
             {items.map((authorization) => (
-              <tr key={authorization.id}>
-                <td><strong>{userNames.get(authorization.user_id) ?? t("Unknown user")}</strong></td>
-                <td className="secondary-cell">{nodeNames.get(authorization.node_id) ?? t("Unknown node")}</td>
-                <td><TrafficUsage value={authorization} /></td>
-                <td className="secondary-cell">{formatReset(authorization, t)}</td>
-                <td className="secondary-cell">{authorization.expires_at ? formatDate(authorization.expires_at) : t("Never")}</td>
-                <td><AuthorizationStatus value={authorization} /></td>
-                <td><IPStatus value={authorization} /></td>
-                <td className="table-actions">
+              <TableRow key={authorization.id}>
+                <TableCell><strong className="font-semibold">{userNames.get(authorization.user_id) ?? t("Unknown user")}</strong></TableCell>
+                <TableCell className="text-muted-foreground">{nodeNames.get(authorization.node_id) ?? t("Unknown node")}</TableCell>
+                <TableCell><TrafficUsage value={authorization} /></TableCell>
+                <TableCell className="text-muted-foreground">{formatReset(authorization, t)}</TableCell>
+                <TableCell className="text-muted-foreground">{authorization.expires_at ? formatDate(authorization.expires_at) : t("Never")}</TableCell>
+                <TableCell><AuthorizationStatus value={authorization} /></TableCell>
+                <TableCell><IPStatus value={authorization} /></TableCell>
+                <TableCell className="w-px text-right whitespace-nowrap">
                   <IconAction label={t("Manage services")} onClick={() => setServicesFor(authorization)}><ListChecks size={17} /></IconAction>
                   <IconAction label={t("Rotate subscription token")} onClick={() => setRotating(authorization)}><KeyRound size={17} /></IconAction>
                   <IconAction label={t("Edit authorization")} onClick={() => setEditing(authorization)}><Pencil size={17} /></IconAction>
                   <IconAction label={t("Delete authorization")} danger onClick={() => setDeleting(authorization)}><Trash2 size={17} /></IconAction>
-                </td>
-              </tr>
+                </TableCell>
+              </TableRow>
             ))}
-          </tbody>
-        </table>
+          </TableBody>
+        </Table>
       </div>
       {editing ? (
         <AuthorizationDialog
@@ -209,25 +217,32 @@ function ServicesDialog({ authorization, onClose }: { authorization: Authorizati
 
   return (
     <Modal title={t("Manage services")} onClose={onClose}>
-      <div className="service-picker">
-        {loading ? <p className="empty-service">{t("Loading...")}</p> : null}
-        {!loading && services.length === 0 ? <p className="empty-service">{t("No services are available on this node.")}</p> : null}
+      <div className="grid max-h-[360px] overflow-y-auto">
+        {loading ? <p className="my-5 text-center text-sm text-muted-foreground">{t("Loading...")}</p> : null}
+        {!loading && services.length === 0 ? <p className="my-5 text-center text-sm text-muted-foreground">{t("No services are available on this node.")}</p> : null}
         {services.map((service) => {
           const key = bindingKey(service);
           return (
-            <label key={key} className="service-option">
-              <input type="checkbox" checked={selected.has(key)} onChange={() => toggle(key)} />
-              <span><strong>{service.display_name}</strong><small>{service.plugin_id} / {service.service_id}</small></span>
-            </label>
+            <ServiceOption key={key} service={service} checked={selected.has(key)} onCheckedChange={() => toggle(key)} />
           );
         })}
       </div>
       <FormError message={error !== undefined ? t(error) : undefined} />
-      <div className="dialog-actions">
-        <button className="quiet-button" onClick={onClose} type="button">{t("Cancel")}</button>
-        <button className="primary-button compact" disabled={busy || loading} onClick={save} type="button">{busy ? t("Saving...") : t("Save")}</button>
-      </div>
+      <DialogFooter>
+        <Button variant="ghost" onClick={onClose} type="button">{t("Cancel")}</Button>
+        <Button disabled={busy || loading} onClick={save} type="button">{busy ? t("Saving...") : t("Save")}</Button>
+      </DialogFooter>
     </Modal>
+  );
+}
+
+function ServiceOption({ service, checked, onCheckedChange }: { service: PluginService; checked: boolean; onCheckedChange: () => void }) {
+  const id = useId();
+  return (
+    <label htmlFor={id} className="flex min-h-[58px] cursor-pointer items-center gap-3 border-b border-border py-2.5 last:border-b-0">
+      <Checkbox id={id} checked={checked} onCheckedChange={onCheckedChange} />
+      <span className="grid min-w-0 gap-0.5"><strong className="text-sm font-semibold">{service.display_name}</strong><small className="[overflow-wrap:anywhere] text-xs text-muted-foreground">{service.plugin_id} / {service.service_id}</small></span>
+    </label>
   );
 }
 
@@ -243,6 +258,7 @@ function AuthorizationDialog({ value, nodes, users, onClose, onSaved }: {
   onSaved: (authorization: Authorization, token?: string) => void;
 }) {
   const { t } = useI18n();
+  const enabledID = useId();
   const [userID, setUserID] = useState(value?.user_id ?? users[0]?.id ?? "");
   const [nodeID, setNodeID] = useState(value?.node_id ?? nodes[0]?.id ?? "");
   const [enabled, setEnabled] = useState(value?.enabled ?? true);
@@ -307,8 +323,8 @@ function AuthorizationDialog({ value, nodes, users, onClose, onSaved }: {
 
   return (
     <Modal title={value ? t("Edit authorization") : t("Add authorization")} onClose={onClose} width="wide">
-      <form onSubmit={submit}>
-        <div className="form-grid">
+      <form className="grid gap-5" onSubmit={submit}>
+        <div className="grid grid-cols-2 gap-x-4 gap-y-4 max-[700px]:grid-cols-1">
           <SelectField label={t("User")} value={userID} onChange={setUserID} disabled={value !== undefined} options={users.map((user) => ({ value: user.id, label: user.display_name }))} />
           <SelectField label={t("Node")} value={nodeID} onChange={setNodeID} disabled={value !== undefined} options={nodes.map((node) => ({ value: node.id, label: node.name }))} />
           <NumberField label={t("Traffic quota (GiB)")} value={quotaGiB} onChange={setQuotaGiB} min="0" step="0.01" required={false} />
@@ -323,7 +339,7 @@ function AuthorizationDialog({ value, nodes, users, onClose, onSaved }: {
           {resetKind === "weekly" ? <SelectField label={t("Weekday")} value={resetValue || "1"} onChange={setResetValue} options={weekdayKeys.map((label, index) => ({ value: String(index + 1), label: t(label) }))} /> : null}
           {resetKind === "monthly" ? <NumberField label={t("Day of month")} value={resetValue} onChange={setResetValue} min="1" max="31" step="1" /> : null}
           {resetKind === "interval_days" ? <NumberField label={t("Interval (days)")} value={resetValue} onChange={setResetValue} min="1" max="3650" step="1" /> : null}
-          <label className="field"><span>{t("Timezone")}</span><input value={timezone} onChange={(event) => setTimezone(event.target.value)} list="relayward-timezones" required /></label>
+          <FieldLabel label={t("Timezone")}><Input value={timezone} onChange={(event) => setTimezone(event.target.value)} list="relayward-timezones" required /></FieldLabel>
           {resetKind === "interval_days" ? <DateTimeField label={t("Period anchor")} value={periodAnchor} onChange={setPeriodAnchor} required /> : null}
           <DateTimeField label={t("Expires")} value={expiresAt} onChange={setExpiresAt} />
           <NumberField label={t("Soft IP limit")} value={softIPLimit} onChange={setSoftIPLimit} min="1" max="1024" step="1" required={false} />
@@ -331,12 +347,15 @@ function AuthorizationDialog({ value, nodes, users, onClose, onSaved }: {
           <NumberField label={t("Block duration (minutes)")} value={blockMinutes} onChange={setBlockMinutes} min="1" max="10080" step="1" />
         </div>
         <datalist id="relayward-timezones"><option value="UTC" /><option value="Asia/Shanghai" /><option value="Asia/Singapore" /><option value="Europe/London" /><option value="America/New_York" /></datalist>
-        <label className="toggle-field form-toggle"><input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} /><span>{t("Enabled")}</span></label>
+        <label className="flex min-h-8 cursor-pointer items-center gap-2 text-[13px] font-semibold text-foreground/80" htmlFor={enabledID}>
+          <Checkbox id={enabledID} checked={enabled} onCheckedChange={(checked) => setEnabled(checked === true)} />
+          <span>{t("Enabled")}</span>
+        </label>
         <FormError message={error !== undefined ? t(error) : undefined} />
-        <div className="dialog-actions">
-          <button className="quiet-button" onClick={onClose} type="button">{t("Cancel")}</button>
-          <button className="primary-button compact" disabled={busy} type="submit">{busy ? t("Saving...") : value ? t("Save") : t("Add authorization")}</button>
-        </div>
+        <DialogFooter>
+          <Button variant="ghost" onClick={onClose} type="button">{t("Cancel")}</Button>
+          <Button disabled={busy} type="submit">{busy ? t("Saving...") : value ? t("Save") : t("Add authorization")}</Button>
+        </DialogFooter>
       </form>
     </Modal>
   );
@@ -345,17 +364,30 @@ function AuthorizationDialog({ value, nodes, users, onClose, onSaved }: {
 function SelectField({ label, value, onChange, options, disabled = false }: {
   label: string; value: string; onChange: (value: string) => void; options: { value: string; label: string }[]; disabled?: boolean;
 }) {
-  return <label className="field"><span>{label}</span><select value={value} onChange={(event) => onChange(event.target.value)} disabled={disabled} required>{options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>;
+  const id = useId();
+  return (
+    <label className="grid gap-1.5" htmlFor={id}>
+      <span className="text-[13px] font-semibold text-foreground/80">{label}</span>
+      <Select value={value} onValueChange={onChange} disabled={disabled} required>
+        <SelectTrigger id={id}><SelectValue /></SelectTrigger>
+        <SelectContent>{options.map((option) => <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>)}</SelectContent>
+      </Select>
+    </label>
+  );
 }
 
 function NumberField({ label, value, onChange, min, max, step, required = true }: {
   label: string; value: string; onChange: (value: string) => void; min: string; max?: string; step: string; required?: boolean;
 }) {
-  return <label className="field"><span>{label}</span><input type="number" value={value} onChange={(event) => onChange(event.target.value)} min={min} max={max} step={step} required={required} /></label>;
+  return <FieldLabel label={label}><Input type="number" value={value} onChange={(event) => onChange(event.target.value)} min={min} max={max} step={step} required={required} /></FieldLabel>;
 }
 
 function DateTimeField({ label, value, onChange, required = false }: { label: string; value: string; onChange: (value: string) => void; required?: boolean }) {
-  return <label className="field"><span>{label}</span><input type="datetime-local" value={value} onChange={(event) => onChange(event.target.value)} required={required} /></label>;
+  return <FieldLabel label={label}><Input type="datetime-local" value={value} onChange={(event) => onChange(event.target.value)} required={required} /></FieldLabel>;
+}
+
+function FieldLabel({ label, children }: { label: string; children: ReactNode }) {
+  return <label className="grid gap-1.5"><span className="text-[13px] font-semibold text-foreground/80">{label}</span>{children}</label>;
 }
 
 function ConfirmationDialog({ title, subject, action, danger = false, onClose, onConfirm }: {
@@ -376,12 +408,12 @@ function ConfirmationDialog({ title, subject, action, danger = false, onClose, o
   }
   return (
     <Modal title={title} onClose={onClose}>
-      <p className="confirmation-name">{subject}</p>
+      <p className={cn("m-0 [overflow-wrap:anywhere] border-l-[3px] p-3", danger ? "border-destructive bg-destructive/10" : "border-primary bg-primary/10")}>{subject}</p>
       <FormError message={error !== undefined ? t(error) : undefined} />
-      <div className="dialog-actions">
-        <button className="quiet-button" onClick={onClose} type="button">{t("Cancel")}</button>
-        <button className={danger ? "danger-button" : "primary-button compact"} disabled={busy} onClick={confirm} type="button">{busy ? t("Saving...") : action}</button>
-      </div>
+      <DialogFooter>
+        <Button variant="ghost" onClick={onClose} type="button">{t("Cancel")}</Button>
+        <Button variant={danger ? "destructive" : "default"} disabled={busy} onClick={confirm} type="button">{busy ? t("Saving...") : action}</Button>
+      </DialogFooter>
     </Modal>
   );
 }
@@ -400,11 +432,11 @@ function TokenDialog({ title, token, onClose }: { title: string; token: string; 
   }
   return (
     <Modal title={t(title)} onClose={onClose} dismissible={false}>
-      <code className="one-time-token">{link}</code>
-      <div className="dialog-actions">
-        <button className="secondary-button" onClick={copy} type="button">{copied ? t("Copied") : t("Copy")}</button>
-        <button className="primary-button compact" onClick={onClose} type="button">{t("Done")}</button>
-      </div>
+      <code className="block [overflow-wrap:anywhere] rounded-sm border border-border bg-muted p-3 text-[13px]">{link}</code>
+      <DialogFooter>
+        <Button variant="secondary" onClick={copy} type="button">{copied ? t("Copied") : t("Copy")}</Button>
+        <Button onClick={onClose} type="button">{t("Done")}</Button>
+      </DialogFooter>
     </Modal>
   );
 }
@@ -412,7 +444,7 @@ function TokenDialog({ title, token, onClose }: { title: string; token: string; 
 function AuthorizationStatus({ value }: { value: Authorization }) {
   const { t, formatDateTime } = useI18n();
   const status = value.enforcement;
-  if (!status) return <span className="inline-status"><span className="status-dot status-dot--warning" />{t("Not reported")}</span>;
+  if (!status) return <Status value={t("Not reported")} tone="warning" />;
   const labels = {
     active: "Active",
     administrator_disabled: "Disabled",
@@ -422,9 +454,9 @@ function AuthorizationStatus({ value }: { value: Authorization }) {
   const tone = status.reason === "active" && status.services_enabled ? "ok"
     : status.reason === "administrator_disabled" ? "muted" : "warning";
   return (
-    <span className="runtime-value" title={t("Observed {time}", { time: formatDateTime(status.observed_at) })}>
-      <span className="inline-status"><span className={`status-dot status-dot--${tone}`} />{t(labels[status.reason])}</span>
-      <small>{t("Generation {generation}", { generation: status.generation })}</small>
+    <span className="grid gap-0.5 whitespace-nowrap" title={t("Observed {time}", { time: formatDateTime(status.observed_at) })}>
+      <Status value={t(labels[status.reason])} tone={tone} />
+      <small className="text-[11px] text-muted-foreground">{t("Generation {generation}", { generation: status.generation })}</small>
     </span>
   );
 }
@@ -432,31 +464,59 @@ function AuthorizationStatus({ value }: { value: Authorization }) {
 function TrafficUsage({ value }: { value: Authorization }) {
   const { t, formatDateTime } = useI18n();
   const traffic = value.current_traffic;
-  if (!traffic) return <span className="secondary-cell">{t("No data / {quota}", { quota: formatQuota(value.traffic_limit_bytes, t) })}</span>;
+  if (!traffic) return <span className="text-muted-foreground">{t("No data / {quota}", { quota: formatQuota(value.traffic_limit_bytes, t) })}</span>;
   const total = traffic.upload_bytes + traffic.download_bytes;
   const periodEnd = traffic.period.ends_at ? formatDateTime(traffic.period.ends_at) : t("No end");
   return (
-    <span className="runtime-value" title={t("{start} - {end}; observed {observed}", { start: formatDateTime(traffic.period.starts_at), end: periodEnd, observed: formatDateTime(traffic.observed_at) })}>
-      <strong>{formatBytes(total)}</strong>
-      <small>{t("of {quota}", { quota: formatQuota(value.traffic_limit_bytes, t) })}</small>
+    <span className="grid gap-0.5 whitespace-nowrap" title={t("{start} - {end}; observed {observed}", { start: formatDateTime(traffic.period.starts_at), end: periodEnd, observed: formatDateTime(traffic.observed_at) })}>
+      <strong className="font-semibold">{formatBytes(total)}</strong>
+      <small className="text-[11px] text-muted-foreground">{t("of {quota}", { quota: formatQuota(value.traffic_limit_bytes, t) })}</small>
     </span>
   );
 }
 
 function IPStatus({ value }: { value: Authorization }) {
   const { t } = useI18n();
-  if (value.soft_ip_limit === null) return <span className="secondary-cell">{t("Not limited")}</span>;
-  if (!value.enforcement) return <span className="secondary-cell">{t("Not reported / {limit}", { limit: value.soft_ip_limit })}</span>;
+  if (value.soft_ip_limit === null) return <span className="text-muted-foreground">{t("Not limited")}</span>;
+  if (!value.enforcement) return <span className="text-muted-foreground">{t("Not reported / {limit}", { limit: value.soft_ip_limit })}</span>;
   return (
-    <span className="runtime-value">
-      <strong>{value.enforcement.active_ip_count} / {value.soft_ip_limit}</strong>
-      <small>{t("{count} blocked", { count: value.enforcement.blocked_ip_count })}</small>
+    <span className="grid gap-0.5 whitespace-nowrap">
+      <strong className="font-semibold">{value.enforcement.active_ip_count} / {value.soft_ip_limit}</strong>
+      <small className="text-[11px] text-muted-foreground">{t("{count} blocked", { count: value.enforcement.blocked_ip_count })}</small>
     </span>
   );
 }
 
 function IconAction({ label, danger = false, onClick, children }: { label: string; danger?: boolean; onClick: () => void; children: ReactNode }) {
-  return <button className={`icon-button${danger ? " icon-button--danger" : ""}`} aria-label={label} title={label} onClick={onClick} type="button">{children}</button>;
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          className={cn(
+            "ml-0.5 text-muted-foreground",
+            danger && "text-destructive hover:bg-destructive/10 hover:text-destructive",
+          )}
+          variant="ghost"
+          size="icon"
+          aria-label={label}
+          onClick={onClick}
+          type="button"
+        >
+          {children}
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent>{label}</TooltipContent>
+    </Tooltip>
+  );
+}
+
+function Status({ value, tone }: { value: string; tone: "ok" | "warning" | "muted" }) {
+  const toneClass = {
+    ok: "bg-success",
+    warning: "bg-warning",
+    muted: "bg-muted-foreground",
+  }[tone];
+  return <span className="inline-flex items-center gap-1.5 whitespace-nowrap"><span className={cn("size-2 shrink-0 rounded-full", toneClass)} />{value}</span>;
 }
 
 const weekdayKeys = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
