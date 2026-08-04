@@ -24,6 +24,8 @@ import { PluginsView } from "./PluginsView";
 import { RecentEventsView } from "./RecentEventsView";
 import { NodesView, UsersView } from "./ResourceViews";
 import { Button } from "./ui/button";
+import { DialogFooter } from "./ui/dialog";
+import { Textarea } from "./ui/textarea";
 
 interface DashboardProps {
   session: SessionInfo;
@@ -190,13 +192,16 @@ function AnnouncementView() {
 
   return (
     <section aria-labelledby="announcement-title">
-      <div className="section-heading">
-        <div><p className="eyebrow">{t("Subscriptions")}</p><h1 id="announcement-title">{t("Announcement")}</h1></div>
-        <button className="primary-button compact button-with-icon" disabled={loading || busy} onClick={save} type="button"><Save size={17} />{busy ? t("Saving...") : t("Save")}</button>
+      <div className="mb-6 flex items-end justify-between gap-4 max-[560px]:flex-col max-[560px]:items-start">
+        <div><p className="m-0 text-xs font-semibold text-muted-foreground">{t("Subscriptions")}</p><h1 className="mt-0.5 mb-0 text-[25px] font-semibold" id="announcement-title">{t("Announcement")}</h1></div>
+        <Button size="sm" disabled={loading || busy} onClick={save} type="button"><Save size={17} />{busy ? t("Saving...") : t("Save")}</Button>
       </div>
-      <label className="field announcement-editor"><span>{t("Content")}</span><textarea value={content} onChange={(event) => { setContent(event.target.value); setSaved(false); }} maxLength={4096} rows={10} disabled={loading} /></label>
-      {saved ? <p className="form-success">{t("Saved.")}</p> : null}
-      <FormError message={error !== undefined ? t(error) : undefined} />
+      <label className="grid gap-1.5">
+        <span className="text-[13px] font-semibold text-foreground/80">{t("Content")}</span>
+        <Textarea className="min-h-60" value={content} onChange={(event) => { setContent(event.target.value); setSaved(false); }} maxLength={4096} rows={10} disabled={loading} />
+      </label>
+      {saved ? <p className="mt-3 mb-0 text-[13px] font-semibold text-success" role="status">{t("Saved.")}</p> : null}
+      {error ? <div className="mt-3"><FormError message={t(error)} /></div> : null}
     </section>
   );
 }
@@ -239,17 +244,17 @@ function SecurityView({ session, busy, onEnable, onRegenerate, onDisable }: Secu
   const { t } = useI18n();
   return (
     <section aria-labelledby="security-title">
-      <div className="section-heading"><div><p className="eyebrow">{t("Administrator")}</p><h1 id="security-title">{t("Security")}</h1></div></div>
-      <div className="settings-list">
-        <div className="setting-row">
-          <div><h2>{t("Two-factor authentication")}</h2><p>{session.administrator.totp_enabled ? t("Enabled") : t("Disabled")}</p></div>
+      <div className="mb-6"><p className="m-0 text-xs font-semibold text-muted-foreground">{t("Administrator")}</p><h1 className="mt-0.5 mb-0 text-[25px] font-semibold" id="security-title">{t("Security")}</h1></div>
+      <div className="rounded-md border border-border bg-card">
+        <div className="flex min-h-[68px] items-center justify-between gap-5 px-4 py-3.5 max-[560px]:flex-col max-[560px]:items-start">
+          <div className="grid gap-1"><h2 className="m-0 text-[15px] font-semibold">{t("Two-factor authentication")}</h2><p className="m-0 inline-flex items-center gap-2 text-[13px] text-muted-foreground"><span className={cn("size-2 rounded-full", session.administrator.totp_enabled ? "bg-success" : "bg-muted-foreground")} />{session.administrator.totp_enabled ? t("Enabled") : t("Disabled")}</p></div>
           {session.administrator.totp_enabled ? (
-            <div className="row-actions">
-              <button className="secondary-button" onClick={onRegenerate}>{t("New recovery codes")}</button>
-              <button className="danger-button" onClick={onDisable}>{t("Disable")}</button>
+            <div className="flex flex-wrap items-center gap-2 max-[560px]:w-full">
+              <Button className="max-[560px]:flex-1" variant="secondary" size="sm" onClick={onRegenerate} type="button">{t("New recovery codes")}</Button>
+              <Button className="max-[560px]:flex-1" variant="destructive" size="sm" onClick={onDisable} type="button">{t("Disable")}</Button>
             </div>
           ) : (
-            <button className="primary-button compact" disabled={busy || !session.secrets_available} onClick={onEnable}>{t("Enable")}</button>
+            <Button className="max-[560px]:w-full" size="sm" disabled={busy || !session.secrets_available} onClick={onEnable} type="button">{t("Enable")}</Button>
           )}
         </div>
       </div>
@@ -289,16 +294,16 @@ function TOTPSetupDialog({ preparation, onClose, onEnabled }: { preparation: TOT
 
   return (
     <Modal title={t("Enable two-factor authentication")} onClose={onClose}>
-      <div className="totp-layout">
-        <div className="qr-frame">{qrCode ? <img src={qrCode} alt={t("TOTP QR code")} /> : <span>{t("Generating...")}</span>}</div>
-        <code className="secret-value">{preparation.secret}</code>
+      <div className="mb-1 flex flex-col items-center gap-3">
+        <div className="flex aspect-square w-[194px] items-center justify-center border border-border bg-white">{qrCode ? <img className="size-48" src={qrCode} alt={t("TOTP QR code")} /> : <span className="text-[13px] text-muted-foreground">{t("Generating...")}</span>}</div>
+        <code className="max-w-full rounded-sm bg-muted px-2.5 py-2 text-center text-[13px] [overflow-wrap:anywhere]">{preparation.secret}</code>
       </div>
       <Field label={t("Authentication code")} value={code} onChange={setCode} autoComplete="one-time-code" autoFocus />
-      <FormError message={error !== undefined ? t(error) : undefined} />
-      <div className="dialog-actions">
-        <button className="quiet-button" onClick={onClose}>{t("Cancel")}</button>
-        <button className="primary-button compact" disabled={busy || code.length !== 6} onClick={submit}>{busy ? t("Enabling...") : t("Enable")}</button>
-      </div>
+      {error ? <FormError message={t(error)} /> : null}
+      <DialogFooter className="mt-1">
+        <Button variant="ghost" onClick={onClose} type="button">{t("Cancel")}</Button>
+        <Button disabled={busy || code.length !== 6} onClick={submit} type="button">{busy ? t("Enabling...") : t("Enable")}</Button>
+      </DialogFooter>
     </Modal>
   );
 }
@@ -335,17 +340,17 @@ function SensitiveActionDialog({ action, onClose, onRecoveryCodes, onDisabled }:
 
   return (
     <Modal title={action === "disable" ? t("Disable two-factor authentication") : t("Generate new recovery codes")} onClose={onClose}>
-      <div className="dialog-fields">
+      <div className="grid gap-4">
         <Field label={t("Password")} value={password} onChange={setPassword} type="password" autoComplete="current-password" />
         <Field label={t("Authentication or recovery code")} value={secondFactor} onChange={setSecondFactor} autoComplete="one-time-code" />
       </div>
-      <FormError message={error !== undefined ? t(error) : undefined} />
-      <div className="dialog-actions">
-        <button className="quiet-button" onClick={onClose}>{t("Cancel")}</button>
-        <button className={action === "disable" ? "danger-button" : "primary-button compact"} disabled={busy} onClick={submit}>
+      {error ? <FormError message={t(error)} /> : null}
+      <DialogFooter className="mt-1">
+        <Button variant="ghost" onClick={onClose} type="button">{t("Cancel")}</Button>
+        <Button variant={action === "disable" ? "destructive" : "default"} disabled={busy} onClick={submit} type="button">
           {busy ? t("Saving...") : action === "disable" ? t("Disable") : t("Generate")}
-        </button>
-      </div>
+        </Button>
+      </DialogFooter>
     </Modal>
   );
 }
@@ -365,11 +370,11 @@ function RecoveryCodesDialog({ codes, onClose }: { codes: string[]; onClose: () 
 
   return (
     <Modal title={t("Recovery codes")} onClose={onClose} dismissible={false}>
-      <div className="recovery-grid">{codes.map((code) => <code key={code}>{code}</code>)}</div>
-      <div className="dialog-actions">
-        <button className="secondary-button" onClick={copy}>{copied ? t("Copied") : t("Copy")}</button>
-        <button className="primary-button compact" onClick={onClose}>{t("Done")}</button>
-      </div>
+      <div className="grid grid-cols-2 gap-x-5 gap-y-2 rounded-sm border border-border bg-muted p-4 max-[440px]:grid-cols-1">{codes.map((code) => <code className="text-[13px] [overflow-wrap:anywhere]" key={code}>{code}</code>)}</div>
+      <DialogFooter className="mt-1">
+        <Button variant="secondary" onClick={copy} type="button">{copied ? t("Copied") : t("Copy")}</Button>
+        <Button onClick={onClose} type="button">{t("Done")}</Button>
+      </DialogFooter>
     </Modal>
   );
 }
