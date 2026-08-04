@@ -1,4 +1,4 @@
-import { type FormEvent, useEffect, useState } from "react";
+import { type FormEvent, type ReactNode, useEffect, useId, useState } from "react";
 import { Plus, Settings2 } from "lucide-react";
 
 import {
@@ -13,8 +13,16 @@ import {
   type PluginState,
 } from "../api";
 import { useI18n } from "../i18n";
+import { cn } from "../lib/utils";
 import { FormError } from "./AuthScreen";
 import { Modal } from "./Modal";
+import { Button } from "./ui/button";
+import { DialogFooter } from "./ui/dialog";
+import { Input } from "./ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "./ui/table";
+import { Textarea } from "./ui/textarea";
+import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 
 type DesiredState = Exclude<PluginState, "failed">;
 
@@ -58,49 +66,47 @@ export function PluginInstancesView({ embedded = false }: { embedded?: boolean }
 
   return (
     <section aria-labelledby={embedded ? "node-plugin-instances-title" : "plugins-title"}>
-      {embedded ? <h2 className="visually-hidden" id="node-plugin-instances-title">{t("Node plugin instances")}</h2> : (
-        <div className="section-heading">
-          <div><p className="eyebrow">{t("Runtime")}</p><h1 id="plugins-title">{t("Node plugins")}</h1></div>
+      {embedded ? <h2 className="sr-only" id="node-plugin-instances-title">{t("Node plugin instances")}</h2> : (
+        <div className="mb-6 flex items-end justify-between gap-4">
+          <div><p className="m-0 text-xs font-semibold text-muted-foreground">{t("Runtime")}</p><h1 className="mt-0.5 mb-0 text-[25px] font-semibold" id="plugins-title">{t("Node plugins")}</h1></div>
         </div>
       )}
       {embedded ? (
-        <div className="subsection-actions">
-          <FormError message={error !== undefined ? t(error) : undefined} />
-          <button className="primary-button compact button-with-icon" onClick={() => setCreating(true)} type="button">
+        <div className="mb-3 flex min-h-11 flex-wrap items-center justify-end gap-4">
+          {error ? <div className="mr-auto"><FormError message={t(error)} /></div> : null}
+          <Button size="sm" onClick={() => setCreating(true)} type="button">
             <Plus size={17} />{t("Configure plugin")}
-          </button>
+          </Button>
         </div>
-      ) : <FormError message={error !== undefined ? t(error) : undefined} />}
-      <div className="table-frame">
-        <table className="resource-table plugin-table">
-          <thead><tr><th>{t("Plugin")}</th><th>{t("Node")}</th><th>{t("Desired")}</th><th>{t("Actual")}</th><th>{t("Generation")}</th><th>{t("Health")}</th><th>{t("Version")}</th><th>{t("Delivery")}</th><th>{t("Actions")}</th></tr></thead>
-          <tbody>
-            {loading ? <tr><td colSpan={9} className="empty-cell">{t("Loading...")}</td></tr> : null}
-            {!loading && items.length === 0 ? <tr><td colSpan={9} className="empty-cell">{t("No node plugins have been configured.")}</td></tr> : null}
+      ) : error ? <div className="mb-3"><FormError message={t(error)} /></div> : null}
+      <div className="overflow-hidden rounded-md border border-border bg-card">
+        <Table className="min-w-[1000px]">
+          <TableHeader><TableRow className="hover:bg-transparent"><TableHead>{t("Plugin")}</TableHead><TableHead>{t("Node")}</TableHead><TableHead>{t("Desired")}</TableHead><TableHead>{t("Actual")}</TableHead><TableHead>{t("Generation")}</TableHead><TableHead>{t("Health")}</TableHead><TableHead>{t("Version")}</TableHead><TableHead>{t("Delivery")}</TableHead><TableHead className="text-right">{t("Actions")}</TableHead></TableRow></TableHeader>
+          <TableBody>
             {items.map((item) => (
-              <tr key={`${item.node_id}:${item.plugin_id}`}>
-                <td data-label={t("Plugin")}><span className="plugin-identity"><strong>{item.plugin_name}</strong><small>{item.plugin_id}</small></span></td>
-                <td data-label={t("Node")}>{item.node_name}</td>
-                <td data-label={t("Desired")}><StateStatus value={item.desired_state} /></td>
-                <td data-label={t("Actual")}><StateStatus value={item.actual_state} /></td>
-                <td data-label={t("Generation")} className="secondary-cell" title={t("Actual / desired")}>{item.actual_generation} / {item.generation}</td>
-                <td data-label={t("Health")}><HealthStatus value={item} /></td>
-                <td data-label={t("Version")} className="secondary-cell">{item.active_version || item.desired_version || t("None")}</td>
-                <td data-label={t("Delivery")}><DeliveryStatus value={item} /></td>
-                <td className="table-actions">
-                  <button
-                    className="icon-button"
-                    aria-label={t("Configure node plugin")}
-                    title={item.command_status === "pending" ? t("A reconciliation is already pending") : t("Configure node plugin")}
+              <TableRow key={`${item.node_id}:${item.plugin_id}`}>
+                <TableCell><span className="grid max-w-[210px] gap-0.5"><strong className="font-semibold">{item.plugin_name}</strong><small className="overflow-hidden text-ellipsis whitespace-nowrap text-muted-foreground">{item.plugin_id}</small></span></TableCell>
+                <TableCell>{item.node_name}</TableCell>
+                <TableCell><StateStatus value={item.desired_state} /></TableCell>
+                <TableCell><StateStatus value={item.actual_state} /></TableCell>
+                <TableCell className="text-muted-foreground" title={t("Actual / desired")}>{item.actual_generation} / {item.generation}</TableCell>
+                <TableCell><HealthStatus value={item} /></TableCell>
+                <TableCell className="text-muted-foreground">{item.active_version || item.desired_version || t("None")}</TableCell>
+                <TableCell><DeliveryStatus value={item} /></TableCell>
+                <TableCell className="w-px text-right whitespace-nowrap">
+                  <IconAction
+                    label={t("Configure node plugin")}
+                    description={item.command_status === "pending" ? t("A reconciliation is already pending") : t("Configure node plugin")}
                     disabled={item.command_status === "pending"}
                     onClick={() => setEditing(item)}
-                    type="button"
-                  ><Settings2 size={17} /></button>
-                </td>
-              </tr>
+                  ><Settings2 size={17} /></IconAction>
+                </TableCell>
+              </TableRow>
             ))}
-          </tbody>
-        </table>
+          </TableBody>
+        </Table>
+        {loading ? <div className="flex h-24 items-center justify-center border-t border-border px-4 text-center text-[13px] text-muted-foreground">{t("Loading...")}</div> : null}
+        {!loading && items.length === 0 ? <div className="flex h-24 items-center justify-center border-t border-border px-4 text-center text-[13px] text-muted-foreground">{t("No node plugins have been configured.")}</div> : null}
       </div>
       {editing ? (
         <PluginConfigurationDialog
@@ -174,36 +180,34 @@ function NewPluginConfigurationDialog({ nodes, plugins, existing, onClose, onSav
 
   return (
     <Modal title={t("Configure node plugin")} onClose={onClose}>
-      <form onSubmit={submit}>
-        <div className="dialog-fields">
-          <label className="field">
-            <span>{t("Plugin and node")}</span>
-            <select value={selection} onChange={(event) => setSelection(event.target.value)} disabled={available.length === 0}>
-              {available.length === 0 ? <option value="">{t("No compatible targets")}</option> : null}
-              {available.map((item) => (
-                <option key={`${item.node.id}:${item.plugin.plugin_id}`} value={`${item.node.id}\n${item.plugin.plugin_id}`}>
-                  {t("{plugin} on {node}", { plugin: item.plugin.manifest.name, node: item.node.name })}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="field">
-            <span>{t("Desired state")}</span>
-            <select value={state} onChange={(event) => setState(event.target.value as Exclude<DesiredState, "absent">)}>
-              <option value="running">{t("Running")}</option>
-              <option value="stopped">{t("Stopped")}</option>
-            </select>
-          </label>
-          <label className="field">
-            <span>{t("Configuration")}</span>
-            <textarea value={configuration} onChange={(event) => setConfiguration(event.target.value)} rows={8} spellCheck={false} required />
-          </label>
+      <form className="grid gap-5" onSubmit={submit}>
+        <div className="grid gap-4">
+          <SelectField
+            label={t("Plugin and node")}
+            value={selection}
+            onChange={setSelection}
+            disabled={available.length === 0}
+            placeholder={t("No compatible targets")}
+            options={available.map((item) => ({
+              value: `${item.node.id}\n${item.plugin.plugin_id}`,
+              label: t("{plugin} on {node}", { plugin: item.plugin.manifest.name, node: item.node.name }),
+            }))}
+          />
+          <SelectField
+            label={t("Desired state")}
+            value={state}
+            onChange={(value) => setState(value as Exclude<DesiredState, "absent">)}
+            options={[{ value: "running", label: t("Running") }, { value: "stopped", label: t("Stopped") }]}
+          />
+          <FieldLabel label={t("Configuration")}>
+            <Textarea className="min-h-44 font-mono" value={configuration} onChange={(event) => setConfiguration(event.target.value)} rows={8} spellCheck={false} required />
+          </FieldLabel>
         </div>
         <FormError message={error !== undefined ? t(error) : undefined} />
-        <div className="dialog-actions">
-          <button className="quiet-button" onClick={onClose} type="button">{t("Cancel")}</button>
-          <button className="primary-button compact" disabled={busy || available.length === 0} type="submit">{busy ? t("Queuing...") : t("Configure")}</button>
-        </div>
+        <DialogFooter>
+          <Button variant="ghost" onClick={onClose} type="button">{t("Cancel")}</Button>
+          <Button disabled={busy || available.length === 0} type="submit">{busy ? t("Queuing...") : t("Configure")}</Button>
+        </DialogFooter>
       </form>
     </Modal>
   );
@@ -247,33 +251,57 @@ function PluginConfigurationDialog({ value, onClose, onSaved }: {
 
   return (
     <Modal title={t("{plugin} on {node}", { plugin: value.plugin_name, node: value.node_name })} onClose={onClose}>
-      <form onSubmit={submit}>
-        <div className="dialog-fields">
-          <label className="field">
-            <span>{t("Desired state")}</span>
-            <select value={state} onChange={(event) => setState(event.target.value as DesiredState)}>
-              <option value="running">{t("Running")}</option>
-              <option value="stopped">{t("Stopped")}</option>
-              <option value="absent">{t("Absent")}</option>
-            </select>
-          </label>
-          <label className="field">
-            <span>{t("Version")}</span>
-            <input value={version} onChange={(event) => setVersion(event.target.value)} disabled={state === "absent"} required={state !== "absent"} />
-          </label>
-          <label className="field">
-            <span>{t("Configuration override")}</span>
-            <textarea value={configuration} onChange={(event) => setConfiguration(event.target.value)} disabled={state === "absent"} rows={8} spellCheck={false} />
-          </label>
+      <form className="grid gap-5" onSubmit={submit}>
+        <div className="grid gap-4">
+          <SelectField
+            label={t("Desired state")}
+            value={state}
+            onChange={(next) => setState(next as DesiredState)}
+            options={[
+              { value: "running", label: t("Running") },
+              { value: "stopped", label: t("Stopped") },
+              { value: "absent", label: t("Absent") },
+            ]}
+          />
+          <FieldLabel label={t("Version")}>
+            <Input value={version} onChange={(event) => setVersion(event.target.value)} disabled={state === "absent"} required={state !== "absent"} />
+          </FieldLabel>
+          <FieldLabel label={t("Configuration override")}>
+            <Textarea className="min-h-44 font-mono" value={configuration} onChange={(event) => setConfiguration(event.target.value)} disabled={state === "absent"} rows={8} spellCheck={false} />
+          </FieldLabel>
         </div>
         <FormError message={error !== undefined ? t(error) : undefined} />
-        <div className="dialog-actions">
-          <button className="quiet-button" onClick={onClose} type="button">{t("Cancel")}</button>
-          <button className="primary-button compact" disabled={busy} type="submit">{busy ? t("Queuing...") : t("Apply")}</button>
-        </div>
+        <DialogFooter>
+          <Button variant="ghost" onClick={onClose} type="button">{t("Cancel")}</Button>
+          <Button disabled={busy} type="submit">{busy ? t("Queuing...") : t("Apply")}</Button>
+        </DialogFooter>
       </form>
     </Modal>
   );
+}
+
+function SelectField({ label, value, onChange, options, disabled = false, placeholder }: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  options: { value: string; label: string }[];
+  disabled?: boolean;
+  placeholder?: string;
+}) {
+  const id = useId();
+  return (
+    <label className="grid gap-1.5" htmlFor={id}>
+      <span className="text-[13px] font-semibold text-foreground/80">{label}</span>
+      <Select value={value} onValueChange={onChange} disabled={disabled}>
+        <SelectTrigger id={id}><SelectValue placeholder={placeholder} /></SelectTrigger>
+        <SelectContent>{options.map((option) => <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>)}</SelectContent>
+      </Select>
+    </label>
+  );
+}
+
+function FieldLabel({ label, children }: { label: string; children: ReactNode }) {
+  return <label className="grid gap-1.5"><span className="text-[13px] font-semibold text-foreground/80">{label}</span>{children}</label>;
 }
 
 function parseConfiguration(value: string): Record<string, unknown> | undefined {
@@ -296,7 +324,7 @@ function HealthStatus({ value }: { value: NodePluginInstance }) {
   const { t } = useI18n();
   const tone = value.health === "healthy" ? "ok" : value.health === "unhealthy" ? "error" : "muted";
   const detail = value.reason || t(value.restart_count === 1 ? "1 restart" : "{count} restarts", { count: value.restart_count });
-  return <span className="agent-update-cell" title={value.reason}><Status value={t(label(value.health))} tone={tone} /><small>{detail}</small></span>;
+  return <span className="grid max-w-[150px] gap-0.5" title={value.reason}><Status value={t(label(value.health))} tone={tone} /><small className="overflow-hidden text-ellipsis whitespace-nowrap text-muted-foreground">{detail}</small></span>;
 }
 
 function DeliveryStatus({ value }: { value: NodePluginInstance }) {
@@ -304,11 +332,44 @@ function DeliveryStatus({ value }: { value: NodePluginInstance }) {
   const tone = value.command_status === "succeeded" ? "ok" : value.command_status === "failed" ? "error" : value.command_status === "pending" ? "warning" : "muted";
   const attempts = t(value.command_attempts === 1 ? "1 delivery" : "{count} deliveries", { count: value.command_attempts });
   const detail = value.last_problem?.message ? t(value.last_problem.message) : value.command_status === "pending" && value.command_attempts === 0 ? t("Waiting") : attempts;
-  return <span className="agent-update-cell" title={value.last_problem?.message ? t(value.last_problem.message) : undefined}><Status value={t(label(value.command_status))} tone={tone} />{detail ? <small>{detail}</small> : null}</span>;
+  return <span className="grid max-w-[150px] gap-0.5" title={value.last_problem?.message ? t(value.last_problem.message) : undefined}><Status value={t(label(value.command_status))} tone={tone} />{detail ? <small className="overflow-hidden text-ellipsis whitespace-nowrap text-muted-foreground">{detail}</small> : null}</span>;
 }
 
 function Status({ value, tone }: { value: string; tone: "ok" | "warning" | "error" | "muted" }) {
-  return <span className="inline-status"><span className={`status-dot status-dot--${tone}`} />{value}</span>;
+  const toneClass = {
+    ok: "bg-success",
+    warning: "bg-warning",
+    error: "bg-destructive",
+    muted: "bg-muted-foreground",
+  }[tone];
+  return <span className="inline-flex items-center gap-1.5 whitespace-nowrap"><span className={cn("size-2 shrink-0 rounded-full", toneClass)} />{value}</span>;
+}
+
+function IconAction({ label, description, disabled, onClick, children }: {
+  label: string;
+  description: string;
+  disabled: boolean;
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          className="text-muted-foreground aria-disabled:cursor-not-allowed aria-disabled:opacity-55"
+          variant="ghost"
+          size="icon"
+          aria-disabled={disabled}
+          aria-label={label}
+          onClick={disabled ? undefined : onClick}
+          type="button"
+        >
+          {children}
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent>{description}</TooltipContent>
+    </Tooltip>
+  );
 }
 
 function label(value: string) {
