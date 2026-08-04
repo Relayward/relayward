@@ -3,6 +3,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 
 import { App } from "./App";
+import { TooltipProvider } from "./components/ui/tooltip";
 import { I18nProvider } from "./i18n";
 import "./tailwind.css";
 import "./styles.css";
@@ -19,7 +20,9 @@ if (root === null) {
 createRoot(root).render(
   <StrictMode>
     <I18nProvider>
-      <App />
+      <TooltipProvider delayDuration={350}>
+        <App />
+      </TooltipProvider>
     </I18nProvider>
   </StrictMode>,
 );

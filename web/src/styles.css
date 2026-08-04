@@ -958,61 +958,6 @@ button:disabled {
   padding: 12px;
 }
 
-.token-metadata {
-  align-items: center;
-  display: flex;
-  font-size: 13px;
-  justify-content: space-between;
-  margin: 16px 0 0;
-}
-
-.token-metadata dt {
-  color: #667078;
-}
-
-.token-metadata dd {
-  margin: 0;
-}
-
-.agent-update-details {
-  border-bottom: 1px solid #e5e8ea;
-  border-top: 1px solid #e5e8ea;
-  margin: 0 0 20px;
-}
-
-.agent-update-details > div {
-  align-items: center;
-  display: flex;
-  font-size: 13px;
-  justify-content: space-between;
-  min-height: 42px;
-  padding: 8px 0;
-}
-
-.agent-update-details > div + div {
-  border-top: 1px solid #eef0f1;
-}
-
-.agent-update-details dt {
-  color: #68737b;
-}
-
-.agent-update-details dd {
-  margin: 0;
-  overflow-wrap: anywhere;
-  text-align: right;
-}
-
-.agent-update-problem {
-  background: #fff1f1;
-  border-left: 3px solid #cf222e;
-  color: #8e1b24;
-  font-size: 13px;
-  margin: 0 0 18px;
-  overflow-wrap: anywhere;
-  padding: 10px 12px;
-}
-
 @media (max-width: 700px) {
   .setting-row {
     align-items: stretch;
