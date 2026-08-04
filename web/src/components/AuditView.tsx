@@ -1,11 +1,13 @@
 import { useEffect, useState } from "react";
 
 import { APIError, listAudit, type AuditEntry } from "../api";
+import { useI18n } from "../i18n";
 import { FormError } from "./AuthScreen";
 
 const pageSize = 100;
 
 export function AuditView() {
+  const { t, formatDateTime } = useI18n();
   const [items, setItems] = useState<AuditEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadingOlder, setLoadingOlder] = useState(false);
@@ -45,33 +47,37 @@ export function AuditView() {
 
   return (
     <section aria-labelledby="audit-title">
-      <div className="section-heading"><div><p className="eyebrow">System</p><h1 id="audit-title">Audit</h1></div></div>
-      <FormError message={error} />
+      <div className="section-heading"><div><p className="eyebrow">{t("System")}</p><h1 id="audit-title">{t("Audit")}</h1></div></div>
+      <FormError message={error !== undefined ? t(error) : undefined} />
       <div className="table-frame">
         <table className="resource-table audit-table">
-          <thead><tr><th>Time</th><th>Action</th><th>Target</th><th>Actor</th><th>Outcome</th></tr></thead>
+          <thead><tr><th>{t("Time")}</th><th>{t("Action")}</th><th>{t("Target")}</th><th>{t("Actor")}</th><th>{t("Outcome")}</th></tr></thead>
           <tbody>
-            {loading ? <tr><td colSpan={5} className="empty-cell">Loading...</td></tr> : null}
-            {!loading && items.length === 0 ? <tr><td colSpan={5} className="empty-cell">No audit entries.</td></tr> : null}
+            {loading ? <tr><td colSpan={5} className="empty-cell">{t("Loading...")}</td></tr> : null}
+            {!loading && items.length === 0 ? <tr><td colSpan={5} className="empty-cell">{t("No audit entries.")}</td></tr> : null}
             {items.map((entry) => (
               <tr key={entry.id}>
-                <td className="secondary-cell audit-time">{new Date(entry.occurred_at).toLocaleString()}</td>
+                <td className="secondary-cell audit-time">{formatDateTime(entry.occurred_at)}</td>
                 <td><code>{entry.action}</code></td>
                 <td className="secondary-cell">{entry.target_type}{entry.target_id ? ` / ${shortID(entry.target_id)}` : ""}</td>
                 <td className="secondary-cell">{entry.actor_type}</td>
-                <td><span className="inline-status"><span className={`status-dot status-dot--${entry.outcome === "success" ? "ok" : "warning"}`} />{entry.outcome}</span></td>
+                <td><span className="inline-status"><span className={`status-dot status-dot--${entry.outcome === "success" ? "ok" : "warning"}`} />{t(titleCase(entry.outcome))}</span></td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
-      {hasMore ? <div className="list-footer"><button className="secondary-button" disabled={loadingOlder} onClick={loadOlder}>{loadingOlder ? "Loading..." : "Load older"}</button></div> : null}
+      {hasMore ? <div className="list-footer"><button className="secondary-button" disabled={loadingOlder} onClick={loadOlder}>{loadingOlder ? t("Loading...") : t("Load older")}</button></div> : null}
     </section>
   );
 }
 
 function shortID(value: string): string {
   return value.length > 12 ? `${value.slice(0, 8)}...` : value;
+}
+
+function titleCase(value: string): string {
+  return value.charAt(0).toUpperCase() + value.slice(1);
 }
 
 function errorMessage(cause: unknown): string {

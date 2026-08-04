@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { ChevronLeft } from "lucide-react";
 
 import { invokePluginUI, type PluginInstallation } from "../api";
+import { useI18n } from "../i18n";
 import { bridgeFailure, bridgeSuccess, isRecord, parsePluginUIRequest } from "../pluginBridge";
 
 export type PluginNavigationTarget = "plugins" | "nodes" | "users" | "authorizations" | "audit";
@@ -13,6 +14,7 @@ interface PluginFrameProps {
 }
 
 export function PluginFrame({ plugin, onClose, onNavigate }: PluginFrameProps) {
+  const { t } = useI18n();
   const frame = useRef<HTMLIFrameElement>(null);
   const [loading, setLoading] = useState(true);
   const [failed, setFailed] = useState(false);
@@ -67,19 +69,19 @@ export function PluginFrame({ plugin, onClose, onNavigate }: PluginFrameProps) {
       <div className="section-heading plugin-frame-heading">
         <div>
           <button className="quiet-button button-with-icon plugin-back-button" onClick={onClose} type="button">
-            <ChevronLeft size={17} />Plugins
+            <ChevronLeft size={17} />{t("Plugins")}
           </button>
           <h1 id="plugin-frame-title">{plugin.manifest.name}</h1>
         </div>
         <span className="version-label">v{plugin.active_version}</span>
       </div>
       <div className="plugin-frame-shell">
-        {loading && !failed ? <div className="plugin-frame-state">Loading...</div> : null}
-        {failed ? <div className="plugin-frame-state plugin-frame-state--error">Plugin page could not be loaded.</div> : null}
+        {loading && !failed ? <div className="plugin-frame-state">{t("Loading...")}</div> : null}
+        {failed ? <div className="plugin-frame-state plugin-frame-state--error">{t("Plugin page could not be loaded.")}</div> : null}
         <iframe
           ref={frame}
           className={loading || failed ? "plugin-frame plugin-frame--hidden" : "plugin-frame"}
-          title={`${plugin.manifest.name} plugin`}
+          title={t("{name} plugin", { name: plugin.manifest.name })}
           src={`/api/v1/plugins/${encodeURIComponent(plugin.plugin_id)}/ui/index.html`}
           sandbox="allow-scripts"
           referrerPolicy="no-referrer"

@@ -4,6 +4,7 @@ import { APIError, getSession, getSetupStatus, initialize, login, logout, type S
 import { LoginScreen, SetupScreen } from "./components/AuthScreen";
 import { Dashboard } from "./components/Dashboard";
 import { SubscriptionPage } from "./components/SubscriptionPage";
+import { LanguageSwitcher, useI18n } from "./i18n";
 import { loadSystemInfo, type SystemInfo } from "./system";
 
 type AppState =
@@ -14,6 +15,7 @@ type AppState =
   | { phase: "error"; message: string };
 
 export function App() {
+  const { t } = useI18n();
   const subscriptionToken = subscriptionTokenFromPath();
   const [state, setState] = useState<AppState>({ phase: "loading" });
 
@@ -68,10 +70,11 @@ export function App() {
   if (state.phase === "error") {
     return (
       <main className="error-page">
+        <LanguageSwitcher className="page-language-switcher" />
         <span className="brand-mark">R</span>
-        <h1>Relayward unavailable</h1>
-        <p>{state.message}</p>
-        <button className="primary-button compact" onClick={() => window.location.reload()}>Retry</button>
+        <h1>{t("Relayward unavailable")}</h1>
+        <p>{t(state.message)}</p>
+        <button className="primary-button compact" onClick={() => window.location.reload()}>{t("Retry")}</button>
       </main>
     );
   }

@@ -14,6 +14,7 @@ import {
   type TOTPPreparation,
 } from "../api";
 import type { SystemInfo } from "../system";
+import { LanguageSwitcher, useI18n } from "../i18n";
 import { Field, FormError } from "./AuthScreen";
 import { AuditView } from "./AuditView";
 import { AuthorizationsView } from "./AuthorizationView";
@@ -33,6 +34,7 @@ interface DashboardProps {
 type View = "system" | "nodes" | "plugins" | "users" | "authorizations" | "events" | "announcement" | "audit" | "security";
 
 export function Dashboard({ session, system, onLogout, onSessionChange, onSessionRevoked }: DashboardProps) {
+  const { t } = useI18n();
   const [view, setView] = useState<View>("system");
   const [setup, setSetup] = useState<TOTPPreparation>();
   const [recoveryCodes, setRecoveryCodes] = useState<string[]>();
@@ -69,21 +71,22 @@ export function Dashboard({ session, system, onLogout, onSessionChange, onSessio
       <header className="dashboard-header">
         <div className="brand-lockup"><span className="brand-mark brand-mark--small">R</span><strong>Relayward</strong></div>
         <div className="header-actions">
+          <LanguageSwitcher />
           <span className="admin-name">{session.administrator.username}</span>
-          <button className="quiet-button button-with-icon" disabled={busy} onClick={signOut}><LogOut size={16} />Sign out</button>
+          <button className="quiet-button button-with-icon dashboard-sign-out" aria-label={t("Sign out")} title={t("Sign out")} disabled={busy} onClick={signOut}><LogOut size={16} /><span>{t("Sign out")}</span></button>
         </div>
       </header>
       <div className="dashboard-body">
-        <nav className="side-nav" aria-label="Administration">
-          <button className={view === "system" ? "active" : ""} onClick={() => setView("system")}><Gauge size={17} />System</button>
-          <button className={view === "nodes" ? "active" : ""} onClick={() => setView("nodes")}><Server size={17} />Nodes</button>
-          <button className={view === "plugins" ? "active" : ""} onClick={() => setView("plugins")}><Plug size={17} />Plugins</button>
-          <button className={view === "users" ? "active" : ""} onClick={() => setView("users")}><Users size={17} />Users</button>
-          <button className={view === "authorizations" ? "active" : ""} onClick={() => setView("authorizations")}><BadgeCheck size={17} />Authorizations</button>
-          <button className={view === "events" ? "active" : ""} onClick={() => setView("events")}><Activity size={17} />Recent events</button>
-          <button className={view === "announcement" ? "active" : ""} onClick={() => setView("announcement")}><Megaphone size={17} />Announcement</button>
-          <button className={view === "audit" ? "active" : ""} onClick={() => setView("audit")}><ScrollText size={17} />Audit</button>
-          <button className={view === "security" ? "active" : ""} onClick={() => setView("security")}><Shield size={17} />Security</button>
+        <nav className="side-nav" aria-label={t("Administration")}>
+          <button className={view === "system" ? "active" : ""} onClick={() => setView("system")}><Gauge size={17} />{t("System")}</button>
+          <button className={view === "nodes" ? "active" : ""} onClick={() => setView("nodes")}><Server size={17} />{t("Nodes")}</button>
+          <button className={view === "plugins" ? "active" : ""} onClick={() => setView("plugins")}><Plug size={17} />{t("Plugins")}</button>
+          <button className={view === "users" ? "active" : ""} onClick={() => setView("users")}><Users size={17} />{t("Users")}</button>
+          <button className={view === "authorizations" ? "active" : ""} onClick={() => setView("authorizations")}><BadgeCheck size={17} />{t("Authorizations")}</button>
+          <button className={view === "events" ? "active" : ""} onClick={() => setView("events")}><Activity size={17} />{t("Recent events")}</button>
+          <button className={view === "announcement" ? "active" : ""} onClick={() => setView("announcement")}><Megaphone size={17} />{t("Announcement")}</button>
+          <button className={view === "audit" ? "active" : ""} onClick={() => setView("audit")}><ScrollText size={17} />{t("Audit")}</button>
+          <button className={view === "security" ? "active" : ""} onClick={() => setView("security")}><Shield size={17} />{t("Security")}</button>
         </nav>
         <main className="dashboard-main">
           {view === "system" ? <SystemView system={system} session={session} /> : null}
@@ -103,7 +106,7 @@ export function Dashboard({ session, system, onLogout, onSessionChange, onSessio
               onDisable={() => setSensitiveAction("disable")}
             />
           ) : null}
-          <FormError message={error} />
+          <FormError message={error !== undefined ? t(error) : undefined} />
         </main>
       </div>
       {setup ? (
@@ -134,6 +137,7 @@ export function Dashboard({ session, system, onLogout, onSessionChange, onSessio
 }
 
 function AnnouncementView() {
+  const { t } = useI18n();
   const [content, setContent] = useState("");
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -169,27 +173,28 @@ function AnnouncementView() {
   return (
     <section aria-labelledby="announcement-title">
       <div className="section-heading">
-        <div><p className="eyebrow">Subscriptions</p><h1 id="announcement-title">Announcement</h1></div>
-        <button className="primary-button compact button-with-icon" disabled={loading || busy} onClick={save} type="button"><Save size={17} />{busy ? "Saving..." : "Save"}</button>
+        <div><p className="eyebrow">{t("Subscriptions")}</p><h1 id="announcement-title">{t("Announcement")}</h1></div>
+        <button className="primary-button compact button-with-icon" disabled={loading || busy} onClick={save} type="button"><Save size={17} />{busy ? t("Saving...") : t("Save")}</button>
       </div>
-      <label className="field announcement-editor"><span>Content</span><textarea value={content} onChange={(event) => { setContent(event.target.value); setSaved(false); }} maxLength={4096} rows={10} disabled={loading} /></label>
-      {saved ? <p className="form-success">Saved.</p> : null}
-      <FormError message={error} />
+      <label className="field announcement-editor"><span>{t("Content")}</span><textarea value={content} onChange={(event) => { setContent(event.target.value); setSaved(false); }} maxLength={4096} rows={10} disabled={loading} /></label>
+      {saved ? <p className="form-success">{t("Saved.")}</p> : null}
+      <FormError message={error !== undefined ? t(error) : undefined} />
     </section>
   );
 }
 
 function SystemView({ system, session }: { system: SystemInfo; session: SessionInfo }) {
+  const { t, formatDateTime } = useI18n();
   return (
     <section aria-labelledby="system-title">
       <div className="section-heading">
-        <div><p className="eyebrow">Overview</p><h1 id="system-title">System</h1></div>
+        <div><p className="eyebrow">{t("Overview")}</p><h1 id="system-title">{t("System")}</h1></div>
         <span className="version-label">{system.version}</span>
       </div>
       <dl className="detail-list">
-        <Detail label="Control plane" value="Available" status="ok" />
-        <Detail label="Secret storage" value={session.secrets_available ? "Available" : "Recovery required"} status={session.secrets_available ? "ok" : "warning"} />
-        <Detail label="Session expiry" value={new Date(session.expires_at).toLocaleString()} />
+        <Detail label={t("Control plane")} value={t("Available")} status="ok" />
+        <Detail label={t("Secret storage")} value={session.secrets_available ? t("Available") : t("Recovery required")} status={session.secrets_available ? "ok" : "warning"} />
+        <Detail label={t("Session expiry")} value={formatDateTime(session.expires_at)} />
       </dl>
     </section>
   );
@@ -213,19 +218,20 @@ interface SecurityViewProps {
 }
 
 function SecurityView({ session, busy, onEnable, onRegenerate, onDisable }: SecurityViewProps) {
+  const { t } = useI18n();
   return (
     <section aria-labelledby="security-title">
-      <div className="section-heading"><div><p className="eyebrow">Administrator</p><h1 id="security-title">Security</h1></div></div>
+      <div className="section-heading"><div><p className="eyebrow">{t("Administrator")}</p><h1 id="security-title">{t("Security")}</h1></div></div>
       <div className="settings-list">
         <div className="setting-row">
-          <div><h2>Two-factor authentication</h2><p>{session.administrator.totp_enabled ? "Enabled" : "Disabled"}</p></div>
+          <div><h2>{t("Two-factor authentication")}</h2><p>{session.administrator.totp_enabled ? t("Enabled") : t("Disabled")}</p></div>
           {session.administrator.totp_enabled ? (
             <div className="row-actions">
-              <button className="secondary-button" onClick={onRegenerate}>New recovery codes</button>
-              <button className="danger-button" onClick={onDisable}>Disable</button>
+              <button className="secondary-button" onClick={onRegenerate}>{t("New recovery codes")}</button>
+              <button className="danger-button" onClick={onDisable}>{t("Disable")}</button>
             </div>
           ) : (
-            <button className="primary-button compact" disabled={busy || !session.secrets_available} onClick={onEnable}>Enable</button>
+            <button className="primary-button compact" disabled={busy || !session.secrets_available} onClick={onEnable}>{t("Enable")}</button>
           )}
         </div>
       </div>
@@ -234,6 +240,7 @@ function SecurityView({ session, busy, onEnable, onRegenerate, onDisable }: Secu
 }
 
 function TOTPSetupDialog({ preparation, onClose, onEnabled }: { preparation: TOTPPreparation; onClose: () => void; onEnabled: (codes: string[]) => void }) {
+  const { t } = useI18n();
   const [qrCode, setQRCode] = useState<string>();
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
@@ -263,16 +270,16 @@ function TOTPSetupDialog({ preparation, onClose, onEnabled }: { preparation: TOT
   }
 
   return (
-    <Modal title="Enable two-factor authentication" onClose={onClose}>
+    <Modal title={t("Enable two-factor authentication")} onClose={onClose}>
       <div className="totp-layout">
-        <div className="qr-frame">{qrCode ? <img src={qrCode} alt="TOTP QR code" /> : <span>Generating...</span>}</div>
+        <div className="qr-frame">{qrCode ? <img src={qrCode} alt={t("TOTP QR code")} /> : <span>{t("Generating...")}</span>}</div>
         <code className="secret-value">{preparation.secret}</code>
       </div>
-      <Field label="Authentication code" value={code} onChange={setCode} autoComplete="one-time-code" autoFocus />
-      <FormError message={error} />
+      <Field label={t("Authentication code")} value={code} onChange={setCode} autoComplete="one-time-code" autoFocus />
+      <FormError message={error !== undefined ? t(error) : undefined} />
       <div className="dialog-actions">
-        <button className="quiet-button" onClick={onClose}>Cancel</button>
-        <button className="primary-button compact" disabled={busy || code.length !== 6} onClick={submit}>{busy ? "Enabling..." : "Enable"}</button>
+        <button className="quiet-button" onClick={onClose}>{t("Cancel")}</button>
+        <button className="primary-button compact" disabled={busy || code.length !== 6} onClick={submit}>{busy ? t("Enabling...") : t("Enable")}</button>
       </div>
     </Modal>
   );
@@ -284,6 +291,7 @@ function SensitiveActionDialog({ action, onClose, onRecoveryCodes, onDisabled }:
   onRecoveryCodes: (codes: string[]) => void;
   onDisabled: () => void;
 }) {
+  const { t } = useI18n();
   const [password, setPassword] = useState("");
   const [secondFactor, setSecondFactor] = useState("");
   const [busy, setBusy] = useState(false);
@@ -308,16 +316,16 @@ function SensitiveActionDialog({ action, onClose, onRecoveryCodes, onDisabled }:
   }
 
   return (
-    <Modal title={action === "disable" ? "Disable two-factor authentication" : "Generate new recovery codes"} onClose={onClose}>
+    <Modal title={action === "disable" ? t("Disable two-factor authentication") : t("Generate new recovery codes")} onClose={onClose}>
       <div className="dialog-fields">
-        <Field label="Password" value={password} onChange={setPassword} type="password" autoComplete="current-password" />
-        <Field label="Authentication or recovery code" value={secondFactor} onChange={setSecondFactor} autoComplete="one-time-code" />
+        <Field label={t("Password")} value={password} onChange={setPassword} type="password" autoComplete="current-password" />
+        <Field label={t("Authentication or recovery code")} value={secondFactor} onChange={setSecondFactor} autoComplete="one-time-code" />
       </div>
-      <FormError message={error} />
+      <FormError message={error !== undefined ? t(error) : undefined} />
       <div className="dialog-actions">
-        <button className="quiet-button" onClick={onClose}>Cancel</button>
+        <button className="quiet-button" onClick={onClose}>{t("Cancel")}</button>
         <button className={action === "disable" ? "danger-button" : "primary-button compact"} disabled={busy} onClick={submit}>
-          {busy ? "Saving..." : action === "disable" ? "Disable" : "Generate"}
+          {busy ? t("Saving...") : action === "disable" ? t("Disable") : t("Generate")}
         </button>
       </div>
     </Modal>
@@ -325,6 +333,7 @@ function SensitiveActionDialog({ action, onClose, onRecoveryCodes, onDisabled }:
 }
 
 function RecoveryCodesDialog({ codes, onClose }: { codes: string[]; onClose: () => void }) {
+  const { t } = useI18n();
   const [copied, setCopied] = useState(false);
 
   async function copy() {
@@ -337,11 +346,11 @@ function RecoveryCodesDialog({ codes, onClose }: { codes: string[]; onClose: () 
   }
 
   return (
-    <Modal title="Recovery codes" onClose={onClose} dismissible={false}>
+    <Modal title={t("Recovery codes")} onClose={onClose} dismissible={false}>
       <div className="recovery-grid">{codes.map((code) => <code key={code}>{code}</code>)}</div>
       <div className="dialog-actions">
-        <button className="secondary-button" onClick={copy}>{copied ? "Copied" : "Copy"}</button>
-        <button className="primary-button compact" onClick={onClose}>Done</button>
+        <button className="secondary-button" onClick={copy}>{copied ? t("Copied") : t("Copy")}</button>
+        <button className="primary-button compact" onClick={onClose}>{t("Done")}</button>
       </div>
     </Modal>
   );

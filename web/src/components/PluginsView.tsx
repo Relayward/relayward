@@ -12,6 +12,7 @@ import {
   type PluginInstallation,
   type PluginReleaseCandidate,
 } from "../api";
+import { useI18n } from "../i18n";
 import { FormError } from "./AuthScreen";
 import { Modal } from "./Modal";
 import { PluginFrame, type PluginNavigationTarget } from "./PluginFrame";
@@ -20,6 +21,7 @@ import { PluginInstancesView } from "./PluginInstancesView";
 type PluginTab = "installations" | "instances";
 
 export function PluginsView({ onNavigate }: { onNavigate: (target: PluginNavigationTarget) => void }) {
+  const { t } = useI18n();
   const [tab, setTab] = useState<PluginTab>("installations");
   const [openedPlugin, setOpenedPlugin] = useState<PluginInstallation>();
 
@@ -29,10 +31,10 @@ export function PluginsView({ onNavigate }: { onNavigate: (target: PluginNavigat
   return (
     <section aria-labelledby="plugins-title">
       <div className="section-heading plugin-section-heading">
-        <div><p className="eyebrow">Extensions</p><h1 id="plugins-title">Plugins</h1></div>
-        <div className="segmented-control" aria-label="Plugin view">
-          <button className={tab === "installations" ? "active" : ""} onClick={() => setTab("installations")} type="button">Installations</button>
-          <button className={tab === "instances" ? "active" : ""} onClick={() => setTab("instances")} type="button">Node instances</button>
+        <div><p className="eyebrow">{t("Extensions")}</p><h1 id="plugins-title">{t("Plugins")}</h1></div>
+        <div className="segmented-control" aria-label={t("Plugin view")}>
+          <button className={tab === "installations" ? "active" : ""} onClick={() => setTab("installations")} type="button">{t("Installations")}</button>
+          <button className={tab === "instances" ? "active" : ""} onClick={() => setTab("instances")} type="button">{t("Node instances")}</button>
         </div>
       </div>
       {tab === "installations" ? <PluginInstallationsView onOpen={setOpenedPlugin} /> : <PluginInstancesView embedded />}
@@ -41,6 +43,7 @@ export function PluginsView({ onNavigate }: { onNavigate: (target: PluginNavigat
 }
 
 function PluginInstallationsView({ onOpen }: { onOpen: (plugin: PluginInstallation) => void }) {
+  const { t } = useI18n();
   const [items, setItems] = useState<PluginInstallation[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string>();
@@ -76,40 +79,40 @@ function PluginInstallationsView({ onOpen }: { onOpen: (plugin: PluginInstallati
   return (
     <>
       <div className="subsection-actions">
-        <FormError message={error} />
+        <FormError message={error !== undefined ? t(error) : undefined} />
         <button className="primary-button compact button-with-icon" onClick={() => setInstalling(true)} type="button">
-          <PackagePlus size={17} />Install plugin
+          <PackagePlus size={17} />{t("Install plugin")}
         </button>
       </div>
       <div className="table-frame">
         <table className="resource-table plugin-installation-table">
-          <thead><tr><th>Plugin</th><th>Kind</th><th>Version</th><th>State</th><th>Health</th><th>Permissions</th><th>Actions</th></tr></thead>
+          <thead><tr><th>{t("Plugin")}</th><th>{t("Kind")}</th><th>{t("Version")}</th><th>{t("State")}</th><th>{t("Health")}</th><th>{t("Permissions")}</th><th>{t("Actions")}</th></tr></thead>
           <tbody>
-            {loading ? <tr><td colSpan={7} className="empty-cell">Loading...</td></tr> : null}
-            {!loading && items.length === 0 ? <tr><td colSpan={7} className="empty-cell">No plugins are installed.</td></tr> : null}
+            {loading ? <tr><td colSpan={7} className="empty-cell">{t("Loading...")}</td></tr> : null}
+            {!loading && items.length === 0 ? <tr><td colSpan={7} className="empty-cell">{t("No plugins are installed.")}</td></tr> : null}
             {items.map((item) => {
               const hasUI = item.manifest.artifacts.some((artifact) => artifact.role === "ui");
               return (
                 <tr key={item.plugin_id}>
                   <td><span className="plugin-identity"><strong>{item.manifest.name}</strong><small>{item.plugin_id}</small></span></td>
-                  <td className="secondary-cell">{label(item.kind)}</td>
-                  <td><span className="plugin-version-cell"><strong>{item.active_version}</strong>{item.previous_version ? <small>Previous {item.previous_version}</small> : null}</span></td>
-                  <td><Status value={label(item.state)} tone={installationStateTone(item.state)} /></td>
-                  <td><Status value={label(item.health)} tone={item.health === "healthy" ? "ok" : item.health === "unhealthy" ? "error" : "muted"} /></td>
+                  <td className="secondary-cell">{t(label(item.kind))}</td>
+                  <td><span className="plugin-version-cell"><strong>{item.active_version}</strong>{item.previous_version ? <small>{t("Previous {version}", { version: item.previous_version })}</small> : null}</span></td>
+                  <td><Status value={t(label(item.state))} tone={installationStateTone(item.state)} /></td>
+                  <td><Status value={t(label(item.health))} tone={item.health === "healthy" ? "ok" : item.health === "unhealthy" ? "error" : "muted"} /></td>
                   <td className="secondary-cell">{item.approved_permissions.length}</td>
                   <td className="table-actions">
                     {hasUI ? (
-                      <button className="icon-button" aria-label={`Open ${item.manifest.name}`} title="Open plugin" onClick={() => onOpen(item)} type="button">
+                      <button className="icon-button" aria-label={t("Open {name}", { name: item.manifest.name })} title={t("Open plugin")} onClick={() => onOpen(item)} type="button">
                         <ExternalLink size={17} />
                       </button>
                     ) : null}
-                    <button className="icon-button" aria-label={`Upgrade ${item.manifest.name}`} title="Check for upgrade" onClick={() => setUpgrading(item)} type="button">
+                    <button className="icon-button" aria-label={t("Upgrade {name}", { name: item.manifest.name })} title={t("Check for upgrade")} onClick={() => setUpgrading(item)} type="button">
                       <RefreshCw size={17} />
                     </button>
-                    <button className="icon-button" aria-label={`Replace GitHub token for ${item.manifest.name}`} title="Replace GitHub token" onClick={() => setReplacingToken(item)} type="button">
+                    <button className="icon-button" aria-label={t("Replace GitHub token for {name}", { name: item.manifest.name })} title={t("Replace GitHub token")} onClick={() => setReplacingToken(item)} type="button">
                       <KeyRound size={17} />
                     </button>
-                    <button className="icon-button icon-button--danger" aria-label={`Uninstall ${item.manifest.name}`} title="Uninstall plugin" onClick={() => setRemoving(item)} type="button">
+                    <button className="icon-button icon-button--danger" aria-label={t("Uninstall {name}", { name: item.manifest.name })} title={t("Uninstall plugin")} onClick={() => setRemoving(item)} type="button">
                       <Trash2 size={17} />
                     </button>
                   </td>
@@ -137,6 +140,7 @@ function PluginInstallationsView({ onOpen }: { onOpen: (plugin: PluginInstallati
 }
 
 function PluginTokenDialog({ plugin, onClose }: { plugin: PluginInstallation; onClose: () => void }) {
+  const { t } = useI18n();
   const [token, setToken] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
@@ -155,16 +159,16 @@ function PluginTokenDialog({ plugin, onClose }: { plugin: PluginInstallation; on
   }
 
   return (
-    <Modal title={`Replace token for ${plugin.manifest.name}`} onClose={onClose}>
+    <Modal title={t("Replace token for {name}", { name: plugin.manifest.name })} onClose={onClose}>
       <form onSubmit={save}>
         <label className="field">
-          <span>GitHub token</span>
+          <span>{t("GitHub token")}</span>
           <input value={token} onChange={(event) => setToken(event.target.value)} type="password" autoComplete="off" required autoFocus />
         </label>
-        <FormError message={error} />
+        <FormError message={error !== undefined ? t(error) : undefined} />
         <div className="dialog-actions">
-          <button className="quiet-button" onClick={onClose} type="button">Cancel</button>
-          <button className="primary-button compact" disabled={busy || token.trim() === ""} type="submit">{busy ? "Saving..." : "Replace"}</button>
+          <button className="quiet-button" onClick={onClose} type="button">{t("Cancel")}</button>
+          <button className="primary-button compact" disabled={busy || token.trim() === ""} type="submit">{busy ? t("Saving...") : t("Replace")}</button>
         </div>
       </form>
     </Modal>
@@ -176,6 +180,7 @@ function PluginReleaseDialog({ existing, onClose, onSaved }: {
   onClose: () => void;
   onSaved: (plugin: PluginInstallation) => void;
 }) {
+  const { t } = useI18n();
   const [repository, setRepository] = useState(existing?.repository ?? "");
   const [version, setVersion] = useState("");
   const [token, setToken] = useState("");
@@ -238,26 +243,26 @@ function PluginReleaseDialog({ existing, onClose, onSaved }: {
   }
 
   return (
-    <Modal title={existing === undefined ? "Install plugin" : `Upgrade ${existing.manifest.name}`} onClose={onClose} width="wide">
+    <Modal title={existing === undefined ? t("Install plugin") : t("Upgrade {name}", { name: existing.manifest.name })} onClose={onClose} width="wide">
       <form onSubmit={inspect}>
         <div className="dialog-fields">
           <label className="field">
-            <span>GitHub repository</span>
+            <span>{t("GitHub repository")}</span>
             <input value={repository} onChange={(event) => changeSource(() => setRepository(event.target.value))} disabled={existing !== undefined} placeholder="https://github.com/owner/repository" required />
           </label>
           <div className="form-grid">
             <label className="field">
-              <span>Version</span>
-              <input value={version} onChange={(event) => changeSource(() => setVersion(event.target.value))} placeholder="Latest stable release" />
+              <span>{t("Version")}</span>
+              <input value={version} onChange={(event) => changeSource(() => setVersion(event.target.value))} placeholder={t("Latest stable release")} />
             </label>
             <label className="field">
-              <span>GitHub token</span>
-              <input value={token} onChange={(event) => changeSource(() => setToken(event.target.value))} type="password" autoComplete="off" placeholder={existing === undefined ? "Public repository" : "Use saved token"} />
+              <span>{t("GitHub token")}</span>
+              <input value={token} onChange={(event) => changeSource(() => setToken(event.target.value))} type="password" autoComplete="off" placeholder={existing === undefined ? t("Public repository") : t("Use saved token")} />
             </label>
           </div>
         </div>
         <div className="dialog-actions plugin-inspect-actions">
-          <button className="secondary-button button-with-icon" disabled={busy} type="submit"><RefreshCw size={16} />{busy ? "Checking..." : "Check release"}</button>
+          <button className="secondary-button button-with-icon" disabled={busy} type="submit"><RefreshCw size={16} />{busy ? t("Checking...") : t("Check release")}</button>
         </div>
       </form>
       {candidate ? (
@@ -266,8 +271,8 @@ function PluginReleaseDialog({ existing, onClose, onSaved }: {
             <div><strong>{candidate.manifest.name}</strong><small>{candidate.manifest.id}</small></div>
             <span>v{candidate.manifest.version}</span>
           </div>
-          <div className="permission-list" aria-label="Requested permissions">
-            {candidate.manifest.permissions.length === 0 ? <p>No kernel permissions requested.</p> : null}
+          <div className="permission-list" aria-label={t("Requested permissions")}>
+            {candidate.manifest.permissions.length === 0 ? <p>{t("No kernel permissions requested.")}</p> : null}
             {candidate.manifest.permissions.map((permission) => (
               <label key={permission.name} className="permission-row">
                 <input
@@ -285,11 +290,11 @@ function PluginReleaseDialog({ existing, onClose, onSaved }: {
           </div>
         </div>
       ) : null}
-      <FormError message={error} />
+      <FormError message={error !== undefined ? t(error) : undefined} />
       <div className="dialog-actions">
-        <button className="quiet-button" onClick={onClose} type="button">Cancel</button>
+        <button className="quiet-button" onClick={onClose} type="button">{t("Cancel")}</button>
         <button className="primary-button compact" disabled={busy || candidate === undefined} onClick={save} type="button">
-          {busy ? "Saving..." : existing === undefined ? "Install" : "Upgrade"}
+          {busy ? t("Saving...") : existing === undefined ? t("Install") : t("Upgrade")}
         </button>
       </div>
     </Modal>
@@ -301,6 +306,7 @@ function PluginUninstallDialog({ plugin, onClose, onRemoved }: {
   onClose: () => void;
   onRemoved: () => void;
 }) {
+  const { t } = useI18n();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
 
@@ -317,12 +323,12 @@ function PluginUninstallDialog({ plugin, onClose, onRemoved }: {
   }
 
   return (
-    <Modal title="Uninstall plugin" onClose={onClose}>
+    <Modal title={t("Uninstall plugin")} onClose={onClose}>
       <p className="confirmation-name">{plugin.manifest.name}</p>
-      <FormError message={error} />
+      <FormError message={error !== undefined ? t(error) : undefined} />
       <div className="dialog-actions">
-        <button className="quiet-button" onClick={onClose} type="button">Cancel</button>
-        <button className="danger-button" disabled={busy} onClick={remove} type="button">{busy ? "Uninstalling..." : "Uninstall"}</button>
+        <button className="quiet-button" onClick={onClose} type="button">{t("Cancel")}</button>
+        <button className="danger-button" disabled={busy} onClick={remove} type="button">{busy ? t("Uninstalling...") : t("Uninstall")}</button>
       </div>
     </Modal>
   );

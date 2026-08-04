@@ -44,6 +44,10 @@ button:disabled {
   text-align: center;
 }
 
+.error-page {
+  position: relative;
+}
+
 .error-page h1,
 .error-page p {
   margin: 0;
@@ -86,6 +90,7 @@ button:disabled {
   border-radius: 6px;
   box-shadow: 0 14px 34px rgba(25, 32, 38, 0.08);
   padding: 32px;
+  position: relative;
   width: min(100%, 420px);
 }
 
@@ -735,6 +740,36 @@ button:disabled {
   width: 1px;
 }
 
+.language-switcher {
+  align-items: center;
+  color: #667078;
+  display: inline-flex;
+  gap: 5px;
+}
+
+.language-switcher select {
+  appearance: auto;
+  background: transparent;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+  min-width: 92px;
+  padding: 4px 2px;
+  width: auto;
+}
+
+.language-switcher select:focus-visible {
+  outline: 2px solid #16784b;
+  outline-offset: 2px;
+}
+
+.auth-language-switcher,
+.page-language-switcher {
+  position: absolute;
+  right: 20px;
+  top: 20px;
+}
+
 .plugin-identity {
   display: grid;
   gap: 3px;
@@ -995,6 +1030,10 @@ button:disabled {
   display: flex;
   gap: 10px;
   height: 64px;
+}
+
+.subscription-header .language-switcher {
+  margin-left: auto;
 }
 
 .subscription-summary {
@@ -1265,6 +1304,28 @@ button:disabled {
 }
 
 @media (max-width: 440px) {
+  .dashboard-header {
+    padding: 0 10px;
+  }
+
+  .header-actions {
+    gap: 5px;
+  }
+
+  .dashboard-sign-out {
+    min-height: 34px;
+    padding: 0;
+    width: 34px;
+  }
+
+  .dashboard-sign-out span {
+    display: none;
+  }
+
+  .dashboard-header .language-switcher select {
+    min-width: 86px;
+  }
+
   .auth-panel {
     padding: 24px 20px;
   }

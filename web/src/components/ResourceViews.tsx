@@ -22,10 +22,12 @@ import {
   type User,
   type UserInput,
 } from "../api";
+import { useI18n } from "../i18n";
 import { Field, FormError } from "./AuthScreen";
 import { Modal } from "./Modal";
 
 export function NodesView() {
+  const { t } = useI18n();
   const [items, setItems] = useState<Node[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string>();
@@ -75,34 +77,34 @@ export function NodesView() {
 
   return (
     <section aria-labelledby="nodes-title">
-      <ResourceHeading eyebrow="Infrastructure" title="Nodes" id="nodes-title" onAdd={() => setEditing("new")} />
-      <ResourceTable headers={["Name", "Address", "Agent", "Version", "Policy", "Update", "State", "Actions"]} loading={loading} empty="No nodes have been created." error={error}>
+      <ResourceHeading eyebrow={t("Infrastructure")} title={t("Nodes")} id="nodes-title" onAdd={() => setEditing("new")} />
+      <ResourceTable headers={["Name", "Address", "Agent", "Version", "Policy", "Update", "State", "Actions"].map((value) => t(value))} loading={loading} empty={t("No nodes have been created.")} error={error}>
         {items.map((node) => (
           <tr key={node.id}>
-            <td data-label="Name"><strong>{node.name}</strong></td>
-            <td data-label="Address" className="secondary-cell">{node.public_address || "Not set"}</td>
-            <td data-label="Agent"><Status value={agentStatusLabel(node.agent_status)} tone={agentStatusTone(node.agent_status)} /></td>
-            <td data-label="Version" className="secondary-cell">{node.agent_version || "Not reported"}</td>
-            <td data-label="Policy"><NodePolicyStatus node={node} /></td>
-            <td data-label="Update"><AgentUpdateStatus value={updates[node.id]} /></td>
-            <td data-label="State"><Status value={node.enabled ? "Enabled" : "Disabled"} tone={node.enabled ? "ok" : "muted"} /></td>
+            <td data-label={t("Name")}><strong>{node.name}</strong></td>
+            <td data-label={t("Address")} className="secondary-cell">{node.public_address || t("Not set")}</td>
+            <td data-label={t("Agent")}><Status value={t(agentStatusLabel(node.agent_status))} tone={agentStatusTone(node.agent_status)} /></td>
+            <td data-label={t("Version")} className="secondary-cell">{node.agent_version || t("Not reported")}</td>
+            <td data-label={t("Policy")}><NodePolicyStatus node={node} /></td>
+            <td data-label={t("Update")}><AgentUpdateStatus value={updates[node.id]} /></td>
+            <td data-label={t("State")}><Status value={node.enabled ? t("Enabled") : t("Disabled")} tone={node.enabled ? "ok" : "muted"} /></td>
             <td className="table-actions">
-              <IconAction label="Create registration token" onClick={() => issueToken(node)}><KeyRound size={17} /></IconAction>
+              <IconAction label={t("Create registration token")} onClick={() => issueToken(node)}><KeyRound size={17} /></IconAction>
               <IconAction
-                label="Update Agent"
-                title={agentUpdateUnavailable(node)}
+                label={t("Update Agent")}
+                title={translatedOptional(agentUpdateUnavailable(node), t)}
                 disabled={agentUpdateUnavailable(node) !== undefined}
                 onClick={() => setUpdatingNodeID(node.id)}
               ><RefreshCw size={17} /></IconAction>
               <IconAction
-                label="Revoke Agent credential"
-                title={node.registered_at === null ? "No active Agent credential" : undefined}
+                label={t("Revoke Agent credential")}
+                title={node.registered_at === null ? t("No active Agent credential") : undefined}
                 danger
                 disabled={node.registered_at === null}
                 onClick={() => setRevoking(node)}
               ><ShieldX size={17} /></IconAction>
-              <IconAction label="Edit node" onClick={() => setEditing(node)}><Pencil size={17} /></IconAction>
-              <IconAction label="Delete node" danger onClick={() => setDeleting(node)}><Trash2 size={17} /></IconAction>
+              <IconAction label={t("Edit node")} onClick={() => setEditing(node)}><Pencil size={17} /></IconAction>
+              <IconAction label={t("Delete node")} danger onClick={() => setDeleting(node)}><Trash2 size={17} /></IconAction>
             </td>
           </tr>
         ))}
@@ -119,9 +121,9 @@ export function NodesView() {
       ) : null}
       {deleting ? (
         <ConfirmAction
-          title="Delete node"
+          title={t("Delete node")}
           name={deleting.name}
-          action="Delete"
+          action={t("Delete")}
           onClose={() => setDeleting(undefined)}
           onConfirm={async () => {
             await deleteNode(deleting.id);
@@ -132,9 +134,9 @@ export function NodesView() {
       ) : null}
       {revoking ? (
         <ConfirmAction
-          title="Revoke Agent credential"
+          title={t("Revoke Agent credential")}
           name={revoking.name}
-          action="Revoke"
+          action={t("Revoke")}
           onClose={() => setRevoking(undefined)}
           onConfirm={async () => {
             const node = await revokeNodeCredential(revoking.id);
@@ -157,6 +159,7 @@ export function NodesView() {
 }
 
 export function UsersView() {
+  const { t } = useI18n();
   const [items, setItems] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string>();
@@ -177,16 +180,16 @@ export function UsersView() {
 
   return (
     <section aria-labelledby="users-title">
-      <ResourceHeading eyebrow="Access" title="Users" id="users-title" onAdd={() => setEditing("new")} />
-      <ResourceTable headers={["Name", "Email", "Telegram", "Actions"]} loading={loading} empty="No users have been created." error={error}>
+      <ResourceHeading eyebrow={t("Access")} title={t("Users")} id="users-title" onAdd={() => setEditing("new")} />
+      <ResourceTable headers={["Name", "Email", "Telegram", "Actions"].map((value) => t(value))} loading={loading} empty={t("No users have been created.")} error={error}>
         {items.map((user) => (
           <tr key={user.id}>
-            <td data-label="Name"><strong>{user.display_name}</strong></td>
-            <td data-label="Email" className="secondary-cell">{user.email || "Not set"}</td>
-            <td data-label="Telegram" className="secondary-cell">{user.telegram || "Not set"}</td>
+            <td data-label={t("Name")}><strong>{user.display_name}</strong></td>
+            <td data-label={t("Email")} className="secondary-cell">{user.email || t("Not set")}</td>
+            <td data-label={t("Telegram")} className="secondary-cell">{user.telegram || t("Not set")}</td>
             <td className="table-actions">
-              <IconAction label="Edit user" onClick={() => setEditing(user)}><Pencil size={17} /></IconAction>
-              <IconAction label="Delete user" danger onClick={() => setDeleting(user)}><Trash2 size={17} /></IconAction>
+              <IconAction label={t("Edit user")} onClick={() => setEditing(user)}><Pencil size={17} /></IconAction>
+              <IconAction label={t("Delete user")} danger onClick={() => setDeleting(user)}><Trash2 size={17} /></IconAction>
             </td>
           </tr>
         ))}
@@ -203,9 +206,9 @@ export function UsersView() {
       ) : null}
       {deleting ? (
         <ConfirmAction
-          title="Delete user"
+          title={t("Delete user")}
           name={deleting.display_name}
-          action="Delete"
+          action={t("Delete")}
           onClose={() => setDeleting(undefined)}
           onConfirm={async () => {
             await deleteUser(deleting.id);
@@ -219,23 +222,25 @@ export function UsersView() {
 }
 
 function ResourceHeading({ eyebrow, title, id, onAdd }: { eyebrow: string; title: string; id: string; onAdd: () => void }) {
+  const { t } = useI18n();
   return (
     <div className="section-heading">
       <div><p className="eyebrow">{eyebrow}</p><h1 id={id}>{title}</h1></div>
-      <button className="primary-button compact button-with-icon" onClick={onAdd} type="button"><Plus size={17} />Add</button>
+      <button className="primary-button compact button-with-icon" onClick={onAdd} type="button"><Plus size={17} />{t("Add")}</button>
     </div>
   );
 }
 
 function ResourceTable({ headers, loading, empty, error, children }: { headers: string[]; loading: boolean; empty: string; error?: string; children: ReactNode }) {
+  const { t } = useI18n();
   return (
     <>
-      <FormError message={error} />
+      <FormError message={error !== undefined ? t(error) : undefined} />
       <div className="table-frame">
         <table className="resource-table">
           <thead><tr>{headers.map((header, index) => <th key={`${header}-${index}`}>{header}</th>)}</tr></thead>
           <tbody>
-            {loading ? <tr><td colSpan={headers.length} className="empty-cell">Loading...</td></tr> : children}
+            {loading ? <tr><td colSpan={headers.length} className="empty-cell">{t("Loading...")}</td></tr> : children}
             {!loading && !error && Array.isArray(children) && children.length === 0 ? <tr><td colSpan={headers.length} className="empty-cell">{empty}</td></tr> : null}
           </tbody>
         </table>
@@ -245,6 +250,7 @@ function ResourceTable({ headers, loading, empty, error, children }: { headers: 
 }
 
 function NodeDialog({ value, onClose, onSaved }: { value?: Node; onClose: () => void; onSaved: (node: Node) => void }) {
+  const { t } = useI18n();
   const [name, setName] = useState(value?.name ?? "");
   const [address, setAddress] = useState(value?.public_address ?? "");
   const [enabled, setEnabled] = useState(value?.enabled ?? true);
@@ -265,21 +271,22 @@ function NodeDialog({ value, onClose, onSaved }: { value?: Node; onClose: () => 
   }
 
   return (
-    <Modal title={value ? "Edit node" : "Add node"} onClose={onClose}>
+    <Modal title={value ? t("Edit node") : t("Add node")} onClose={onClose}>
       <form onSubmit={submit}>
         <div className="dialog-fields">
-          <Field label="Name" value={name} onChange={setName} autoFocus />
-          <Field label="Public address" value={address} onChange={setAddress} required={false} />
-          <label className="toggle-field"><input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} /><span>Enabled</span></label>
+          <Field label={t("Name")} value={name} onChange={setName} autoFocus />
+          <Field label={t("Public address")} value={address} onChange={setAddress} required={false} />
+          <label className="toggle-field"><input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} /><span>{t("Enabled")}</span></label>
         </div>
-        <FormError message={error} />
-        <DialogActions busy={busy} onClose={onClose} submitLabel={value ? "Save" : "Add node"} />
+        <FormError message={error !== undefined ? t(error) : undefined} />
+        <DialogActions busy={busy} onClose={onClose} submitLabel={value ? t("Save") : t("Add node")} />
       </form>
     </Modal>
   );
 }
 
 function UserDialog({ value, onClose, onSaved }: { value?: User; onClose: () => void; onSaved: (user: User) => void }) {
+  const { t } = useI18n();
   const [displayName, setDisplayName] = useState(value?.display_name ?? "");
   const [email, setEmail] = useState(value?.email ?? "");
   const [telegram, setTelegram] = useState(value?.telegram ?? "");
@@ -301,31 +308,33 @@ function UserDialog({ value, onClose, onSaved }: { value?: User; onClose: () => 
   }
 
   return (
-    <Modal title={value ? "Edit user" : "Add user"} onClose={onClose}>
+    <Modal title={value ? t("Edit user") : t("Add user")} onClose={onClose}>
       <form onSubmit={submit}>
         <div className="dialog-fields">
-          <Field label="Display name" value={displayName} onChange={setDisplayName} autoFocus />
-          <Field label="Email" value={email} onChange={setEmail} type="email" required={false} />
-          <Field label="Telegram" value={telegram} onChange={setTelegram} required={false} />
-          <label className="field"><span>Note</span><textarea value={note} onChange={(event) => setNote(event.target.value)} rows={4} /></label>
+          <Field label={t("Display name")} value={displayName} onChange={setDisplayName} autoFocus />
+          <Field label={t("Email")} value={email} onChange={setEmail} type="email" required={false} />
+          <Field label={t("Telegram")} value={telegram} onChange={setTelegram} required={false} />
+          <label className="field"><span>{t("Note")}</span><textarea value={note} onChange={(event) => setNote(event.target.value)} rows={4} /></label>
         </div>
-        <FormError message={error} />
-        <DialogActions busy={busy} onClose={onClose} submitLabel={value ? "Save" : "Add user"} />
+        <FormError message={error !== undefined ? t(error) : undefined} />
+        <DialogActions busy={busy} onClose={onClose} submitLabel={value ? t("Save") : t("Add user")} />
       </form>
     </Modal>
   );
 }
 
 function DialogActions({ busy, onClose, submitLabel }: { busy: boolean; onClose: () => void; submitLabel: string }) {
+  const { t } = useI18n();
   return (
     <div className="dialog-actions">
-      <button className="quiet-button" onClick={onClose} type="button">Cancel</button>
-      <button className="primary-button compact" disabled={busy} type="submit">{busy ? "Saving..." : submitLabel}</button>
+      <button className="quiet-button" onClick={onClose} type="button">{t("Cancel")}</button>
+      <button className="primary-button compact" disabled={busy} type="submit">{busy ? t("Saving...") : submitLabel}</button>
     </div>
   );
 }
 
 function ConfirmAction({ title, name, action, onClose, onConfirm }: { title: string; name: string; action: string; onClose: () => void; onConfirm: () => Promise<void> }) {
+  const { t } = useI18n();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   async function confirm() {
@@ -341,16 +350,17 @@ function ConfirmAction({ title, name, action, onClose, onConfirm }: { title: str
   return (
     <Modal title={title} onClose={onClose}>
       <p className="confirmation-name">{name}</p>
-      <FormError message={error} />
+      <FormError message={error !== undefined ? t(error) : undefined} />
       <div className="dialog-actions">
-        <button className="quiet-button" onClick={onClose} type="button">Cancel</button>
-        <button className="danger-button" disabled={busy} onClick={confirm} type="button">{busy ? "Working..." : action}</button>
+        <button className="quiet-button" onClick={onClose} type="button">{t("Cancel")}</button>
+        <button className="danger-button" disabled={busy} onClick={confirm} type="button">{busy ? t("Working...") : action}</button>
       </div>
     </Modal>
   );
 }
 
 function TokenDialog({ node, token, onClose }: { node: Node; token: NodeRegistrationToken; onClose: () => void }) {
+  const { t, formatDateTime } = useI18n();
   const [copied, setCopied] = useState(false);
   async function copy() {
     try {
@@ -361,12 +371,12 @@ function TokenDialog({ node, token, onClose }: { node: Node; token: NodeRegistra
     }
   }
   return (
-    <Modal title={`${node.name} registration token`} onClose={onClose} dismissible={false}>
+    <Modal title={t("{name} registration token", { name: node.name })} onClose={onClose} dismissible={false}>
       <code className="one-time-token">{token.token}</code>
-      <dl className="token-metadata"><dt>Expires</dt><dd>{new Date(token.expires_at).toLocaleString()}</dd></dl>
+      <dl className="token-metadata"><dt>{t("Expires")}</dt><dd>{formatDateTime(token.expires_at)}</dd></dl>
       <div className="dialog-actions">
-        <button className="secondary-button" onClick={copy} type="button">{copied ? "Copied" : "Copy"}</button>
-        <button className="primary-button compact" onClick={onClose} type="button">Done</button>
+        <button className="secondary-button" onClick={copy} type="button">{copied ? t("Copied") : t("Copy")}</button>
+        <button className="primary-button compact" onClick={onClose} type="button">{t("Done")}</button>
       </div>
     </Modal>
   );
@@ -378,6 +388,7 @@ function AgentUpdateDialog({ node, latest, onClose, onUpdated }: {
   onClose: () => void;
   onUpdated: (value: AgentUpdate) => void;
 }) {
+  const { t, formatDateTime } = useI18n();
   const [version, setVersion] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
@@ -399,29 +410,29 @@ function AgentUpdateDialog({ node, latest, onClose, onUpdated }: {
   }
 
   return (
-    <Modal title={`${node.name} Agent update`} onClose={onClose}>
+    <Modal title={t("{name} Agent update", { name: node.name })} onClose={onClose}>
       <dl className="agent-update-details">
-        <div><dt>Current version</dt><dd>{node.agent_version || "Not reported"}</dd></div>
+        <div><dt>{t("Current version")}</dt><dd>{node.agent_version || t("Not reported")}</dd></div>
         {latest ? (
           <>
-            <div><dt>Target version</dt><dd>{latest.version}</dd></div>
-            <div><dt>Status</dt><dd><Status value={agentUpdateStatusLabel(latest.status)} tone={agentUpdateStatusTone(latest.status)} /></dd></div>
-            <div><dt>Delivery attempts</dt><dd>{latest.attempts}</dd></div>
-            <div><dt>Last sent</dt><dd>{formatOptionalTime(latest.last_sent_at)}</dd></div>
-            <div><dt>Completed</dt><dd>{formatOptionalTime(latest.completed_at)}</dd></div>
-            <div><dt>Expires</dt><dd>{new Date(latest.expires_at).toLocaleString()}</dd></div>
+            <div><dt>{t("Target version")}</dt><dd>{latest.version}</dd></div>
+            <div><dt>{t("Status")}</dt><dd><Status value={t(agentUpdateStatusLabel(latest.status))} tone={agentUpdateStatusTone(latest.status)} /></dd></div>
+            <div><dt>{t("Delivery attempts")}</dt><dd>{latest.attempts}</dd></div>
+            <div><dt>{t("Last sent")}</dt><dd>{latest.last_sent_at ? formatDateTime(latest.last_sent_at) : t("Not yet")}</dd></div>
+            <div><dt>{t("Completed")}</dt><dd>{latest.completed_at ? formatDateTime(latest.completed_at) : t("Not yet")}</dd></div>
+            <div><dt>{t("Expires")}</dt><dd>{formatDateTime(latest.expires_at)}</dd></div>
           </>
         ) : null}
       </dl>
-      {latest?.problem ? <p className="agent-update-problem" role="alert">{latest.problem.message}</p> : null}
+      {latest?.problem ? <p className="agent-update-problem" role="alert">{t(latest.problem.message)}</p> : null}
       <form onSubmit={submit}>
         <div className="dialog-fields">
-          <Field label="Target version" value={version} onChange={setVersion} autoFocus disabled={pending || busy} />
+          <Field label={t("Target version")} value={version} onChange={setVersion} autoFocus disabled={pending || busy} />
         </div>
-        <FormError message={error} />
+        <FormError message={error !== undefined ? t(error) : undefined} />
         <div className="dialog-actions">
-          <button className="quiet-button" onClick={onClose} type="button">Close</button>
-          <button className="primary-button compact" disabled={pending || busy} type="submit">{busy ? "Queuing..." : "Queue update"}</button>
+          <button className="quiet-button" onClick={onClose} type="button">{t("Close")}</button>
+          <button className="primary-button compact" disabled={pending || busy} type="submit">{busy ? t("Queuing...") : t("Queue update")}</button>
         </div>
       </form>
     </Modal>
@@ -429,35 +440,37 @@ function AgentUpdateDialog({ node, latest, onClose, onUpdated }: {
 }
 
 function AgentUpdateStatus({ value }: { value: AgentUpdate | null | undefined }) {
-  if (!value) return <span className="secondary-cell">Never</span>;
+  const { t } = useI18n();
+  if (!value) return <span className="secondary-cell">{t("Never")}</span>;
   const detail = value.status === "pending"
-    ? (value.attempts === 0 ? "Waiting" : `${value.attempts} sent`)
-    : value.problem?.message;
+    ? (value.attempts === 0 ? t("Waiting") : t("{count} sent", { count: value.attempts }))
+    : value.problem ? t(value.problem.message) : undefined;
   return (
-    <span className="agent-update-cell" title={value.problem?.message}>
-      <Status value={agentUpdateStatusLabel(value.status)} tone={agentUpdateStatusTone(value.status)} />
+    <span className="agent-update-cell" title={value.problem ? t(value.problem.message) : undefined}>
+      <Status value={t(agentUpdateStatusLabel(value.status))} tone={agentUpdateStatusTone(value.status)} />
       {detail ? <small>{detail}</small> : null}
     </span>
   );
 }
 
 function NodePolicyStatus({ node }: { node: Node }) {
+  const { t } = useI18n();
   const policy = node.policy;
-  if (!policy) return <Status value="Not configured" tone="muted" />;
+  if (!policy) return <Status value={t("Not configured")} tone="muted" />;
   const label = policy.status === "applied"
-    ? `Applied ${policy.applied_generation}`
+    ? t("Applied {generation}", { generation: policy.applied_generation })
     : policy.status === "pending"
-      ? `Pending ${policy.applied_generation}/${policy.desired_generation}`
+      ? t("Pending {applied}/{desired}", { applied: policy.applied_generation, desired: policy.desired_generation })
       : policy.status === "not_configured"
-        ? "Not configured"
-        : policy.status.charAt(0).toUpperCase() + policy.status.slice(1);
+        ? t("Not configured")
+        : t(policy.status.charAt(0).toUpperCase() + policy.status.slice(1));
   const tone = policy.status === "applied" ? "ok"
     : policy.status === "failed" || policy.status === "unsupported" ? "error"
       : policy.status === "pending" ? "warning" : "muted";
   return (
-    <span className="agent-update-cell" title={policy.last_problem?.message}>
+    <span className="agent-update-cell" title={policy.last_problem ? t(policy.last_problem.message) : undefined}>
       <Status value={label} tone={tone} />
-      {policy.last_problem ? <small>{policy.last_problem.message}</small> : null}
+      {policy.last_problem ? <small>{t(policy.last_problem.message)}</small> : null}
     </span>
   );
 }
@@ -506,8 +519,8 @@ function agentUpdateUnavailable(node: Node): string | undefined {
   return undefined;
 }
 
-function formatOptionalTime(value: string | null) {
-  return value ? new Date(value).toLocaleString() : "Not yet";
+function translatedOptional(value: string | undefined, t: (message: string) => string): string | undefined {
+  return value === undefined ? undefined : t(value);
 }
 
 function byName(left: Node, right: Node) {

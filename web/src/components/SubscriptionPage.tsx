@@ -2,11 +2,13 @@ import { useEffect, useState } from "react";
 import { Download } from "lucide-react";
 
 import { APIError, getSubscription, type SubscriptionInfo } from "../api";
+import { LanguageSwitcher, useI18n } from "../i18n";
 
 const gibibyte = 1024 ** 3;
 const weekdays = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 
 export function SubscriptionPage({ token }: { token: string }) {
+  const { t, formatDateTime } = useI18n();
   const [subscription, setSubscription] = useState<SubscriptionInfo>();
   const [error, setError] = useState<string>();
 
@@ -21,7 +23,7 @@ export function SubscriptionPage({ token }: { token: string }) {
   }, [token]);
 
   if (error) {
-    return <main className="subscription-error"><span className="brand-mark">R</span><h1>Subscription unavailable</h1><p>{error}</p></main>;
+    return <main className="subscription-error"><LanguageSwitcher className="page-language-switcher" /><span className="brand-mark">R</span><h1>{t("Subscription unavailable")}</h1><p>{t(error)}</p></main>;
   }
   if (!subscription) {
     return <main className="subscription-loading"><span className="brand-mark">R</span><span>Relayward</span></main>;
@@ -29,23 +31,23 @@ export function SubscriptionPage({ token }: { token: string }) {
 
   return (
     <main className="subscription-page">
-      <header className="subscription-header"><span className="brand-mark brand-mark--small">R</span><strong>Relayward</strong></header>
+      <header className="subscription-header"><span className="brand-mark brand-mark--small">R</span><strong>Relayward</strong><LanguageSwitcher /></header>
       <section className="subscription-summary">
         <p className="eyebrow">{subscription.user_name}</p>
         <h1>{subscription.node_name}</h1>
-        <p className={`subscription-state subscription-state--${subscription.status}`}>{statusLabel(subscription.status)}</p>
+        <p className={`subscription-state subscription-state--${subscription.status}`}>{statusLabel(subscription.status, t)}</p>
         {subscription.node_address ? <p className="subscription-address">{subscription.node_address}</p> : null}
       </section>
-      <section className="subscription-details" aria-label="Subscription details">
-        <Detail label="Traffic quota" value={subscription.traffic_limit_bytes === null ? "Unlimited" : formatBytes(subscription.traffic_limit_bytes)} />
-        <Detail label="Traffic used" value={subscription.traffic_used_bytes === null ? "Unavailable" : formatBytes(subscription.traffic_used_bytes)} />
-        <Detail label="Reset" value={formatReset(subscription.reset)} />
-        <Detail label="Expires" value={subscription.expires_at ? new Date(subscription.expires_at).toLocaleString() : "Never"} />
+      <section className="subscription-details" aria-label={t("Subscription details")}>
+        <Detail label={t("Traffic quota")} value={subscription.traffic_limit_bytes === null ? t("Unlimited") : formatBytes(subscription.traffic_limit_bytes)} />
+        <Detail label={t("Traffic used")} value={subscription.traffic_used_bytes === null ? t("Unavailable") : formatBytes(subscription.traffic_used_bytes)} />
+        <Detail label={t("Reset")} value={formatReset(subscription.reset, t)} />
+        <Detail label={t("Expires")} value={subscription.expires_at ? formatDateTime(subscription.expires_at) : t("Never")} />
       </section>
-      {subscription.announcement ? <section className="subscription-announcement"><h2>Announcement</h2><p>{subscription.announcement}</p></section> : null}
+      {subscription.announcement ? <section className="subscription-announcement"><h2>{t("Announcement")}</h2><p>{subscription.announcement}</p></section> : null}
       <section className="subscription-services" aria-labelledby="services-title">
-        <h2 id="services-title">Services</h2>
-        {subscription.services.length === 0 ? <p className="empty-service">No services available.</p> : null}
+        <h2 id="services-title">{t("Services")}</h2>
+        {subscription.services.length === 0 ? <p className="empty-service">{t("No services available.")}</p> : null}
         {subscription.services.length > 0 ? (
           <ul>{subscription.services.map((service) => (
             <li key={`${service.plugin_id}/${service.service_id}`}>
@@ -56,7 +58,7 @@ export function SubscriptionPage({ token }: { token: string }) {
         ) : null}
       </section>
       {subscription.status === "active" && subscription.services.length > 0 ? (
-        <section className="subscription-downloads" aria-label="Downloads">
+        <section className="subscription-downloads" aria-label={t("Downloads")}>
           <DownloadLink href={downloadURL(token, "base64")} label="Base64" />
           <DownloadLink href={downloadURL(token, "mihomo.yaml")} label="Mihomo" />
           <DownloadLink href={downloadURL(token, "sing-box.json")} label="sing-box" />
@@ -70,13 +72,13 @@ function Detail({ label, value }: { label: string; value: string }) {
   return <div><span>{label}</span><strong>{value}</strong></div>;
 }
 
-function statusLabel(status: SubscriptionInfo["status"]): string {
+function statusLabel(status: SubscriptionInfo["status"], t: (message: string) => string): string {
   switch (status) {
-    case "active": return "Active";
-    case "disabled": return "Disabled";
-    case "expired": return "Expired";
-    case "node_disabled": return "Node disabled";
-    case "quota_exceeded": return "Quota reached";
+    case "active": return t("Active");
+    case "disabled": return t("Disabled");
+    case "expired": return t("Expired");
+    case "node_disabled": return t("Node disabled");
+    case "quota_exceeded": return t("Quota reached");
   }
 }
 
@@ -93,13 +95,13 @@ function formatBytes(value: number): string {
   return `${Number.isInteger(gib) ? gib : gib.toFixed(2)} GiB`;
 }
 
-function formatReset(reset: SubscriptionInfo["reset"]): string {
+function formatReset(reset: SubscriptionInfo["reset"], t: (message: string, values?: Record<string, string | number>) => string): string {
   switch (reset.kind) {
-    case "never": return "Never";
-    case "daily": return `Daily / ${reset.timezone}`;
-    case "weekly": return `${weekdays[(reset.value ?? 1) - 1] ?? "Weekly"} / ${reset.timezone}`;
-    case "monthly": return `Day ${reset.value} / ${reset.timezone}`;
-    case "interval_days": return `Every ${reset.value} days / ${reset.timezone}`;
+    case "never": return t("Never");
+    case "daily": return t("Daily / {timezone}", { timezone: reset.timezone });
+    case "weekly": return t("{weekday} / {timezone}", { weekday: t(weekdays[(reset.value ?? 1) - 1] ?? "Monday"), timezone: reset.timezone });
+    case "monthly": return t("Day {day} / {timezone}", { day: reset.value ?? 1, timezone: reset.timezone });
+    case "interval_days": return t("Every {days} days / {timezone}", { days: reset.value ?? 1, timezone: reset.timezone });
   }
 }
 

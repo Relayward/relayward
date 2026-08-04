@@ -22,12 +22,15 @@ import {
   type User,
   type ServiceBinding,
 } from "../api";
+import { useI18n } from "../i18n";
 import { FormError } from "./AuthScreen";
 import { Modal } from "./Modal";
 
 const gibibyte = 1024 ** 3;
+type Translate = ReturnType<typeof useI18n>["t"];
 
 export function AuthorizationsView() {
+  const { t, formatDate } = useI18n();
   const [items, setItems] = useState<Authorization[]>([]);
   const [nodes, setNodes] = useState<Node[]>([]);
   const [users, setUsers] = useState<User[]>([]);
@@ -61,36 +64,36 @@ export function AuthorizationsView() {
   return (
     <section aria-labelledby="authorizations-title">
       <div className="section-heading">
-        <div><p className="eyebrow">Access</p><h1 id="authorizations-title">Authorizations</h1></div>
+        <div><p className="eyebrow">{t("Access")}</p><h1 id="authorizations-title">{t("Authorizations")}</h1></div>
         <button
           className="primary-button compact button-with-icon"
           disabled={!canAdd}
           onClick={() => setEditing("new")}
-          title={canAdd ? "Add authorization" : "A node and user are required"}
+          title={canAdd ? t("Add authorization") : t("A node and user are required")}
           type="button"
-        ><Plus size={17} />Add</button>
+        ><Plus size={17} />{t("Add")}</button>
       </div>
-      <FormError message={error} />
+      <FormError message={error !== undefined ? t(error) : undefined} />
       <div className="table-frame">
         <table className="resource-table authorization-table">
-          <thead><tr><th>User</th><th>Node</th><th>Traffic</th><th>Reset</th><th>Expiry</th><th>Enforcement</th><th>IP slots</th><th>Actions</th></tr></thead>
+          <thead><tr><th>{t("User")}</th><th>{t("Node")}</th><th>{t("Traffic")}</th><th>{t("Reset")}</th><th>{t("Expiry")}</th><th>{t("Enforcement")}</th><th>{t("IP slots")}</th><th>{t("Actions")}</th></tr></thead>
           <tbody>
-            {loading ? <tr><td colSpan={8} className="empty-cell">Loading...</td></tr> : null}
-            {!loading && items.length === 0 ? <tr><td colSpan={8} className="empty-cell">No authorizations have been created.</td></tr> : null}
+            {loading ? <tr><td colSpan={8} className="empty-cell">{t("Loading...")}</td></tr> : null}
+            {!loading && items.length === 0 ? <tr><td colSpan={8} className="empty-cell">{t("No authorizations have been created.")}</td></tr> : null}
             {items.map((authorization) => (
               <tr key={authorization.id}>
-                <td><strong>{userNames.get(authorization.user_id) ?? "Unknown user"}</strong></td>
-                <td className="secondary-cell">{nodeNames.get(authorization.node_id) ?? "Unknown node"}</td>
+                <td><strong>{userNames.get(authorization.user_id) ?? t("Unknown user")}</strong></td>
+                <td className="secondary-cell">{nodeNames.get(authorization.node_id) ?? t("Unknown node")}</td>
                 <td><TrafficUsage value={authorization} /></td>
-                <td className="secondary-cell">{formatReset(authorization)}</td>
-                <td className="secondary-cell">{authorization.expires_at ? new Date(authorization.expires_at).toLocaleDateString() : "Never"}</td>
+                <td className="secondary-cell">{formatReset(authorization, t)}</td>
+                <td className="secondary-cell">{authorization.expires_at ? formatDate(authorization.expires_at) : t("Never")}</td>
                 <td><AuthorizationStatus value={authorization} /></td>
                 <td><IPStatus value={authorization} /></td>
                 <td className="table-actions">
-                  <IconAction label="Manage services" onClick={() => setServicesFor(authorization)}><ListChecks size={17} /></IconAction>
-                  <IconAction label="Rotate subscription token" onClick={() => setRotating(authorization)}><KeyRound size={17} /></IconAction>
-                  <IconAction label="Edit authorization" onClick={() => setEditing(authorization)}><Pencil size={17} /></IconAction>
-                  <IconAction label="Delete authorization" danger onClick={() => setDeleting(authorization)}><Trash2 size={17} /></IconAction>
+                  <IconAction label={t("Manage services")} onClick={() => setServicesFor(authorization)}><ListChecks size={17} /></IconAction>
+                  <IconAction label={t("Rotate subscription token")} onClick={() => setRotating(authorization)}><KeyRound size={17} /></IconAction>
+                  <IconAction label={t("Edit authorization")} onClick={() => setEditing(authorization)}><Pencil size={17} /></IconAction>
+                  <IconAction label={t("Delete authorization")} danger onClick={() => setDeleting(authorization)}><Trash2 size={17} /></IconAction>
                 </td>
               </tr>
             ))}
@@ -112,9 +115,9 @@ export function AuthorizationsView() {
       ) : null}
       {deleting ? (
         <ConfirmationDialog
-          title="Delete authorization"
-          subject={`${userNames.get(deleting.user_id) ?? "Unknown user"} / ${nodeNames.get(deleting.node_id) ?? "Unknown node"}`}
-          action="Delete"
+          title={t("Delete authorization")}
+          subject={`${userNames.get(deleting.user_id) ?? t("Unknown user")} / ${nodeNames.get(deleting.node_id) ?? t("Unknown node")}`}
+          action={t("Delete")}
           danger
           onClose={() => setDeleting(undefined)}
           onConfirm={async () => {
@@ -126,9 +129,9 @@ export function AuthorizationsView() {
       ) : null}
       {rotating ? (
         <ConfirmationDialog
-          title="Rotate subscription token"
-          subject={`${userNames.get(rotating.user_id) ?? "Unknown user"} / ${nodeNames.get(rotating.node_id) ?? "Unknown node"}`}
-          action="Rotate"
+          title={t("Rotate subscription token")}
+          subject={`${userNames.get(rotating.user_id) ?? t("Unknown user")} / ${nodeNames.get(rotating.node_id) ?? t("Unknown node")}`}
+          action={t("Rotate")}
           onClose={() => setRotating(undefined)}
           onConfirm={async () => {
             const result = await rotateSubscriptionToken(rotating.id);
@@ -149,6 +152,7 @@ export function AuthorizationsView() {
 }
 
 function ServicesDialog({ authorization, onClose }: { authorization: Authorization; onClose: () => void }) {
+  const { t } = useI18n();
   const [services, setServices] = useState<PluginService[]>([]);
   const [bindings, setBindings] = useState<ServiceBinding[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -204,10 +208,10 @@ function ServicesDialog({ authorization, onClose }: { authorization: Authorizati
   }
 
   return (
-    <Modal title="Manage services" onClose={onClose}>
+    <Modal title={t("Manage services")} onClose={onClose}>
       <div className="service-picker">
-        {loading ? <p className="empty-service">Loading...</p> : null}
-        {!loading && services.length === 0 ? <p className="empty-service">No services are available on this node.</p> : null}
+        {loading ? <p className="empty-service">{t("Loading...")}</p> : null}
+        {!loading && services.length === 0 ? <p className="empty-service">{t("No services are available on this node.")}</p> : null}
         {services.map((service) => {
           const key = bindingKey(service);
           return (
@@ -218,10 +222,10 @@ function ServicesDialog({ authorization, onClose }: { authorization: Authorizati
           );
         })}
       </div>
-      <FormError message={error} />
+      <FormError message={error !== undefined ? t(error) : undefined} />
       <div className="dialog-actions">
-        <button className="quiet-button" onClick={onClose} type="button">Cancel</button>
-        <button className="primary-button compact" disabled={busy || loading} onClick={save} type="button">{busy ? "Saving..." : "Save"}</button>
+        <button className="quiet-button" onClick={onClose} type="button">{t("Cancel")}</button>
+        <button className="primary-button compact" disabled={busy || loading} onClick={save} type="button">{busy ? t("Saving...") : t("Save")}</button>
       </div>
     </Modal>
   );
@@ -238,6 +242,7 @@ function AuthorizationDialog({ value, nodes, users, onClose, onSaved }: {
   onClose: () => void;
   onSaved: (authorization: Authorization, token?: string) => void;
 }) {
+  const { t } = useI18n();
   const [userID, setUserID] = useState(value?.user_id ?? users[0]?.id ?? "");
   const [nodeID, setNodeID] = useState(value?.node_id ?? nodes[0]?.id ?? "");
   const [enabled, setEnabled] = useState(value?.enabled ?? true);
@@ -301,36 +306,36 @@ function AuthorizationDialog({ value, nodes, users, onClose, onSaved }: {
   }
 
   return (
-    <Modal title={value ? "Edit authorization" : "Add authorization"} onClose={onClose} width="wide">
+    <Modal title={value ? t("Edit authorization") : t("Add authorization")} onClose={onClose} width="wide">
       <form onSubmit={submit}>
         <div className="form-grid">
-          <SelectField label="User" value={userID} onChange={setUserID} disabled={value !== undefined} options={users.map((user) => ({ value: user.id, label: user.display_name }))} />
-          <SelectField label="Node" value={nodeID} onChange={setNodeID} disabled={value !== undefined} options={nodes.map((node) => ({ value: node.id, label: node.name }))} />
-          <NumberField label="Traffic quota (GiB)" value={quotaGiB} onChange={setQuotaGiB} min="0" step="0.01" required={false} />
-          <SelectField label="Reset" value={resetKind} onChange={(next) => {
+          <SelectField label={t("User")} value={userID} onChange={setUserID} disabled={value !== undefined} options={users.map((user) => ({ value: user.id, label: user.display_name }))} />
+          <SelectField label={t("Node")} value={nodeID} onChange={setNodeID} disabled={value !== undefined} options={nodes.map((node) => ({ value: node.id, label: node.name }))} />
+          <NumberField label={t("Traffic quota (GiB)")} value={quotaGiB} onChange={setQuotaGiB} min="0" step="0.01" required={false} />
+          <SelectField label={t("Reset")} value={resetKind} onChange={(next) => {
             const kind = next as ResetKind;
             setResetKind(kind);
             if ((kind === "weekly" || kind === "monthly" || kind === "interval_days") && resetValue === "") setResetValue(kind === "interval_days" ? "30" : "1");
           }} options={[
-            { value: "never", label: "Never" }, { value: "daily", label: "Daily" }, { value: "weekly", label: "Weekly" },
-            { value: "monthly", label: "Monthly" }, { value: "interval_days", label: "Every N days" },
+            { value: "never", label: t("Never") }, { value: "daily", label: t("Daily") }, { value: "weekly", label: t("Weekly") },
+            { value: "monthly", label: t("Monthly") }, { value: "interval_days", label: t("Every N days") },
           ]} />
-          {resetKind === "weekly" ? <SelectField label="Weekday" value={resetValue || "1"} onChange={setResetValue} options={weekdays} /> : null}
-          {resetKind === "monthly" ? <NumberField label="Day of month" value={resetValue} onChange={setResetValue} min="1" max="31" step="1" /> : null}
-          {resetKind === "interval_days" ? <NumberField label="Interval (days)" value={resetValue} onChange={setResetValue} min="1" max="3650" step="1" /> : null}
-          <label className="field"><span>Timezone</span><input value={timezone} onChange={(event) => setTimezone(event.target.value)} list="relayward-timezones" required /></label>
-          {resetKind === "interval_days" ? <DateTimeField label="Period anchor" value={periodAnchor} onChange={setPeriodAnchor} required /> : null}
-          <DateTimeField label="Expires" value={expiresAt} onChange={setExpiresAt} />
-          <NumberField label="Soft IP limit" value={softIPLimit} onChange={setSoftIPLimit} min="1" max="1024" step="1" required={false} />
-          <NumberField label="Activity window (minutes)" value={activityMinutes} onChange={setActivityMinutes} min="1" max="1440" step="1" />
-          <NumberField label="Block duration (minutes)" value={blockMinutes} onChange={setBlockMinutes} min="1" max="10080" step="1" />
+          {resetKind === "weekly" ? <SelectField label={t("Weekday")} value={resetValue || "1"} onChange={setResetValue} options={weekdayKeys.map((label, index) => ({ value: String(index + 1), label: t(label) }))} /> : null}
+          {resetKind === "monthly" ? <NumberField label={t("Day of month")} value={resetValue} onChange={setResetValue} min="1" max="31" step="1" /> : null}
+          {resetKind === "interval_days" ? <NumberField label={t("Interval (days)")} value={resetValue} onChange={setResetValue} min="1" max="3650" step="1" /> : null}
+          <label className="field"><span>{t("Timezone")}</span><input value={timezone} onChange={(event) => setTimezone(event.target.value)} list="relayward-timezones" required /></label>
+          {resetKind === "interval_days" ? <DateTimeField label={t("Period anchor")} value={periodAnchor} onChange={setPeriodAnchor} required /> : null}
+          <DateTimeField label={t("Expires")} value={expiresAt} onChange={setExpiresAt} />
+          <NumberField label={t("Soft IP limit")} value={softIPLimit} onChange={setSoftIPLimit} min="1" max="1024" step="1" required={false} />
+          <NumberField label={t("Activity window (minutes)")} value={activityMinutes} onChange={setActivityMinutes} min="1" max="1440" step="1" />
+          <NumberField label={t("Block duration (minutes)")} value={blockMinutes} onChange={setBlockMinutes} min="1" max="10080" step="1" />
         </div>
         <datalist id="relayward-timezones"><option value="UTC" /><option value="Asia/Shanghai" /><option value="Asia/Singapore" /><option value="Europe/London" /><option value="America/New_York" /></datalist>
-        <label className="toggle-field form-toggle"><input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} /><span>Enabled</span></label>
-        <FormError message={error} />
+        <label className="toggle-field form-toggle"><input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} /><span>{t("Enabled")}</span></label>
+        <FormError message={error !== undefined ? t(error) : undefined} />
         <div className="dialog-actions">
-          <button className="quiet-button" onClick={onClose} type="button">Cancel</button>
-          <button className="primary-button compact" disabled={busy} type="submit">{busy ? "Saving..." : value ? "Save" : "Add authorization"}</button>
+          <button className="quiet-button" onClick={onClose} type="button">{t("Cancel")}</button>
+          <button className="primary-button compact" disabled={busy} type="submit">{busy ? t("Saving...") : value ? t("Save") : t("Add authorization")}</button>
         </div>
       </form>
     </Modal>
@@ -356,6 +361,7 @@ function DateTimeField({ label, value, onChange, required = false }: { label: st
 function ConfirmationDialog({ title, subject, action, danger = false, onClose, onConfirm }: {
   title: string; subject: string; action: string; danger?: boolean; onClose: () => void; onConfirm: () => Promise<void>;
 }) {
+  const { t } = useI18n();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   async function confirm() {
@@ -371,16 +377,17 @@ function ConfirmationDialog({ title, subject, action, danger = false, onClose, o
   return (
     <Modal title={title} onClose={onClose}>
       <p className="confirmation-name">{subject}</p>
-      <FormError message={error} />
+      <FormError message={error !== undefined ? t(error) : undefined} />
       <div className="dialog-actions">
-        <button className="quiet-button" onClick={onClose} type="button">Cancel</button>
-        <button className={danger ? "danger-button" : "primary-button compact"} disabled={busy} onClick={confirm} type="button">{busy ? "Saving..." : action}</button>
+        <button className="quiet-button" onClick={onClose} type="button">{t("Cancel")}</button>
+        <button className={danger ? "danger-button" : "primary-button compact"} disabled={busy} onClick={confirm} type="button">{busy ? t("Saving...") : action}</button>
       </div>
     </Modal>
   );
 }
 
 function TokenDialog({ title, token, onClose }: { title: string; token: string; onClose: () => void }) {
+  const { t } = useI18n();
   const [copied, setCopied] = useState(false);
   const link = new URL(`/s/${encodeURIComponent(token)}`, window.location.origin).toString();
   async function copy() {
@@ -392,19 +399,20 @@ function TokenDialog({ title, token, onClose }: { title: string; token: string; 
     }
   }
   return (
-    <Modal title={title} onClose={onClose} dismissible={false}>
+    <Modal title={t(title)} onClose={onClose} dismissible={false}>
       <code className="one-time-token">{link}</code>
       <div className="dialog-actions">
-        <button className="secondary-button" onClick={copy} type="button">{copied ? "Copied" : "Copy"}</button>
-        <button className="primary-button compact" onClick={onClose} type="button">Done</button>
+        <button className="secondary-button" onClick={copy} type="button">{copied ? t("Copied") : t("Copy")}</button>
+        <button className="primary-button compact" onClick={onClose} type="button">{t("Done")}</button>
       </div>
     </Modal>
   );
 }
 
 function AuthorizationStatus({ value }: { value: Authorization }) {
+  const { t, formatDateTime } = useI18n();
   const status = value.enforcement;
-  if (!status) return <span className="inline-status"><span className="status-dot status-dot--warning" />Not reported</span>;
+  if (!status) return <span className="inline-status"><span className="status-dot status-dot--warning" />{t("Not reported")}</span>;
   const labels = {
     active: "Active",
     administrator_disabled: "Disabled",
@@ -414,33 +422,35 @@ function AuthorizationStatus({ value }: { value: Authorization }) {
   const tone = status.reason === "active" && status.services_enabled ? "ok"
     : status.reason === "administrator_disabled" ? "muted" : "warning";
   return (
-    <span className="runtime-value" title={`Observed ${new Date(status.observed_at).toLocaleString()}`}>
-      <span className="inline-status"><span className={`status-dot status-dot--${tone}`} />{labels[status.reason]}</span>
-      <small>Generation {status.generation}</small>
+    <span className="runtime-value" title={t("Observed {time}", { time: formatDateTime(status.observed_at) })}>
+      <span className="inline-status"><span className={`status-dot status-dot--${tone}`} />{t(labels[status.reason])}</span>
+      <small>{t("Generation {generation}", { generation: status.generation })}</small>
     </span>
   );
 }
 
 function TrafficUsage({ value }: { value: Authorization }) {
+  const { t, formatDateTime } = useI18n();
   const traffic = value.current_traffic;
-  if (!traffic) return <span className="secondary-cell">No data / {formatQuota(value.traffic_limit_bytes)}</span>;
+  if (!traffic) return <span className="secondary-cell">{t("No data / {quota}", { quota: formatQuota(value.traffic_limit_bytes, t) })}</span>;
   const total = traffic.upload_bytes + traffic.download_bytes;
-  const periodEnd = traffic.period.ends_at ? new Date(traffic.period.ends_at).toLocaleString() : "No end";
+  const periodEnd = traffic.period.ends_at ? formatDateTime(traffic.period.ends_at) : t("No end");
   return (
-    <span className="runtime-value" title={`${new Date(traffic.period.starts_at).toLocaleString()} - ${periodEnd}; observed ${new Date(traffic.observed_at).toLocaleString()}`}>
+    <span className="runtime-value" title={t("{start} - {end}; observed {observed}", { start: formatDateTime(traffic.period.starts_at), end: periodEnd, observed: formatDateTime(traffic.observed_at) })}>
       <strong>{formatBytes(total)}</strong>
-      <small>of {formatQuota(value.traffic_limit_bytes)}</small>
+      <small>{t("of {quota}", { quota: formatQuota(value.traffic_limit_bytes, t) })}</small>
     </span>
   );
 }
 
 function IPStatus({ value }: { value: Authorization }) {
-  if (value.soft_ip_limit === null) return <span className="secondary-cell">Not limited</span>;
-  if (!value.enforcement) return <span className="secondary-cell">Not reported / {value.soft_ip_limit}</span>;
+  const { t } = useI18n();
+  if (value.soft_ip_limit === null) return <span className="secondary-cell">{t("Not limited")}</span>;
+  if (!value.enforcement) return <span className="secondary-cell">{t("Not reported / {limit}", { limit: value.soft_ip_limit })}</span>;
   return (
     <span className="runtime-value">
       <strong>{value.enforcement.active_ip_count} / {value.soft_ip_limit}</strong>
-      <small>{value.enforcement.blocked_ip_count} blocked</small>
+      <small>{t("{count} blocked", { count: value.enforcement.blocked_ip_count })}</small>
     </span>
   );
 }
@@ -449,10 +459,10 @@ function IconAction({ label, danger = false, onClick, children }: { label: strin
   return <button className={`icon-button${danger ? " icon-button--danger" : ""}`} aria-label={label} title={label} onClick={onClick} type="button">{children}</button>;
 }
 
-const weekdays = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"].map((label, index) => ({ value: String(index + 1), label }));
+const weekdayKeys = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 
-function formatQuota(value: number | null): string {
-  if (value === null) return "Unlimited";
+function formatQuota(value: number | null, t: Translate): string {
+  if (value === null) return t("Unlimited");
   const gib = value / gibibyte;
   return `${Number.isInteger(gib) ? gib : gib.toFixed(2)} GiB`;
 }
@@ -469,13 +479,13 @@ function formatBytes(value: number): string {
   return `${current >= 10 ? current.toFixed(1) : current.toFixed(2)} ${units[unit]}`;
 }
 
-function formatReset(value: Authorization): string {
+function formatReset(value: Authorization, t: Translate): string {
   switch (value.reset.kind) {
-    case "never": return "Never";
-    case "daily": return `Daily / ${value.reset.timezone}`;
-    case "weekly": return `${weekdays[(value.reset.value ?? 1) - 1]?.label ?? "Weekly"} / ${value.reset.timezone}`;
-    case "monthly": return `Day ${value.reset.value} / ${value.reset.timezone}`;
-    case "interval_days": return `Every ${value.reset.value} days / ${value.reset.timezone}`;
+    case "never": return t("Never");
+    case "daily": return t("Daily / {timezone}", { timezone: value.reset.timezone });
+    case "weekly": return t("{weekday} / {timezone}", { weekday: t(weekdayKeys[(value.reset.value ?? 1) - 1] ?? "Weekly"), timezone: value.reset.timezone });
+    case "monthly": return t("Day {day} / {timezone}", { day: value.reset.value ?? 1, timezone: value.reset.timezone });
+    case "interval_days": return t("Every {days} days / {timezone}", { days: value.reset.value ?? 1, timezone: value.reset.timezone });
   }
 }
 
