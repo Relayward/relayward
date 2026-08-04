@@ -1,6 +1,9 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { Languages } from "lucide-react";
 
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { cn } from "@/lib/utils";
+
 export type Locale = "zh-CN" | "en";
 
 type Values = Record<string, string | number>;
@@ -353,14 +356,19 @@ export function useI18n(): I18nValue {
 export function LanguageSwitcher({ className = "" }: { className?: string }) {
   const { locale, setLocale, t } = useI18n();
   return (
-    <label className={`language-switcher${className ? ` ${className}` : ""}`}>
-      <Languages size={16} aria-hidden="true" />
-      <span className="visually-hidden">{t("Language")}</span>
-      <select value={locale} onChange={(event) => setLocale(event.target.value as Locale)} aria-label={t("Language")}>
-        <option value="zh-CN">简体中文</option>
-        <option value="en">English</option>
-      </select>
-    </label>
+    <Select value={locale} onValueChange={(value) => setLocale(value as Locale)}>
+      <SelectTrigger
+        className={cn("h-9 w-auto min-w-[8rem] border-transparent bg-transparent px-2 text-muted-foreground hover:bg-accent", className)}
+        aria-label={t("Language")}
+      >
+        <Languages className="size-4" aria-hidden="true" />
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent align="end">
+        <SelectItem value="zh-CN">简体中文</SelectItem>
+        <SelectItem value="en">English</SelectItem>
+      </SelectContent>
+    </Select>
   );
 }
 

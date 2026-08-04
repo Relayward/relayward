@@ -15,6 +15,8 @@ import (
 	"github.com/Relayward/relayward/internal/store"
 )
 
+const pluginUIContentSecurityPolicy = "default-src 'none'; script-src 'self'; style-src 'self'; style-src-attr 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'none'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'"
+
 type pluginReleaseRequest struct {
 	Repository          string   `json:"repository"`
 	Version             string   `json:"version"`
@@ -193,7 +195,7 @@ func (server *Server) servePluginUI(w http.ResponseWriter, request *http.Request
 		contentType = "application/octet-stream"
 	}
 	w.Header().Set("Content-Type", contentType)
-	w.Header().Set("Content-Security-Policy", "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'none'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'")
+	w.Header().Set("Content-Security-Policy", pluginUIContentSecurityPolicy)
 	w.Header().Del("X-Frame-Options")
 	http.ServeContent(w, request, info.Name(), info.ModTime(), file)
 }

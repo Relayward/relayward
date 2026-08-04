@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 import { Activity, BadgeCheck, Gauge, LogOut, Megaphone, Plug, Save, ScrollText, Server, Shield, Users } from "lucide-react";
 import QRCode from "qrcode";
 
@@ -15,6 +15,7 @@ import {
 } from "../api";
 import type { SystemInfo } from "../system";
 import { LanguageSwitcher, useI18n } from "../i18n";
+import { cn } from "../lib/utils";
 import { Field, FormError } from "./AuthScreen";
 import { AuditView } from "./AuditView";
 import { AuthorizationsView } from "./AuthorizationView";
@@ -22,6 +23,7 @@ import { Modal } from "./Modal";
 import { PluginsView } from "./PluginsView";
 import { RecentEventsView } from "./RecentEventsView";
 import { NodesView, UsersView } from "./ResourceViews";
+import { Button } from "./ui/button";
 
 interface DashboardProps {
   session: SessionInfo;
@@ -67,28 +69,28 @@ export function Dashboard({ session, system, onLogout, onSessionChange, onSessio
   }
 
   return (
-    <div className="dashboard-shell">
-      <header className="dashboard-header">
-        <div className="brand-lockup"><span className="brand-mark brand-mark--small">R</span><strong>Relayward</strong></div>
-        <div className="header-actions">
+    <div className="min-h-screen">
+      <header className="sticky top-0 z-10 flex h-[58px] items-center justify-between border-b border-border bg-card px-6 max-[700px]:px-3.5 max-[440px]:px-2.5">
+        <div className="flex items-center gap-2.5"><span className="flex size-[30px] items-center justify-center rounded-md bg-foreground text-[15px] font-bold text-background">R</span><strong>Relayward</strong></div>
+        <div className="flex items-center gap-2.5 max-[440px]:gap-1">
           <LanguageSwitcher />
-          <span className="admin-name">{session.administrator.username}</span>
-          <button className="quiet-button button-with-icon dashboard-sign-out" aria-label={t("Sign out")} title={t("Sign out")} disabled={busy} onClick={signOut}><LogOut size={16} /><span>{t("Sign out")}</span></button>
+          <span className="text-[13px] text-muted-foreground max-[700px]:hidden">{session.administrator.username}</span>
+          <Button className="max-[440px]:size-9 max-[440px]:p-0" variant="ghost" size="sm" aria-label={t("Sign out")} title={t("Sign out")} disabled={busy} onClick={signOut}><LogOut size={16} /><span className="max-[440px]:hidden">{t("Sign out")}</span></Button>
         </div>
       </header>
-      <div className="dashboard-body">
-        <nav className="side-nav" aria-label={t("Administration")}>
-          <button className={view === "system" ? "active" : ""} onClick={() => setView("system")}><Gauge size={17} />{t("System")}</button>
-          <button className={view === "nodes" ? "active" : ""} onClick={() => setView("nodes")}><Server size={17} />{t("Nodes")}</button>
-          <button className={view === "plugins" ? "active" : ""} onClick={() => setView("plugins")}><Plug size={17} />{t("Plugins")}</button>
-          <button className={view === "users" ? "active" : ""} onClick={() => setView("users")}><Users size={17} />{t("Users")}</button>
-          <button className={view === "authorizations" ? "active" : ""} onClick={() => setView("authorizations")}><BadgeCheck size={17} />{t("Authorizations")}</button>
-          <button className={view === "events" ? "active" : ""} onClick={() => setView("events")}><Activity size={17} />{t("Recent events")}</button>
-          <button className={view === "announcement" ? "active" : ""} onClick={() => setView("announcement")}><Megaphone size={17} />{t("Announcement")}</button>
-          <button className={view === "audit" ? "active" : ""} onClick={() => setView("audit")}><ScrollText size={17} />{t("Audit")}</button>
-          <button className={view === "security" ? "active" : ""} onClick={() => setView("security")}><Shield size={17} />{t("Security")}</button>
+      <div className="grid min-h-[calc(100vh-58px)] grid-cols-[190px_minmax(0,1fr)] max-[700px]:block">
+        <nav className="flex flex-col gap-1 border-r border-border bg-secondary/70 px-3 py-[18px] max-[700px]:flex-row max-[700px]:overflow-x-auto max-[700px]:border-r-0 max-[700px]:border-b max-[700px]:px-3 max-[700px]:py-2" aria-label={t("Administration")}>
+          <NavigationButton active={view === "system"} onClick={() => setView("system")}><Gauge size={17} />{t("System")}</NavigationButton>
+          <NavigationButton active={view === "nodes"} onClick={() => setView("nodes")}><Server size={17} />{t("Nodes")}</NavigationButton>
+          <NavigationButton active={view === "plugins"} onClick={() => setView("plugins")}><Plug size={17} />{t("Plugins")}</NavigationButton>
+          <NavigationButton active={view === "users"} onClick={() => setView("users")}><Users size={17} />{t("Users")}</NavigationButton>
+          <NavigationButton active={view === "authorizations"} onClick={() => setView("authorizations")}><BadgeCheck size={17} />{t("Authorizations")}</NavigationButton>
+          <NavigationButton active={view === "events"} onClick={() => setView("events")}><Activity size={17} />{t("Recent events")}</NavigationButton>
+          <NavigationButton active={view === "announcement"} onClick={() => setView("announcement")}><Megaphone size={17} />{t("Announcement")}</NavigationButton>
+          <NavigationButton active={view === "audit"} onClick={() => setView("audit")}><ScrollText size={17} />{t("Audit")}</NavigationButton>
+          <NavigationButton active={view === "security"} onClick={() => setView("security")}><Shield size={17} />{t("Security")}</NavigationButton>
         </nav>
-        <main className="dashboard-main">
+        <main className="mx-auto w-full max-w-[1100px] px-[38px] py-[34px] max-[700px]:px-4 max-[700px]:py-6">
           {view === "system" ? <SystemView system={system} session={session} /> : null}
           {view === "nodes" ? <NodesView /> : null}
           {view === "plugins" ? <PluginsView onNavigate={(target) => setView(target)} /> : null}
@@ -133,6 +135,22 @@ export function Dashboard({ session, system, onLogout, onSessionChange, onSessio
       ) : null}
       {recoveryCodes ? <RecoveryCodesDialog codes={recoveryCodes} onClose={() => setRecoveryCodes(undefined)} /> : null}
     </div>
+  );
+}
+
+function NavigationButton({ active, onClick, children }: { active: boolean; onClick: () => void; children: ReactNode }) {
+  return (
+    <Button
+      className={cn(
+        "h-[38px] w-full justify-start px-3 font-normal max-[700px]:min-w-[90px] max-[700px]:justify-center",
+        active && "bg-card font-semibold text-foreground shadow-[inset_3px_0_0_var(--primary)] hover:bg-card max-[700px]:shadow-[inset_0_-3px_0_var(--primary)]",
+      )}
+      variant="ghost"
+      onClick={onClick}
+      type="button"
+    >
+      {children}
+    </Button>
   );
 }
 
@@ -187,11 +205,11 @@ function SystemView({ system, session }: { system: SystemInfo; session: SessionI
   const { t, formatDateTime } = useI18n();
   return (
     <section aria-labelledby="system-title">
-      <div className="section-heading">
-        <div><p className="eyebrow">{t("Overview")}</p><h1 id="system-title">{t("System")}</h1></div>
-        <span className="version-label">{system.version}</span>
+      <div className="mb-6 flex items-end justify-between">
+        <div><p className="m-0 text-xs font-semibold text-muted-foreground">{t("Overview")}</p><h1 className="mt-0.5 mb-0 text-[25px] font-semibold" id="system-title">{t("System")}</h1></div>
+        <span className="text-xs font-semibold text-muted-foreground">{system.version}</span>
       </div>
-      <dl className="detail-list">
+      <dl className="m-0 divide-y divide-border rounded-md border border-border bg-card">
         <Detail label={t("Control plane")} value={t("Available")} status="ok" />
         <Detail label={t("Secret storage")} value={session.secrets_available ? t("Available") : t("Recovery required")} status={session.secrets_available ? "ok" : "warning"} />
         <Detail label={t("Session expiry")} value={formatDateTime(session.expires_at)} />
@@ -202,9 +220,9 @@ function SystemView({ system, session }: { system: SystemInfo; session: SessionI
 
 function Detail({ label, value, status }: { label: string; value: string; status?: "ok" | "warning" }) {
   return (
-    <div>
-      <dt>{label}</dt>
-      <dd>{status ? <span className={`status-dot status-dot--${status}`} /> : null}{value}</dd>
+    <div className="flex min-h-[58px] items-center justify-between px-4 py-3 max-[440px]:flex-col max-[440px]:items-start max-[440px]:gap-1.5">
+      <dt className="text-foreground/80">{label}</dt>
+      <dd className="m-0 flex items-center gap-2 text-right max-[440px]:text-left">{status ? <span className={cn("size-2 rounded-full", status === "ok" ? "bg-success" : "bg-warning")} /> : null}{value}</dd>
     </div>
   );
 }

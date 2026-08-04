@@ -1,0 +1,90 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:is(.dark *));
+
+:root {
+  --background: #f5f6f7;
+  --foreground: #20252a;
+  --card: #ffffff;
+  --card-foreground: #20252a;
+  --popover: #ffffff;
+  --popover-foreground: #20252a;
+  --primary: #16784b;
+  --primary-foreground: #ffffff;
+  --secondary: #eef1f2;
+  --secondary-foreground: #2a3136;
+  --muted: #eef1f2;
+  --muted-foreground: #667078;
+  --accent: #edf0f1;
+  --accent-foreground: #20252a;
+  --destructive: #b4232c;
+  --destructive-foreground: #ffffff;
+  --success: #16834f;
+  --warning: #b77900;
+  --border: #d9dee2;
+  --input: #bbc3c9;
+  --ring: #16784b;
+  --radius: 0.375rem;
+}
+
+.dark {
+  --background: #171a1d;
+  --foreground: #f4f6f7;
+  --card: #202428;
+  --card-foreground: #f4f6f7;
+  --popover: #202428;
+  --popover-foreground: #f4f6f7;
+  --primary: #43a878;
+  --primary-foreground: #0e2318;
+  --secondary: #292e32;
+  --secondary-foreground: #edf0f1;
+  --muted: #292e32;
+  --muted-foreground: #aab2b8;
+  --accent: #30363a;
+  --accent-foreground: #ffffff;
+  --destructive: #ef6a72;
+  --destructive-foreground: #2a0e11;
+  --success: #4bb985;
+  --warning: #d7a429;
+  --border: #3b4247;
+  --input: #525a60;
+  --ring: #43a878;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --radius-sm: calc(var(--radius) - 0.125rem);
+  --radius-md: var(--radius);
+  --radius-lg: calc(var(--radius) + 0.125rem);
+  --font-sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+
+  body {
+    @apply bg-background font-sans text-foreground antialiased;
+  }
+}

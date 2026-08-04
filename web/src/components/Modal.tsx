@@ -1,7 +1,7 @@
-import { type ReactNode, useEffect, useId } from "react";
-import { X } from "lucide-react";
+import { useRef, type ReactNode } from "react";
 
 import { useI18n } from "../i18n";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "./ui/dialog";
 
 interface ModalProps {
   title: string;
@@ -13,30 +13,26 @@ interface ModalProps {
 
 export function Modal({ title, children, onClose, dismissible = true, width = "normal" }: ModalProps) {
   const { t } = useI18n();
-  const titleID = useId();
-
-  useEffect(() => {
-    if (!dismissible) return;
-    function closeOnEscape(event: KeyboardEvent) {
-      if (event.key === "Escape") onClose();
-    }
-    window.addEventListener("keydown", closeOnEscape);
-    return () => window.removeEventListener("keydown", closeOnEscape);
-  }, [dismissible, onClose]);
+  const trigger = useRef<HTMLElement | null>(
+    typeof document !== "undefined" && document.activeElement instanceof HTMLElement ? document.activeElement : null,
+  );
 
   return (
-    <div className="modal-backdrop" role="presentation" onMouseDown={(event) => {
-      if (dismissible && event.target === event.currentTarget) onClose();
-    }}>
-      <section className={`modal${width === "wide" ? " modal--wide" : ""}`} role="dialog" aria-modal="true" aria-labelledby={titleID}>
-        <div className="modal-heading">
-          <h2 id={titleID}>{title}</h2>
-          {dismissible ? (
-            <button className="icon-button" onClick={onClose} aria-label={t("Close")} title={t("Close")} type="button"><X size={18} /></button>
-          ) : null}
-        </div>
+    <Dialog open onOpenChange={(open) => { if (!open && dismissible) onClose(); }}>
+      <DialogContent
+        className={width === "wide" ? "max-w-3xl" : undefined}
+        closeLabel={t("Close")}
+        showCloseButton={dismissible}
+        onEscapeKeyDown={(event) => { if (!dismissible) event.preventDefault(); }}
+        onPointerDownOutside={(event) => { if (!dismissible) event.preventDefault(); }}
+        onCloseAutoFocus={(event) => {
+          event.preventDefault();
+          if (trigger.current?.isConnected) trigger.current.focus();
+        }}
+      >
+        <DialogHeader><DialogTitle>{title}</DialogTitle></DialogHeader>
         {children}
-      </section>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }

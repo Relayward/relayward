@@ -189,7 +189,8 @@ func TestPluginLifecycleHTTPFlowDoesNotExposeSecrets(t *testing.T) {
 	}
 	uiAsset := performRequest(handler, http.MethodGet, uiAssetPath, nil, nil, sessionCookie)
 	if uiAsset.Code != http.StatusOK || !strings.Contains(uiAsset.Body.String(), "plugin-ui") ||
-		uiAsset.Header().Get("X-Frame-Options") != "" || !strings.Contains(uiAsset.Header().Get("Content-Security-Policy"), "frame-ancestors 'self'") {
+		uiAsset.Header().Get("X-Frame-Options") != "" || uiAsset.Header().Get("Content-Security-Policy") !=
+		"default-src 'none'; script-src 'self'; style-src 'self'; style-src-attr 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'none'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'" {
 		t.Fatalf("plugin UI asset status = %d, headers = %+v, body = %s", uiAsset.Code, uiAsset.Header(), uiAsset.Body.String())
 	}
 	releases.release = serverPluginRelease("1.2.4")

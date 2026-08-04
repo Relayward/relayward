@@ -23,7 +23,7 @@ export function SubscriptionPage({ token }: { token: string }) {
   }, [token]);
 
   if (error) {
-    return <main className="subscription-error"><LanguageSwitcher className="page-language-switcher" /><span className="brand-mark">R</span><h1>{t("Subscription unavailable")}</h1><p>{t(error)}</p></main>;
+    return <main className="subscription-error relative"><LanguageSwitcher className="absolute top-5 right-5" /><span className="brand-mark">R</span><h1>{t("Subscription unavailable")}</h1><p>{t(error)}</p></main>;
   }
   if (!subscription) {
     return <main className="subscription-loading"><span className="brand-mark">R</span><span>Relayward</span></main>;
@@ -31,7 +31,7 @@ export function SubscriptionPage({ token }: { token: string }) {
 
   return (
     <main className="subscription-page">
-      <header className="subscription-header"><span className="brand-mark brand-mark--small">R</span><strong>Relayward</strong><LanguageSwitcher /></header>
+      <header className="subscription-header"><span className="brand-mark brand-mark--small">R</span><strong>Relayward</strong><LanguageSwitcher className="ml-auto" /></header>
       <section className="subscription-summary">
         <p className="eyebrow">{subscription.user_name}</p>
         <h1>{subscription.node_name}</h1>

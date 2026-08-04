@@ -1,6 +1,8 @@
 import { type FormEvent, type ReactNode, useState } from "react";
 
 import { LanguageSwitcher, useI18n } from "../i18n";
+import { Button } from "./ui/button";
+import { Input } from "./ui/input";
 
 interface SetupProps {
   busy: boolean;
@@ -27,14 +29,14 @@ export function SetupScreen({ busy, error, onSubmit }: SetupProps) {
 
   return (
     <AuthLayout title={t("Initialize Relayward")}>
-      <form className="auth-form" onSubmit={submit}>
+      <form className="grid gap-4" onSubmit={submit}>
         <Field label={t("Username")} value={username} onChange={setUsername} autoComplete="username" />
         <Field label={t("Password")} value={password} onChange={setPassword} type="password" autoComplete="new-password" />
         <Field label={t("Confirm password")} value={confirmation} onChange={setConfirmation} type="password" autoComplete="new-password" />
         <FormError message={validation !== undefined ? t(validation) : error !== undefined ? t(error) : undefined} />
-        <button className="primary-button" disabled={busy} type="submit">
+        <Button className="mt-1 w-full" disabled={busy} type="submit">
           {busy ? t("Creating...") : t("Create administrator")}
-        </button>
+        </Button>
       </form>
     </AuthLayout>
   );
@@ -60,7 +62,7 @@ export function LoginScreen({ busy, error, secondFactorRequired, onSubmit }: Log
 
   return (
     <AuthLayout title={t("Sign in")}>
-      <form className="auth-form" onSubmit={submit}>
+      <form className="grid gap-4" onSubmit={submit}>
         <Field label={t("Username")} value={username} onChange={setUsername} autoComplete="username" />
         <Field label={t("Password")} value={password} onChange={setPassword} type="password" autoComplete="current-password" />
         {secondFactorRequired ? (
@@ -73,9 +75,9 @@ export function LoginScreen({ busy, error, secondFactorRequired, onSubmit }: Log
           />
         ) : null}
         <FormError message={error !== undefined ? t(error) : undefined} />
-        <button className="primary-button" disabled={busy} type="submit">
+        <Button className="mt-1 w-full" disabled={busy} type="submit">
           {busy ? t("Signing in...") : t("Sign in")}
-        </button>
+        </Button>
       </form>
     </AuthLayout>
   );
@@ -83,12 +85,12 @@ export function LoginScreen({ busy, error, secondFactorRequired, onSubmit }: Log
 
 function AuthLayout({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <main className="auth-page">
-      <section className="auth-panel" aria-labelledby="auth-title">
-        <LanguageSwitcher className="auth-language-switcher" />
-        <div className="brand-mark">R</div>
-        <p className="product-label">Relayward</p>
-        <h1 id="auth-title">{title}</h1>
+    <main className="flex min-h-screen items-center justify-center px-5 py-8">
+      <section className="relative w-full max-w-[420px] rounded-md border border-border bg-card p-8 shadow-[0_14px_34px_rgba(25,32,38,0.08)] max-[440px]:px-5 max-[440px]:py-6" aria-labelledby="auth-title">
+        <LanguageSwitcher className="absolute top-5 right-5" />
+        <div className="flex size-11 items-center justify-center rounded-md bg-foreground text-[22px] font-bold text-background">R</div>
+        <p className="mt-3.5 mb-1 text-[13px] font-semibold text-muted-foreground">Relayward</p>
+        <h1 className="mt-0 mb-6.5 text-2xl font-semibold" id="auth-title">{title}</h1>
         {children}
       </section>
     </main>
@@ -108,9 +110,9 @@ interface FieldProps {
 
 export function Field({ label, value, onChange, type = "text", autoComplete, autoFocus, disabled = false, required = true }: FieldProps) {
   return (
-    <label className="field">
-      <span>{label}</span>
-      <input
+    <label className="grid gap-1.5">
+      <span className="text-[13px] font-semibold text-foreground/80">{label}</span>
+      <Input
         type={type}
         value={value}
         onChange={(event) => onChange(event.target.value)}
@@ -124,5 +126,5 @@ export function Field({ label, value, onChange, type = "text", autoComplete, aut
 }
 
 export function FormError({ message }: { message?: string }) {
-  return message ? <p className="form-error" role="alert">{message}</p> : null;
+  return message ? <p className="m-0 text-[13px] leading-relaxed text-destructive" role="alert">{message}</p> : null;
 }

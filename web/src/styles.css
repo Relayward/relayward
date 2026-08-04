@@ -32,31 +32,6 @@ button:disabled {
   opacity: 0.58;
 }
 
-.loading-screen,
-.error-page {
-  align-items: center;
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-  justify-content: center;
-  min-height: 100vh;
-  padding: 24px;
-  text-align: center;
-}
-
-.error-page {
-  position: relative;
-}
-
-.error-page h1,
-.error-page p {
-  margin: 0;
-}
-
-.error-page p {
-  color: #667078;
-}
-
 .brand-mark {
   align-items: center;
   background: #20252a;
@@ -76,37 +51,6 @@ button:disabled {
   width: 30px;
 }
 
-.auth-page {
-  align-items: center;
-  display: flex;
-  justify-content: center;
-  min-height: 100vh;
-  padding: 32px 20px;
-}
-
-.auth-panel {
-  background: #ffffff;
-  border: 1px solid #d9dee2;
-  border-radius: 6px;
-  box-shadow: 0 14px 34px rgba(25, 32, 38, 0.08);
-  padding: 32px;
-  position: relative;
-  width: min(100%, 420px);
-}
-
-.product-label {
-  color: #68737b;
-  font-size: 13px;
-  font-weight: 600;
-  margin: 14px 0 4px;
-}
-
-.auth-panel h1 {
-  font-size: 24px;
-  margin: 0 0 26px;
-}
-
-.auth-form,
 .dialog-fields {
   display: grid;
   gap: 16px;
@@ -215,88 +159,10 @@ button:disabled {
   color: #b4232c;
 }
 
-.form-error {
-  color: #b4232c;
-  font-size: 13px;
-  line-height: 1.45;
-  margin: 0;
-}
-
-.dashboard-shell {
-  min-height: 100vh;
-}
-
-.dashboard-header {
-  align-items: center;
-  background: #ffffff;
-  border-bottom: 1px solid #d9dee2;
-  display: flex;
-  height: 58px;
-  justify-content: space-between;
-  padding: 0 24px;
-  position: sticky;
-  top: 0;
-  z-index: 10;
-}
-
-.brand-lockup,
-.header-actions,
 .row-actions {
   align-items: center;
   display: flex;
   gap: 10px;
-}
-
-.admin-name {
-  color: #667078;
-  font-size: 13px;
-}
-
-.dashboard-body {
-  display: grid;
-  grid-template-columns: 190px minmax(0, 1fr);
-  min-height: calc(100vh - 58px);
-}
-
-.side-nav {
-  background: #eef1f2;
-  border-right: 1px solid #d9dee2;
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  padding: 18px 12px;
-}
-
-.side-nav button {
-  align-items: center;
-  background: transparent;
-  border: 0;
-  border-radius: 4px;
-  color: #515c64;
-  display: flex;
-  font-size: 14px;
-  gap: 9px;
-  min-height: 38px;
-  padding: 0 12px;
-  text-align: left;
-}
-
-.side-nav button:hover,
-.side-nav button.active {
-  background: #ffffff;
-  color: #20252a;
-}
-
-.side-nav button.active {
-  box-shadow: inset 3px 0 #16784b;
-  font-weight: 650;
-}
-
-.dashboard-main {
-  margin: 0 auto;
-  max-width: 1100px;
-  padding: 34px 38px;
-  width: 100%;
 }
 
 .section-heading {
@@ -319,7 +185,6 @@ button:disabled {
   margin: 0;
 }
 
-.detail-list,
 .settings-list {
   background: #ffffff;
   border: 1px solid #d9dee2;
@@ -327,7 +192,6 @@ button:disabled {
   margin: 0;
 }
 
-.detail-list > div,
 .setting-row {
   align-items: center;
   display: flex;
@@ -336,21 +200,8 @@ button:disabled {
   padding: 12px 16px;
 }
 
-.detail-list > div + div,
 .setting-row + .setting-row {
   border-top: 1px solid #e5e8ea;
-}
-
-.detail-list dt {
-  color: #4c565e;
-}
-
-.detail-list dd {
-  align-items: center;
-  display: flex;
-  gap: 8px;
-  margin: 0;
-  text-align: right;
 }
 
 .status-dot {
@@ -382,44 +233,6 @@ button:disabled {
 .setting-row p {
   color: #68737b;
   font-size: 13px;
-  margin: 0;
-}
-
-.modal-backdrop {
-  align-items: center;
-  background: rgba(24, 29, 33, 0.55);
-  display: flex;
-  inset: 0;
-  justify-content: center;
-  padding: 20px;
-  position: fixed;
-  z-index: 50;
-}
-
-.modal {
-  background: #ffffff;
-  border: 1px solid #cdd3d7;
-  border-radius: 6px;
-  box-shadow: 0 20px 54px rgba(15, 20, 24, 0.24);
-  max-height: calc(100vh - 40px);
-  overflow: auto;
-  padding: 22px;
-  width: min(100%, 480px);
-}
-
-.modal--wide {
-  width: min(100%, 720px);
-}
-
-.modal-heading {
-  align-items: center;
-  display: flex;
-  justify-content: space-between;
-  margin-bottom: 20px;
-}
-
-.modal-heading h2 {
-  font-size: 18px;
   margin: 0;
 }
 
@@ -740,36 +553,6 @@ button:disabled {
   width: 1px;
 }
 
-.language-switcher {
-  align-items: center;
-  color: #667078;
-  display: inline-flex;
-  gap: 5px;
-}
-
-.language-switcher select {
-  appearance: auto;
-  background: transparent;
-  border: 0;
-  color: inherit;
-  cursor: pointer;
-  min-width: 92px;
-  padding: 4px 2px;
-  width: auto;
-}
-
-.language-switcher select:focus-visible {
-  outline: 2px solid #16784b;
-  outline-offset: 2px;
-}
-
-.auth-language-switcher,
-.page-language-switcher {
-  position: absolute;
-  right: 20px;
-  top: 20px;
-}
-
 .plugin-identity {
   display: grid;
   gap: 3px;
@@ -1032,10 +815,6 @@ button:disabled {
   height: 64px;
 }
 
-.subscription-header .language-switcher {
-  margin-left: auto;
-}
-
 .subscription-summary {
   border-bottom: 1px solid #d9dee2;
   padding: 52px 0 34px;
@@ -1235,39 +1014,6 @@ button:disabled {
 }
 
 @media (max-width: 700px) {
-  .dashboard-header {
-    padding: 0 14px;
-  }
-
-  .admin-name {
-    display: none;
-  }
-
-  .dashboard-body {
-    display: block;
-  }
-
-  .side-nav {
-    border-bottom: 1px solid #d9dee2;
-    border-right: 0;
-    flex-direction: row;
-    overflow-x: auto;
-    padding: 8px 12px;
-  }
-
-  .side-nav button {
-    min-width: 90px;
-    justify-content: center;
-  }
-
-  .side-nav button.active {
-    box-shadow: inset 0 -3px #16784b;
-  }
-
-  .dashboard-main {
-    padding: 24px 16px;
-  }
-
   .setting-row {
     align-items: stretch;
     flex-direction: column;
@@ -1304,42 +1050,6 @@ button:disabled {
 }
 
 @media (max-width: 440px) {
-  .dashboard-header {
-    padding: 0 10px;
-  }
-
-  .header-actions {
-    gap: 5px;
-  }
-
-  .dashboard-sign-out {
-    min-height: 34px;
-    padding: 0;
-    width: 34px;
-  }
-
-  .dashboard-sign-out span {
-    display: none;
-  }
-
-  .dashboard-header .language-switcher select {
-    min-width: 86px;
-  }
-
-  .auth-panel {
-    padding: 24px 20px;
-  }
-
-  .detail-list > div {
-    align-items: flex-start;
-    flex-direction: column;
-    gap: 7px;
-  }
-
-  .detail-list dd {
-    text-align: left;
-  }
-
   .dialog-actions {
     align-items: stretch;
     flex-direction: column-reverse;

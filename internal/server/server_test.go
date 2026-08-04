@@ -56,7 +56,7 @@ func TestHealthAndSystemInfo(t *testing.T) {
 
 func TestWebAssetsAndSPAFallback(t *testing.T) {
 	assets := fstest.MapFS{
-		"index.html":         {Data: []byte("<!doctype html><main>Relayward</main>")},
+		"index.html":         {Data: []byte(`<!doctype html><meta name="relayward-style-nonce" content="` + webStyleNoncePlaceholder + `"><main>Relayward</main>`)},
 		"assets/app-abcd.js": {Data: []byte("console.log('relayward')")},
 	}
 	handler := newTestHandlerWithWebAssets(t, assets)
@@ -66,10 +66,10 @@ func TestWebAssetsAndSPAFallback(t *testing.T) {
 		if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "Relayward") {
 			t.Fatalf("GET %s = %d, %q", requestPath, response.Code, response.Body.String())
 		}
-		if response.Header().Get("Cache-Control") != "no-store" ||
-			!strings.Contains(response.Header().Get("Content-Security-Policy"), "frame-src 'self'") {
+		if response.Header().Get("Cache-Control") != "no-store" {
 			t.Fatalf("GET %s headers = %+v", requestPath, response.Header())
 		}
+		assertWebStyleNonce(t, response)
 	}
 
 	asset := performRequest(handler, http.MethodGet, "/assets/app-abcd.js", nil, nil)
@@ -96,6 +96,30 @@ func TestWebAssetsAndSPAFallback(t *testing.T) {
 	postRoute := performRequest(handler, http.MethodPost, "/nodes", nil, nil)
 	if postRoute.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("POST SPA route status = %d", postRoute.Code)
+	}
+}
+
+func assertWebStyleNonce(t *testing.T, response *httptest.ResponseRecorder) {
+	t.Helper()
+	policy := response.Header().Get("Content-Security-Policy")
+	prefix := "style-src 'self' 'nonce-"
+	start := strings.Index(policy, prefix)
+	if start < 0 {
+		t.Fatalf("web CSP has no style nonce: %q", policy)
+	}
+	start += len(prefix)
+	end := strings.IndexByte(policy[start:], '\'')
+	if end < 1 {
+		t.Fatalf("web CSP has an invalid style nonce: %q", policy)
+	}
+	nonce := policy[start : start+end]
+	expected := "default-src 'none'; script-src 'self'; style-src 'self' 'nonce-" + nonce + "' " + webRadixSelectStyleHashes + "; style-src-attr 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
+	if policy != expected {
+		t.Fatalf("web CSP = %q", policy)
+	}
+	if !strings.Contains(response.Body.String(), `name="relayward-style-nonce" content="`+nonce+`"`) ||
+		strings.Contains(response.Body.String(), webStyleNoncePlaceholder) {
+		t.Fatalf("web response does not contain its CSP style nonce: %q", response.Body.String())
 	}
 }
 
