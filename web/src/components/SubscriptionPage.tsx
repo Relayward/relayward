@@ -3,6 +3,8 @@ import { Download } from "lucide-react";
 
 import { APIError, getSubscription, type SubscriptionInfo } from "../api";
 import { LanguageSwitcher, useI18n } from "../i18n";
+import { cn } from "../lib/utils";
+import { Button } from "./ui/button";
 
 const gibibyte = 1024 ** 3;
 const weekdays = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
@@ -23,45 +25,56 @@ export function SubscriptionPage({ token }: { token: string }) {
   }, [token]);
 
   if (error) {
-    return <main className="subscription-error relative"><LanguageSwitcher className="absolute top-5 right-5" /><span className="brand-mark">R</span><h1>{t("Subscription unavailable")}</h1><p>{t(error)}</p></main>;
+    return (
+      <main className="relative flex min-h-screen flex-col items-center justify-center gap-3.5 p-6 text-center">
+        <LanguageSwitcher className="absolute top-5 right-5" />
+        <span className="flex size-11 items-center justify-center rounded-md bg-foreground text-[22px] font-bold text-background">R</span>
+        <h1 className="m-0 text-2xl font-semibold">{t("Subscription unavailable")}</h1>
+        <p className="m-0 max-w-lg text-sm text-muted-foreground">{t(error)}</p>
+        <Button size="sm" onClick={() => window.location.reload()} type="button">{t("Retry")}</Button>
+      </main>
+    );
   }
   if (!subscription) {
-    return <main className="subscription-loading"><span className="brand-mark">R</span><span>Relayward</span></main>;
+    return <main className="flex min-h-screen flex-col items-center justify-center gap-3.5 p-6"><span className="flex size-11 items-center justify-center rounded-md bg-foreground text-[22px] font-bold text-background">R</span><span>Relayward</span></main>;
   }
 
   return (
-    <main className="subscription-page">
-      <header className="subscription-header"><span className="brand-mark brand-mark--small">R</span><strong>Relayward</strong><LanguageSwitcher className="ml-auto" /></header>
-      <section className="subscription-summary">
-        <p className="eyebrow">{subscription.user_name}</p>
-        <h1>{subscription.node_name}</h1>
-        <p className={`subscription-state subscription-state--${subscription.status}`}>{statusLabel(subscription.status, t)}</p>
-        {subscription.node_address ? <p className="subscription-address">{subscription.node_address}</p> : null}
+    <main className="mx-auto min-h-screen w-full max-w-[820px] px-6 pb-12 max-[440px]:px-[18px] max-[440px]:pb-9">
+      <header className="flex h-16 items-center gap-2.5"><span className="flex size-[30px] items-center justify-center rounded-md bg-foreground text-[15px] font-bold text-background">R</span><strong>Relayward</strong><LanguageSwitcher className="ml-auto" /></header>
+      <section className="border-b border-border pt-13 pb-8.5 max-[440px]:pt-8.5">
+        <p className="m-0 text-xs font-semibold text-muted-foreground">{subscription.user_name}</p>
+        <h1 className="mt-1 mb-2.5 text-[34px] font-semibold max-[440px]:text-[30px]">{subscription.node_name}</h1>
+        <p className="m-0 inline-flex items-center gap-2 text-sm font-semibold"><span className={cn("size-2.5 rounded-full", statusTone(subscription.status))} />{statusLabel(subscription.status, t)}</p>
+        {subscription.node_address ? <p className="mt-3 mb-0 text-sm text-muted-foreground">{subscription.node_address}</p> : null}
       </section>
-      <section className="subscription-details" aria-label={t("Subscription details")}>
+      <dl className="mt-7 grid grid-cols-2 gap-x-6 max-[440px]:grid-cols-1" aria-label={t("Subscription details")}>
         <Detail label={t("Traffic quota")} value={subscription.traffic_limit_bytes === null ? t("Unlimited") : formatBytes(subscription.traffic_limit_bytes)} />
         <Detail label={t("Traffic used")} value={subscription.traffic_used_bytes === null ? t("Unavailable") : formatBytes(subscription.traffic_used_bytes)} />
         <Detail label={t("Reset")} value={formatReset(subscription.reset, t)} />
         <Detail label={t("Expires")} value={subscription.expires_at ? formatDateTime(subscription.expires_at) : t("Never")} />
-      </section>
-      {subscription.announcement ? <section className="subscription-announcement"><h2>{t("Announcement")}</h2><p>{subscription.announcement}</p></section> : null}
-      <section className="subscription-services" aria-labelledby="services-title">
-        <h2 id="services-title">{t("Services")}</h2>
-        {subscription.services.length === 0 ? <p className="empty-service">{t("No services available.")}</p> : null}
+      </dl>
+      {subscription.announcement ? <section className="mt-7 border-t border-border pt-6"><h2 className="mt-0 mb-3 text-[17px] font-semibold">{t("Announcement")}</h2><p className="m-0 whitespace-pre-wrap text-sm text-muted-foreground">{subscription.announcement}</p></section> : null}
+      <section className="mt-7 border-t border-border pt-6" aria-labelledby="services-title">
+        <h2 className="mt-0 mb-3 text-[17px] font-semibold" id="services-title">{t("Services")}</h2>
+        {subscription.services.length === 0 ? <p className="m-0 text-sm text-muted-foreground">{t("No services available.")}</p> : null}
         {subscription.services.length > 0 ? (
-          <ul>{subscription.services.map((service) => (
-            <li key={`${service.plugin_id}/${service.service_id}`}>
-              <strong>{service.display_name}</strong>
-              <span>{service.plugin_id} / {service.service_id}</span>
+          <ul className="m-0 list-none p-0">{subscription.services.map((service) => (
+            <li className="flex items-baseline justify-between gap-4 border-b border-border py-3.5 max-[440px]:flex-col max-[440px]:items-start max-[440px]:gap-1" key={`${service.plugin_id}/${service.service_id}`}>
+              <strong className="font-semibold">{service.display_name}</strong>
+              <span className="text-right text-xs text-muted-foreground [overflow-wrap:anywhere] max-[440px]:text-left">{service.plugin_id} / {service.service_id}</span>
             </li>
           ))}</ul>
         ) : null}
       </section>
       {subscription.status === "active" && subscription.services.length > 0 ? (
-        <section className="subscription-downloads" aria-label={t("Downloads")}>
-          <DownloadLink href={downloadURL(token, "base64")} label="Base64" />
-          <DownloadLink href={downloadURL(token, "mihomo.yaml")} label="Mihomo" />
-          <DownloadLink href={downloadURL(token, "sing-box.json")} label="sing-box" />
+        <section className="mt-7 border-t border-border pt-6" aria-labelledby="downloads-title">
+          <h2 className="mt-0 mb-3 text-[17px] font-semibold" id="downloads-title">{t("Downloads")}</h2>
+          <div className="flex flex-wrap gap-2.5 max-[440px]:grid">
+            <DownloadLink href={downloadURL(token, "base64")} label="Base64" />
+            <DownloadLink href={downloadURL(token, "mihomo.yaml")} label="Mihomo" />
+            <DownloadLink href={downloadURL(token, "sing-box.json")} label="sing-box" />
+          </div>
         </section>
       ) : null}
     </main>
@@ -69,7 +82,7 @@ export function SubscriptionPage({ token }: { token: string }) {
 }
 
 function Detail({ label, value }: { label: string; value: string }) {
-  return <div><span>{label}</span><strong>{value}</strong></div>;
+  return <div className="flex min-h-[76px] flex-col gap-1.5 border-b border-border py-3.5"><dt className="text-xs text-muted-foreground">{label}</dt><dd className="m-0 font-semibold">{value}</dd></div>;
 }
 
 function statusLabel(status: SubscriptionInfo["status"], t: (message: string) => string): string {
@@ -82,8 +95,14 @@ function statusLabel(status: SubscriptionInfo["status"], t: (message: string) =>
   }
 }
 
+function statusTone(status: SubscriptionInfo["status"]): string {
+  if (status === "active") return "bg-success";
+  if (status === "disabled") return "bg-muted-foreground";
+  return "bg-warning";
+}
+
 function DownloadLink({ href, label }: { href: string; label: string }) {
-  return <a className="secondary-button button-with-icon" href={href} download><Download size={16} />{label}</a>;
+  return <Button variant="secondary" size="sm" asChild><a href={href} download><Download size={16} />{label}</a></Button>;
 }
 
 function downloadURL(token: string, format: string): string {

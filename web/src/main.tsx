@@ -6,7 +6,6 @@ import { App } from "./App";
 import { TooltipProvider } from "./components/ui/tooltip";
 import { I18nProvider } from "./i18n";
 import "./tailwind.css";
-import "./styles.css";
 
 const styleNonce = document.querySelector<HTMLMetaElement>('meta[name="relayward-style-nonce"]')?.content;
 if (styleNonce) setNonce(styleNonce);
