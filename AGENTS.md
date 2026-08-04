@@ -1,42 +1,198 @@
 # Relayward Control Plane AGENTS.md
 
-## Project Role
+## 项目定位
 
-This repository contains the Relayward control plane, administration interface, and subscription pages. It owns administrator authentication, nodes, users, node authorizations, quotas, subscriptions, audit records, plugin lifecycle, and normalized telemetry contracts.
+本仓库包含 Relayward 控制中心、React 管理端和公开订阅页，负责管理员认证、节点、用户、节点授权、流量额度、订阅、审计、插件生命周期和标准化遥测。
 
-The control plane must never run or package a local proxy core. Proxy-core-specific configuration and lifecycle behavior belongs in runtime plugins.
+Relayward 是面向长期运行和重复操作的轻量级运维产品。开发时优先保证边界清晰、行为明确、故障可见和代码可维护，不追求复杂架构、过早抽象或展示性效果。
 
-## Architecture
+控制中心不得运行或打包本地代理核心。代理核心的配置、进程管理和专属能力必须位于运行时插件中。
 
-- Use Go for the API, background jobs, Agent sessions, and plugin supervision.
-- Use React and TypeScript for the administration interface and subscription pages.
-- Use SQLite for the single-instance business database and a separate SQLite database for hot events.
-- Keep plugin processes isolated behind the versioned contracts from `Relayward/relayward-sdk`.
-- Do not add Redis, PostgreSQL, a message broker, microservices, or multi-instance coordination without an explicit architecture decision.
+## 架构原则
 
-## Security
+- 使用 Go 实现 HTTP API、后台任务、Agent 会话和插件监督。
+- 使用 React、Vite 和 TypeScript 实现管理端与订阅页，不引入 Next.js。
+- 使用 SQLite 保存单实例业务数据，并使用独立 SQLite 数据库保存热事件。
+- 保持单体控制中心，不引入 Redis、PostgreSQL、消息队列、微服务或多实例协调，除非已有明确架构决策。
+- 前端保持薄层，只负责页面、组件、交互、表单和 API 调用；最终权限、业务规则、校验和持久化由后端负责。
+- 优先显式数据流和小型接口。少依赖、少封装、少全局状态，不为假设中的未来需求建立通用框架。
+- 不实现 3x-ui、xui-agent 或退役 xui-stack 数据与运行时兼容路径。
 
-- Validate every browser, Agent, plugin, GitHub, and subscription input at its boundary.
-- Never log or return passwords, TOTP secrets, GitHub tokens, node credentials, subscription tokens, proxy credentials, source IP data, or complete access events at informational level.
-- Keep browser sessions, subscription tokens, node credentials, and plugin credentials separate.
-- Plugins must not access the control-plane database directly.
+## 后端边界
 
-## Engineering Conventions
+- `internal/server` 负责协议边界、认证授权、输入解析和 HTTP 输出。handler 保持简短，不直接实现业务状态转换或 SQL。
+- `internal/management` 负责控制中心业务规则、权限判断和跨存储操作。
+- `internal/store` 和 `internal/eventstore` 负责 SQLite 数据访问、事务和迁移。
+- 其他 `internal` 包按明确能力划分，例如认证、插件制品、插件进程和事件处理；不要建立没有行为所有权的 `utils` 或通用 service 层。
+- 接受 `context.Context` 的操作必须传递调用方上下文，正确响应取消和超时。
+- 错误必须保留操作语境并明确向上传播，不吞错误，不用成功结果掩盖失败。
+- 并发任务必须说明所有权、退出条件、超时、重试和幂等语义；不得留下无法停止的 goroutine。
+- 优先使用 Go 标准库。新增重要依赖前，必须说明标准库或现有代码为何不足。
 
-- Prefer the Go standard library unless a dependency removes substantial complexity.
-- Keep HTTP handlers thin and put state transitions behind focused services.
-- Keep the frontend operational, compact, and consistent; do not build a marketing landing page.
-- Version public Agent and plugin contracts before implementation depends on them.
-- Do not add compatibility paths for 3x-ui or the retired xui-stack databases.
+## 数据库规则
 
-## Validation
+- 使用显式 SQL，不引入 ORM，除非已有独立架构决策。
+- migration 必须按版本追加、可读、可测试，已经发布的 migration 不得原地改写。
+- 表结构保持简单，明确主键、外键、唯一性、删除语义和必要索引。
+- 持久业务实体通常应包含 `created_at` 和 `updated_at`；短期状态或事件表可按真实查询需要设计。
+- 多步状态转换必须在事务中完成。事务内不得执行无界网络或进程调用。
+- 查询和索引应由实际访问模式驱动，不为简单查询建立仓储接口层层转发。
+- 业务库和热事件库的保留、归档及故障边界必须保持独立。
 
-Run the checks relevant to the change:
+## API 与契约
 
-- `go test ./...`
-- `go vet ./...`
-- `go test -race ./...` for concurrency, sessions, jobs, or storage changes
-- `go build ./cmd/relayward`
-- `npm ci`, `npm run typecheck`, `npm test`, and `npm run build` from `web/` for frontend changes
+- 浏览器 API 以简单 REST 和 JSON 为主，统一使用结构化问题响应。
+- 前后端字段命名和空值语义保持一致，时间、分页、排序和幂等行为必须明确。
+- 前端 API 路径和请求逻辑集中在 API client，不在组件中散落 `fetch`。
+- 前端校验只改善用户体验，后端必须重新校验全部外部输入。
+- Agent 与插件公共契约必须先在 `Relayward/relayward-sdk` 中版本化，再实现生产者和消费者。
+- 修改共享契约时，同时更新并验证 SDK 夹具、控制中心、Agent 和受影响插件。
+- 不用自由格式 map 代替已经理解的公共消息；契约应明确身份、顺序、幂等、兼容、超时、错误和重试语义。
 
-Cross-repository contract changes must also pass the SDK conformance tests and the affected Agent or plugin consumer tests.
+## 插件边界
+
+- 中心插件和节点插件是隔离进程，只能通过声明并批准的版本化契约访问能力。
+- 插件不得直接访问控制中心数据库、内部 Go 包、宿主文件系统或未授权网络能力。
+- 代理核心专属字段和行为留在运行时插件；用户、节点授权、额度、订阅、审计和标准遥测语义属于内核。
+- 插件页面运行在受控沙箱 iframe 中，不得访问父页面 DOM、会话 cookie、中心本地存储或内部 React 运行时。
+- 插件页面所需的宿主上下文、主题、语言、导航、确认交互和受权限控制的后台 RPC 必须通过 UI SDK 提供。
+- 当前 UI SDK 缺少所需能力时，先扩展版本化 SDK 契约和宿主实现，不用临时 `postMessage` 字段或插件专属旁路。
+
+## 前端开发规则
+
+### 基础约定
+
+- 使用 React Function Components 和严格 TypeScript，不使用 class component 或隐式 `any`。
+- 组件保持小而清晰。页面组件组织数据和交互，通用组件封装真实重复行为，不按任意行数拆分。
+- 业务规则不得复制到组件。复杂决策由后端返回明确状态，前端负责忠实展示。
+- 不引入 Redux 或其他客户端全局状态容器。仅在跨页面服务端状态确实需要缓存、失效、轮询或重试时使用 TanStack Query。
+- 表单默认采用清晰的受控组件；授权、插件配置等复杂或动态表单可使用 React Hook Form 和 Zod。不要为两个输入框引入表单抽象，也不要把 Zod 当作后端校验替代品。
+- 用户可见错误必须来自明确错误状态；禁止静默失败、伪造成功或用空数据掩盖请求失败。
+- 每个异步界面都考虑加载、空数据、错误、禁用、成功和重试状态。
+
+### UI 技术栈与迁移
+
+- 目标 UI 栈为 Tailwind CSS 和 shadcn/ui。优先使用 shadcn 基础组件和现有 Lucide 图标，不重复制作 Button、Dialog、Input、Select、Tabs、Tooltip 等通用控件。
+- shadcn/ui 是仓库内源码组件，不是绕过设计规范的组件市场。只引入实际使用的组件和对应依赖。
+- 样式通过语义化 CSS 变量映射到 Tailwind token。除 token 定义、协议兼容或数据可视化外，不在组件中重复硬编码颜色。
+- 当前自定义全局 CSS 属于迁移中的旧实现。迁移应按完整组件或完整页面进行，同一功能面不得长期混用两套按钮、表单或弹窗体系。
+- 新功能不得继续扩展旧的通用 CSS 组件。修复旧页面时可做最小变更；需要明显扩展该页面时，应先迁移相关基础控件。
+- 完成替代后删除对应旧 class 和 CSS，避免保留两个来源相同的实现。
+- 不用大量 `@apply` 重建另一套 CSS 框架，不动态拼接 Tailwind 无法静态识别的 class。
+
+### 国际化
+
+- 管理端和订阅页默认使用简体中文，并提供 English；用户选择保存在浏览器。
+- 界面文案统一通过轻量翻译层输出，不在组件中新增无法切换语言的固定文案。
+- 节点名、用户名、插件名、协议值和插件返回的业务内容属于数据，不擅自翻译。
+- 日期和时间按当前语言格式化，存储与 API 继续使用明确的 UTC 时间语义。
+- 插件页面不得自行推断宿主语言。需要国际化的插件应先通过 UI SDK 获得版本化 locale，再为内置文案提供相同语言；不得维护与宿主选择互相冲突的独立语言状态。
+
+## 产品设计语言
+
+本节是控制中心、订阅页和官方插件页面的统一设计基准。插件可以拥有自己的业务信息结构，但不能形成与 Relayward 无关的视觉产品。
+
+### 产品气质
+
+- 界面应安静、克制、可靠、工作导向，适合扫描、比较和重复操作。
+- 信息密度可以较高，但必须通过稳定对齐、清楚层级和有限强调保持可读性。
+- 不制作营销落地页，不使用夸张 hero、装饰插画、渐变背景、发光球体、玻璃拟态或无业务意义的动画。
+- 品牌只作为清晰的产品身份存在，不挤占工作区，不用大面积品牌色覆盖页面。
+
+### 颜色与层级
+
+- 以中性灰白作为页面、表面、边框和正文基础，不使用单一色系铺满界面。
+- 主操作使用克制的绿色；成功使用绿色，警告使用琥珀色，危险和删除使用红色。颜色必须同时配合文字、图标或状态标签，不能作为唯一信息来源。
+- 统一使用 `background`、`surface`、`border`、`text`、`muted`、`primary`、`success`、`warning`、`destructive` 等语义 token。
+- 阴影只用于弹窗、浮层和确实存在的层级关系；普通页面区块通过间距和边框组织。
+
+### 排版与间距
+
+- 使用系统无衬线字体栈，字距保持 `0`，不随视口宽度缩放字体。
+- 页面标题清晰但克制；面板、表格和弹窗内使用紧凑字号，不把局部标题做成 hero 尺寸。
+- 正文、辅助信息和元数据形成稳定三级层级，辅助文字不能淡到不可读。
+- 使用一致间距尺度。相同层级的页面、表单和表格应保持相同内边距、行高和控件高度。
+
+### 布局与容器
+
+- 桌面端采用清晰的顶栏、导航和主工作区；移动端允许导航横向滚动或折叠，但不得遮挡内容。
+- 页面章节使用无额外装饰的完整布局。卡片只用于独立重复项、弹窗或确实需要边界的工具，不在卡片内嵌套卡片。
+- 圆角保持小而克制，通常不超过 `8px`。避免药丸形文本容器，除非它表达状态或选中值。
+- 表格用于需要比较的数据，保持紧凑表头、稳定列宽和明确操作列。窄屏无法合理重排时允许在表格容器内横向滚动，不允许整页溢出。
+- 固定格式控件应使用明确尺寸、网格轨道或响应式约束，加载、状态和长文本不得导致布局跳动或重叠。
+
+### 控件与交互
+
+- 工具操作优先使用熟悉的 Lucide 图标；不熟悉的图标必须提供 tooltip 和无障碍名称。
+- 明确命令可使用“图标 + 文本”按钮；颜色选择使用 swatch，模式选择使用 segmented control 或 tabs，布尔值使用 switch/checkbox，数字使用合适输入控件。
+- 主操作、次操作、安静操作和危险操作必须有一致层级。一个区域通常只保留一个主要操作。
+- 删除、吊销、重置和覆盖等破坏性操作必须明确对象和影响，并在需要时确认。
+- Dialog 必须管理焦点、支持键盘关闭、恢复触发元素焦点并防止背景误操作。
+- 不在页面上放置讲解产品功能、视觉设计或键盘快捷键的说明性文案；界面本身应通过标签、状态和控件表达用途。
+
+### 响应式与无障碍
+
+- 支持最小 `320px` 宽度以及常见桌面宽度，中文和 English 都不得溢出、遮挡或出现不可操作控件。
+- 所有交互必须可通过键盘完成，并具有可见 focus 状态。
+- 使用语义化 HTML、正确 label、按钮类型、表头和 ARIA 属性；不以可点击 `div` 代替按钮。
+- 状态文本和前景背景保持足够对比度；图标、颜色和位置不能成为唯一提示。
+- 重要前端改动应检查桌面与移动端，并验证没有整页横向滚动、文本重叠或弹窗超出视口。
+
+### 插件一致性
+
+- 官方插件页面不重复渲染 Relayward 顶栏、侧栏或品牌区，由宿主提供页面上下文和导航。
+- 插件使用与宿主同名同义的设计 token、间距尺度、字体、图标、状态颜色和基础组件行为。
+- 主题和设计 token 的可移植表示必须由 `relayward-sdk` 所有并版本化；契约尚未提供时先扩展 SDK，插件不得复制某个中心构建产物中的私有 CSS 文件。
+- UI SDK 可以提供无框架 token 和少量交互桥接，但不得让插件直接依赖控制中心 React 实例或内部组件路径。
+- 插件自定义图表或领域控件仍需遵守宿主的颜色、密度、响应式、国际化和无障碍规则。
+- 修改主项目设计 token 或基础交互时，必须评估 UI SDK、契约插件和官方插件是否需要同步更新。
+
+## 安全与配置
+
+- 浏览器、Agent、插件、GitHub、订阅和文件输入都视为不可信，在边界进行长度、格式、权限和资源限制校验。
+- 不在信息日志、API 响应或审计元数据中返回密码、TOTP secret、GitHub token、节点凭据、订阅 token、代理凭据、源 IP 或完整访问事件。
+- 浏览器 session、订阅 token、节点凭据和插件凭据保持独立，不能复用或互相派生。
+- 密钥通过环境变量、运行时秘密存储或忽略文件提供，不硬编码、不提交、不输出。
+- 不把不可信输入拼接到 SQL、shell、路径或 URL；优先使用参数化 SQL 和结构化 API。
+- 安全相关失败必须显式记录适当上下文，但不能把秘密或原始敏感负载写入日志。
+
+## 目录与代码组织
+
+- 保持现有 `cmd/relayward`、`internal/server`、`internal/management`、`internal/store`、`internal/eventstore` 和其他能力包边界。
+- 前端当前使用 `web/src/components`。当一个业务领域形成多个页面、hooks 和类型时，再迁移到 `web/src/features/<domain>`；不要仅为符合模板批量搬动文件。
+- 可复用 UI 基础组件放在 `web/src/components/ui`，跨页面业务无关组件放在 `web/src/components`。
+- API client、国际化、插件桥接和系统加载等基础模块保留在 `web/src` 下的明确模块中，避免 `lib` 成为杂物目录。
+- 测试尽量与被测模块相邻，跨进程契约夹具由 `relayward-sdk` 所有。
+
+## 工作规则
+
+- 修改前完整阅读相关文件、测试、调用方和仓库状态，先理解现有边界再编辑。
+- 优先做满足需求的最小完整改动，不重构无关代码，不保留新旧两套业务逻辑。
+- 不确定的业务需求应先明确；不要凭空发明复杂行为，也不要用长期 TODO 代替必要决策。
+- 新功能同步考虑类型、错误处理、安全边界、国际化、测试和运行状态。
+- 修改 API 或契约时同步更新全部生产者、消费者、文档和夹具。
+- 生成代码后检查差异，清理无关改动、重复逻辑、生成物、秘密和静默 fallback。
+- 不修改 `legacy` 仓库实现，也不从 `reference` 仓库直接复制生产代码。
+
+## 验证要求
+
+按变更范围运行相关检查：
+
+- 后端通用变更：`go test ./...`、`go vet ./...`、`go build ./cmd/relayward`
+- 并发、会话、后台任务或存储变更：额外运行 `go test -race ./...`
+- 前端依赖安装：从 `web/` 运行 `npm ci`
+- 前端代码：从 `web/` 运行 `npm run typecheck`、`npm test`、`npm run build`
+- UI 变更：使用真实浏览器检查桌面与移动视口、主要状态、中文与 English，并确认无重叠和整页横向溢出
+- Docker 或服务变更：构建实际镜像并验证健康检查和可访问性，不把进程已启动当作成功
+- 跨仓库契约变更：运行 SDK conformance tests，并验证每个受影响的 Agent 或插件消费者
+
+无法运行某项检查时，必须说明原因、未覆盖风险和下一项最接近的验证。
+
+## 禁止事项
+
+- 不引入 Next.js、Redux、复杂客户端状态容器或第二套 UI 组件系统。
+- 不引入 Kubernetes、微服务、Kafka、Redis 或其他重型基础设施来解决单实例问题。
+- 不把后端业务规则、权限判断或秘密处理搬到前端。
+- 不让插件绕过 SDK、权限系统、沙箱或进程隔离。
+- 不创建过深目录、空抽象层、大量模板代码或无真实消费者的公共接口。
+- 不为通过测试加入 mock success、静默 fallback、宽泛错误吞噬或兼容旧错误行为的旁路。
