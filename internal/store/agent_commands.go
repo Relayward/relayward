@@ -154,6 +154,40 @@ WHERE node_id = ? AND kind = ? AND status = 'pending' AND expires_at <= ?
  ORDER BY agent_commands.created_at DESC, agent_commands.rowid DESC LIMIT 1`, nodeID, kind))
 }
 
+func (store *Store) ListAgentCommands(ctx context.Context, nodeID string, limit int, now time.Time) ([]AgentCommand, error) {
+	if limit < 1 {
+		return nil, errors.New("Agent command list limit must be positive")
+	}
+	if _, err := store.db.ExecContext(ctx, `
+UPDATE agent_commands SET status = 'expired', completed_at = ?, updated_at = ?
+WHERE node_id = ? AND status = 'pending' AND expires_at <= ?
+  AND (kind NOT IN (?, ?) OR attempts = 0)`,
+		unixTime(now), unixTime(now), nodeID, unixTime(now),
+		agentv1.CommandPluginReconcile, agentv1.CommandPolicyReconcile); err != nil {
+		return nil, fmt.Errorf("expire Agent commands before listing: %w", err)
+	}
+	rows, err := store.db.QueryContext(ctx, agentCommandSelect+`
+ WHERE agent_commands.node_id = ?
+ ORDER BY agent_commands.created_at DESC, agent_commands.rowid DESC
+ LIMIT ?`, nodeID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list Agent commands: %w", err)
+	}
+	defer rows.Close()
+	values := make([]AgentCommand, 0, limit)
+	for rows.Next() {
+		value, err := scanAgentCommand(rows)
+		if err != nil {
+			return nil, err
+		}
+		values = append(values, value)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate Agent commands: %w", err)
+	}
+	return values, nil
+}
+
 func (store *Store) NextAgentCommand(ctx context.Context, nodeID string, now time.Time) (AgentCommand, error) {
 	tx, err := store.db.BeginTx(ctx, nil)
 	if err != nil {

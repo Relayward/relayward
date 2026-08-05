@@ -92,6 +92,21 @@ export interface AgentUpdate {
   updated_at: string;
 }
 
+export interface NodeCommand {
+  id: string;
+  node_id: string;
+  kind: string;
+  scope_key: string;
+  status: "pending" | "succeeded" | "failed" | "expired";
+  attempts: number;
+  last_sent_at: string | null;
+  problem?: Problem;
+  completed_at: string | null;
+  expires_at: string;
+  created_at: string;
+  updated_at: string;
+}
+
 export type PluginState = "running" | "stopped" | "absent" | "failed";
 
 export interface NodePluginInstance {
@@ -504,6 +519,13 @@ export async function getLatestAgentUpdate(id: string): Promise<AgentUpdate | nu
     if (cause instanceof APIError && cause.status === 404) return null;
     throw cause;
   }
+}
+
+export async function listNodeCommands(id: string, limit = 50): Promise<NodeCommand[]> {
+  const response = await request<{ items: NodeCommand[] }>(
+    `/api/v1/nodes/${encodeURIComponent(id)}/commands?limit=${encodeURIComponent(String(limit))}`,
+  );
+  return response.items;
 }
 
 export async function listNodePluginInstances(): Promise<NodePluginInstance[]> {

@@ -20,7 +20,7 @@ export function Modal({ title, children, onClose, dismissible = true, width = "n
   return (
     <Dialog open onOpenChange={(open) => { if (!open && dismissible) onClose(); }}>
       <DialogContent
-        className={width === "wide" ? "max-w-3xl" : undefined}
+        className={width === "wide" ? "sm:max-w-3xl" : undefined}
         closeLabel={t("Close")}
         showCloseButton={dismissible}
         onEscapeKeyDown={(event) => { if (!dismissible) event.preventDefault(); }}

@@ -1,5 +1,5 @@
 import { type FormEvent, type ReactNode, useEffect, useId, useState } from "react";
-import { KeyRound, Mail, MessageCircle, Pencil, Plus, RefreshCw, Server, ShieldX, Trash2, Users } from "lucide-react";
+import { Eye, KeyRound, Mail, MessageCircle, Pencil, Plus, RefreshCw, Server, ShieldX, Trash2, Users } from "lucide-react";
 
 import {
   APIError,
@@ -26,6 +26,7 @@ import { useI18n } from "../i18n";
 import { cn } from "../lib/utils";
 import { Field, FormError } from "./AuthScreen";
 import { Modal } from "./Modal";
+import { NodeDetailsDialog } from "./NodeDetailsDialog";
 import { PageHeader, SummaryBar, SummaryItem } from "./PageLayout";
 import { Button } from "./ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
@@ -48,8 +49,10 @@ export function NodesView() {
   const [tokenNode, setTokenNode] = useState<Node>();
   const [updatingNodeID, setUpdatingNodeID] = useState<string>();
   const [updates, setUpdates] = useState<Record<string, AgentUpdate | null>>({});
+  const [inspectingNodeID, setInspectingNodeID] = useState<string>();
   const [search, setSearch] = useState("");
   const updating = items.find((node) => node.id === updatingNodeID);
+  const inspecting = items.find((node) => node.id === inspectingNodeID);
   const visibleItems = items.filter((node) => [node.name, node.public_address, node.agent_os, node.agent_status]
     .some((value) => value?.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase())));
 
@@ -116,6 +119,7 @@ export function NodesView() {
             <TableCell><AgentUpdateStatus value={updates[node.id]} /></TableCell>
             <TableCell className="whitespace-nowrap text-muted-foreground">{node.last_seen_at ? formatDateTime(node.last_seen_at) : t("Never")}</TableCell>
             <TableCell className="w-px text-right whitespace-nowrap">
+              <IconAction label={t("View node details")} onClick={() => setInspectingNodeID(node.id)}><Eye size={17} /></IconAction>
               <IconAction label={t("Create registration token")} onClick={() => issueToken(node)}><KeyRound size={17} /></IconAction>
               <IconAction
                 label={t("Update Agent")}
@@ -136,6 +140,12 @@ export function NodesView() {
           </TableRow>
         ))}
       </ResourceTable>
+      {inspecting ? (
+        <NodeDetailsDialog
+          node={inspecting}
+          onClose={() => setInspectingNodeID(undefined)}
+        />
+      ) : null}
       {editing ? (
         <NodeDialog
           value={editing === "new" ? undefined : editing}

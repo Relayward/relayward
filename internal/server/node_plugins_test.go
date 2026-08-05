@@ -72,6 +72,22 @@ func TestNodePluginManagementAPIQueuesEncryptedState(t *testing.T) {
 	if len(listed.Items) != 1 || listed.Items[0].PluginName != pluginManifest.Name {
 		t.Fatalf("listed plugins = %+v", listed.Items)
 	}
+	commands := performRequest(handler, http.MethodGet, "/api/v1/nodes/"+node.ID+"/commands?limit=10", nil, nil, sessionCookie)
+	if commands.Code != http.StatusOK {
+		t.Fatalf("list node commands status = %d, body = %s", commands.Code, commands.Body.String())
+	}
+	var history struct {
+		Items []agentCommandResponse `json:"items"`
+	}
+	decodeResponse(t, commands, &history)
+	if len(history.Items) != 1 || history.Items[0].Kind != agentv1.CommandPluginReconcile ||
+		history.Items[0].ScopeKey != pluginManifest.ID || history.Items[0].Status != store.AgentCommandPending {
+		t.Fatalf("node command history = %+v", history.Items)
+	}
+	if strings.Contains(commands.Body.String(), "must-not-leak") || strings.Contains(commands.Body.String(), "download_url") ||
+		strings.Contains(commands.Body.String(), "request_sha256") {
+		t.Fatalf("node command history leaked private request data: %s", commands.Body.String())
+	}
 	conflict := performRequest(handler, http.MethodPut, path,
 		[]byte(`{"desired_state":"stopped","version":"1.2.3","configuration":{"enabled":true}}`),
 		csrfHeaders, sessionCookie)

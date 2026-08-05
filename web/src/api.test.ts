@@ -6,6 +6,7 @@ import {
   getSystemSettings,
   getLatestAgentUpdate,
   listAdministratorSessions,
+  listNodeCommands,
   reconcileNodePlugin,
   requestAgentUpdate,
   revokeAdministratorSession,
@@ -70,6 +71,20 @@ describe("Agent update API", () => {
     }, 404)));
 
     await expect(getLatestAgentUpdate("node-id")).resolves.toBeNull();
+  });
+});
+
+describe("Node command API", () => {
+  it("loads bounded execution history for an encoded node ID", async () => {
+    const commands = [{ id: "command-1", kind: "plugin.reconcile", status: "succeeded" }];
+    const fetchMock = vi.fn<typeof fetch>(async () => jsonResponse({ items: commands }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(listNodeCommands("node/id", 25)).resolves.toEqual(commands);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/v1/nodes/node%2Fid/commands?limit=25",
+      expect.objectContaining({ credentials: "same-origin" }),
+    );
   });
 });
 

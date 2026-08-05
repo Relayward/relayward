@@ -19,6 +19,8 @@ import (
 
 const agentUpdateCommandLifetime = 30 * time.Minute
 
+const maximumAgentCommandHistory = 100
+
 type RegisteredAgent struct {
 	Node       store.Node
 	Credential string
@@ -146,6 +148,19 @@ func (service *Service) LatestAgentUpdate(ctx context.Context, nodeID string) (s
 		return store.AgentCommand{}, err
 	}
 	return service.store.LatestAgentCommandByKind(ctx, nodeID, agentv1.CommandAgentUpdate, service.currentTime())
+}
+
+func (service *Service) ListAgentCommands(ctx context.Context, nodeID string, limit int) ([]store.AgentCommand, error) {
+	if err := validateID("node_id", nodeID); err != nil {
+		return nil, err
+	}
+	if limit < 1 || limit > maximumAgentCommandHistory {
+		return nil, invalid("limit", fmt.Sprintf("must be between 1 and %d", maximumAgentCommandHistory))
+	}
+	if _, err := service.store.NodeByID(ctx, nodeID); err != nil {
+		return nil, err
+	}
+	return service.store.ListAgentCommands(ctx, nodeID, limit, service.currentTime())
 }
 
 func containsCapability(values []string, expected string) bool {

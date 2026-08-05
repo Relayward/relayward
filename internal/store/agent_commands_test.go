@@ -161,6 +161,34 @@ func TestAgentCommandsDispatchInOrderAndSentCommandExpires(t *testing.T) {
 	}
 }
 
+func TestListAgentCommandsUsesNewestFirstAndBoundedLimit(t *testing.T) {
+	ctx := context.Background()
+	database, err := Open(ctx, filepath.Join(t.TempDir(), "relayward.db"))
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	defer database.Close()
+	now := time.Date(2026, time.August, 2, 9, 0, 0, 0, time.UTC)
+	if err := database.CreateNode(ctx, Node{ID: "node-id", Name: "edge", Enabled: true}, now); err != nil {
+		t.Fatalf("CreateNode() error = %v", err)
+	}
+	for index, commandID := range []string{"command-old", "command-new"} {
+		createdAt := now.Add(time.Duration(index) * time.Minute)
+		if _, err := database.CreateAgentCommand(ctx, commandID, "node-id", agentv1.Command{
+			Kind: "agent.test", IssuedAt: createdAt, ExpiresAt: createdAt.Add(time.Hour), Payload: json.RawMessage(`{}`),
+		}, createdAt); err != nil {
+			t.Fatalf("CreateAgentCommand(%q) error = %v", commandID, err)
+		}
+	}
+	values, err := database.ListAgentCommands(ctx, "node-id", 1, now.Add(2*time.Minute))
+	if err != nil || len(values) != 1 || values[0].ID != "command-new" {
+		t.Fatalf("ListAgentCommands() = %+v, %v", values, err)
+	}
+	if _, err := database.ListAgentCommands(ctx, "node-id", 0, now); err == nil {
+		t.Fatal("ListAgentCommands() accepted an empty limit")
+	}
+}
+
 func TestAgentCommandSurvivesStoreRestart(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "relayward.db")
