@@ -114,6 +114,14 @@ func TestSubscriptionHTTPFormatsAnnouncementAndInactiveGate(t *testing.T) {
 	if announcement.Code != http.StatusOK {
 		t.Fatalf("announcement status = %d, body = %s", announcement.Code, announcement.Body.String())
 	}
+	settings := performRequest(handler, http.MethodPut, "/api/v1/settings", []byte(`{
+      "session_lifetime_minutes":1440,"timezone":"UTC","public_url":"https://panel.example.com",
+      "subscription_title":"Relayward Home","support_url":"https://support.example.com",
+      "profile_url":"https://example.com/account","subscription_refresh_hours":24
+    }`), headers, sessionCookie)
+	if settings.Code != http.StatusOK {
+		t.Fatalf("settings status = %d, body = %s", settings.Code, settings.Body.String())
+	}
 	catalog := performRequest(handler, http.MethodGet, "/api/v1/plugin-services?node_id="+registered.Node.ID, nil, nil, sessionCookie)
 	if catalog.Code != http.StatusOK || !strings.Contains(catalog.Body.String(), `"display_name":"Main"`) || strings.Contains(catalog.Body.String(), "subscription_sha256") {
 		t.Fatalf("plugin service catalog status = %d, body = %s", catalog.Code, catalog.Body.String())
@@ -122,6 +130,8 @@ func TestSubscriptionHTTPFormatsAnnouncementAndInactiveGate(t *testing.T) {
 	root := "/api/v1/subscriptions/" + created.SubscriptionToken
 	metadata := performRequest(handler, http.MethodGet, root, nil, nil)
 	if metadata.Code != http.StatusOK || !strings.Contains(metadata.Body.String(), `"status":"active"`) ||
+		!strings.Contains(metadata.Body.String(), `"title":"Relayward Home"`) ||
+		!strings.Contains(metadata.Body.String(), `"support_url":"https://support.example.com"`) ||
 		!strings.Contains(metadata.Body.String(), `"announcement":"Maintenance tonight"`) ||
 		!strings.Contains(metadata.Body.String(), `"display_name":"Main"`) {
 		t.Fatalf("subscription metadata status = %d, body = %s", metadata.Code, metadata.Body.String())
@@ -129,7 +139,9 @@ func TestSubscriptionHTTPFormatsAnnouncementAndInactiveGate(t *testing.T) {
 	base64Response := performRequest(handler, http.MethodGet, root+"/base64", nil, nil)
 	decoded, decodeErr := base64.StdEncoding.DecodeString(strings.TrimSpace(base64Response.Body.String()))
 	if base64Response.Code != http.StatusOK || decodeErr != nil || !strings.Contains(string(decoded), "relayward-test://") ||
-		!strings.Contains(base64Response.Header().Get("Content-Disposition"), "relayward.txt") {
+		!strings.Contains(base64Response.Header().Get("Content-Disposition"), "relayward.txt") ||
+		base64Response.Header().Get("Profile-Update-Interval") != "24" ||
+		base64Response.Header().Get("Support-URL") != "https://support.example.com" {
 		t.Fatalf("base64 status = %d, content=%q, decoded=%q, error=%v", base64Response.Code, base64Response.Body.String(), decoded, decodeErr)
 	}
 	mihomo := performRequest(handler, http.MethodGet, root+"/mihomo.yaml", nil, nil)

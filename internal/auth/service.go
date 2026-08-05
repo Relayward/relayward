@@ -23,7 +23,7 @@ var (
 	usernamePattern         = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{2,63}$`)
 )
 
-const sessionLifetime = 24 * time.Hour
+const maximumUserAgentLength = 512
 
 type Service struct {
 	store             *store.Store
@@ -45,6 +45,10 @@ type Authenticated struct {
 	TokenHash []byte
 }
 
+type SessionDetails struct {
+	UserAgent string
+}
+
 func NewService(database *store.Store, secrets *secretbox.Manager) (*Service, error) {
 	dummyHash, err := HashPassword("relayward invalid credential sentinel")
 	if err != nil {
@@ -53,7 +57,7 @@ func NewService(database *store.Store, secrets *secretbox.Manager) (*Service, er
 	return &Service{store: database, secrets: secrets, now: time.Now, dummyPasswordHash: dummyHash}, nil
 }
 
-func (service *Service) Setup(ctx context.Context, username, password string) (Credentials, error) {
+func (service *Service) Setup(ctx context.Context, username, password string, details ...SessionDetails) (Credentials, error) {
 	username = strings.TrimSpace(username)
 	if !usernamePattern.MatchString(username) {
 		return Credentials{}, fmt.Errorf("%w: must contain 3 to 64 letters, numbers, dots, underscores, or hyphens", ErrInvalidUsername)
@@ -67,10 +71,10 @@ func (service *Service) Setup(ctx context.Context, username, password string) (C
 	if err != nil {
 		return Credentials{}, err
 	}
-	return service.createSession(ctx, administrator, "administrator.setup", now)
+	return service.createSession(ctx, administrator, "administrator.setup", now, firstSessionDetails(details))
 }
 
-func (service *Service) Login(ctx context.Context, username, password, secondFactor string) (Credentials, error) {
+func (service *Service) Login(ctx context.Context, username, password, secondFactor string, details ...SessionDetails) (Credentials, error) {
 	now := service.now().UTC()
 	administrator, err := service.store.AdministratorByUsername(ctx, strings.TrimSpace(username))
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
@@ -105,7 +109,7 @@ func (service *Service) Login(ctx context.Context, username, password, secondFac
 			return Credentials{}, ErrInvalidSecondFactor
 		}
 	}
-	return service.createSession(ctx, administrator, "administrator.login", now)
+	return service.createSession(ctx, administrator, "administrator.login", now, firstSessionDetails(details))
 }
 
 func (service *Service) verifySecondFactor(ctx context.Context, value string, now time.Time) (bool, error) {
@@ -174,6 +178,60 @@ func (service *Service) Logout(ctx context.Context, authenticated Authenticated)
 		Action:     "administrator.logout",
 		TargetType: "session",
 		Outcome:    "success",
+	})
+}
+
+func (service *Service) ChangeUsername(ctx context.Context, username, password, secondFactor string) error {
+	administrator, err := service.store.AdministratorByID(ctx, 1)
+	if err != nil {
+		return err
+	}
+	if err := service.verifySensitiveAction(ctx, administrator, password, secondFactor); err != nil {
+		return err
+	}
+	username = strings.TrimSpace(username)
+	if !usernamePattern.MatchString(username) {
+		return fmt.Errorf("%w: must contain 3 to 64 letters, numbers, dots, underscores, or hyphens", ErrInvalidUsername)
+	}
+	return service.store.UpdateAdministratorUsername(ctx, username, service.now().UTC())
+}
+
+func (service *Service) ChangePassword(ctx context.Context, password, newPassword, secondFactor string) error {
+	administrator, err := service.store.AdministratorByID(ctx, 1)
+	if err != nil {
+		return err
+	}
+	if err := service.verifySensitiveAction(ctx, administrator, password, secondFactor); err != nil {
+		return err
+	}
+	passwordHash, err := HashPassword(newPassword)
+	if err != nil {
+		return err
+	}
+	return service.store.UpdateAdministratorPassword(ctx, passwordHash, service.now().UTC())
+}
+
+func (service *Service) ListSessions(ctx context.Context, authenticated Authenticated) ([]store.Session, error) {
+	return service.store.ListAdministratorSessions(ctx, authenticated.Admin.ID, service.now().UTC())
+}
+
+func (service *Service) RevokeSession(ctx context.Context, authenticated Authenticated, sessionID string) (bool, error) {
+	if sessionID == "" || len(sessionID) > 128 {
+		return false, store.ErrNotFound
+	}
+	now := service.now().UTC()
+	err := service.store.DeleteSessionByIDWithAudit(ctx, authenticated.Admin.ID, sessionID, store.AuditEntry{
+		OccurredAt: now, ActorType: "administrator", ActorID: "1", Action: "administrator.session.revoke",
+		TargetType: "session", TargetID: sessionID, Outcome: "success",
+	})
+	return sessionID == authenticated.Session.ID, err
+}
+
+func (service *Service) RevokeOtherSessions(ctx context.Context, authenticated Authenticated) (int64, error) {
+	now := service.now().UTC()
+	return service.store.DeleteOtherSessionsWithAudit(ctx, authenticated.Admin.ID, authenticated.Session.ID, store.AuditEntry{
+		OccurredAt: now, ActorType: "administrator", ActorID: "1", Action: "administrator.sessions.revoke_others",
+		TargetType: "session", Outcome: "success",
 	})
 }
 
@@ -299,7 +357,11 @@ func (service *Service) verifySensitiveAction(ctx context.Context, administrator
 	return nil
 }
 
-func (service *Service) createSession(ctx context.Context, administrator store.Administrator, action string, now time.Time) (Credentials, error) {
+func (service *Service) createSession(ctx context.Context, administrator store.Administrator, action string, now time.Time, details SessionDetails) (Credentials, error) {
+	sessionID, err := NewToken(16)
+	if err != nil {
+		return Credentials{}, err
+	}
 	sessionToken, err := NewToken(32)
 	if err != nil {
 		return Credentials{}, err
@@ -308,11 +370,17 @@ func (service *Service) createSession(ctx context.Context, administrator store.A
 	if err != nil {
 		return Credentials{}, err
 	}
-	expiresAt := now.Add(sessionLifetime)
+	settings, err := service.store.SystemSettings(ctx)
+	if err != nil {
+		return Credentials{}, err
+	}
+	expiresAt := now.Add(time.Duration(settings.SessionLifetimeMinutes) * time.Minute)
 	session := store.Session{
+		ID:              sessionID,
 		TokenHash:       TokenHash(sessionToken),
 		CSRFHash:        TokenHash(csrfToken),
 		AdministratorID: administrator.ID,
+		UserAgent:       normalizeUserAgent(details.UserAgent),
 		CreatedAt:       now,
 		LastSeenAt:      now,
 		ExpiresAt:       expiresAt,
@@ -328,6 +396,22 @@ func (service *Service) createSession(ctx context.Context, administrator store.A
 		return Credentials{}, err
 	}
 	return Credentials{SessionToken: sessionToken, CSRFToken: csrfToken, ExpiresAt: expiresAt, Admin: administrator}, nil
+}
+
+func firstSessionDetails(values []SessionDetails) SessionDetails {
+	if len(values) == 0 {
+		return SessionDetails{}
+	}
+	return values[0]
+}
+
+func normalizeUserAgent(value string) string {
+	value = strings.TrimSpace(value)
+	runes := []rune(value)
+	if len(runes) > maximumUserAgentLength {
+		return string(runes[:maximumUserAgentLength])
+	}
+	return value
 }
 
 func (service *Service) auditLogin(ctx context.Context, outcome string, now time.Time) error {

@@ -182,16 +182,37 @@ func TestPluginLifecycleHTTPFlowDoesNotExposeSecrets(t *testing.T) {
 	if ui.Code != http.StatusOK || strings.TrimSpace(ui.Body.String()) != `{"ok":true}` {
 		t.Fatalf("UI RPC status = %d, body = %s", ui.Code, ui.Body.String())
 	}
-	uiAssetPath := "/api/v1/plugins/" + installation.PluginID + "/ui/index.html"
-	unauthenticatedAsset := performRequest(handler, http.MethodGet, uiAssetPath, nil, nil)
-	if unauthenticatedAsset.Code != http.StatusUnauthorized {
-		t.Fatalf("unauthenticated plugin UI status = %d", unauthenticatedAsset.Code)
+	uiSessionPath := "/api/v1/plugins/" + installation.PluginID + "/ui-session"
+	unauthenticatedUISession := performRequest(handler, http.MethodPost, uiSessionPath, nil, headers)
+	if unauthenticatedUISession.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated plugin UI session status = %d", unauthenticatedUISession.Code)
 	}
-	uiAsset := performRequest(handler, http.MethodGet, uiAssetPath, nil, nil, sessionCookie)
+	uiSessionWithoutCSRF := performRequest(handler, http.MethodPost, uiSessionPath, nil, nil, sessionCookie)
+	if uiSessionWithoutCSRF.Code != http.StatusForbidden {
+		t.Fatalf("plugin UI session without CSRF status = %d", uiSessionWithoutCSRF.Code)
+	}
+	uiSession := performRequest(handler, http.MethodPost, uiSessionPath, nil, headers, sessionCookie)
+	if uiSession.Code != http.StatusCreated {
+		t.Fatalf("plugin UI session status = %d, body = %s", uiSession.Code, uiSession.Body.String())
+	}
+	var session pluginUISessionResponse
+	decodeResponse(t, uiSession, &session)
+	if !strings.HasPrefix(session.URL, "/plugin-ui/"+installation.PluginID+"/") ||
+		!strings.HasSuffix(session.URL, "/index.html") {
+		t.Fatalf("plugin UI session URL = %q", session.URL)
+	}
+	uiAsset := performRequest(handler, http.MethodGet, session.URL, nil, nil)
 	if uiAsset.Code != http.StatusOK || !strings.Contains(uiAsset.Body.String(), "plugin-ui") ||
 		uiAsset.Header().Get("X-Frame-Options") != "" || uiAsset.Header().Get("Content-Security-Policy") !=
-		"default-src 'none'; script-src 'self'; style-src 'self'; style-src-attr 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'none'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'" {
+		"default-src 'none'; script-src 'self'; style-src 'self'; style-src-attr 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'none'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'" ||
+		uiAsset.Header().Get("Access-Control-Allow-Origin") != "*" ||
+		uiAsset.Header().Get("Cross-Origin-Resource-Policy") != "cross-origin" {
 		t.Fatalf("plugin UI asset status = %d, headers = %+v, body = %s", uiAsset.Code, uiAsset.Header(), uiAsset.Body.String())
+	}
+	invalidUIAsset := performRequest(handler, http.MethodGet,
+		"/plugin-ui/"+installation.PluginID+"/invalid/index.html", nil, nil)
+	if invalidUIAsset.Code != http.StatusNotFound {
+		t.Fatalf("invalid plugin UI access status = %d", invalidUIAsset.Code)
 	}
 	releases.release = serverPluginRelease("1.2.4")
 	upgraded := performRequest(handler, http.MethodPost, "/api/v1/plugins/"+installation.PluginID+"/upgrade",
@@ -202,6 +223,10 @@ func TestPluginLifecycleHTTPFlowDoesNotExposeSecrets(t *testing.T) {
 	decodeResponse(t, upgraded, &installation)
 	if installation.ActiveVersion != "1.2.4" || installation.PreviousVersion != "1.2.3" || releases.token != "replacement-token" {
 		t.Fatalf("upgraded installation = %+v, reused token = %q", installation, releases.token)
+	}
+	staleUIAsset := performRequest(handler, http.MethodGet, session.URL, nil, nil)
+	if staleUIAsset.Code != http.StatusNotFound {
+		t.Fatalf("stale plugin UI access status = %d", staleUIAsset.Code)
 	}
 	uninstalled := performRequest(handler, http.MethodDelete, "/api/v1/plugins/"+installation.PluginID, nil,
 		map[string]string{"X-CSRF-Token": csrfCookie.Value}, sessionCookie)

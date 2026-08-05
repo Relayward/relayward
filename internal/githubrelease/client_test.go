@@ -119,6 +119,16 @@ func TestResolveAssetURLRejectsInvalidTokenBeforeRequest(t *testing.T) {
 	}
 }
 
+func TestClientUsesLongerTimeoutForArtifactDownloads(t *testing.T) {
+	client := NewClient(nil)
+	if client.httpClient.Timeout != 0 {
+		t.Fatalf("HTTP client timeout = %v, want operation-specific context deadlines", client.httpClient.Timeout)
+	}
+	if artifactDownloadTimeout <= defaultRequestTimeout {
+		t.Fatalf("artifact timeout = %v, request timeout = %v", artifactDownloadTimeout, defaultRequestTimeout)
+	}
+}
+
 func writeRelease(t *testing.T, writer http.ResponseWriter, value manifest.Manifest, assets map[int64][]byte) {
 	t.Helper()
 	response := map[string]any{

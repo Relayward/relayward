@@ -316,7 +316,7 @@ func TestAgentUpdateCompletionRequiresMatchingActivatedOutput(t *testing.T) {
 		requestAudit.Metadata["command_id"] != command.ID || requestAudit.Metadata["version"] != "0.2.0" {
 		t.Fatalf("request audit = %+v", requestAudit)
 	}
-	if completeAudit == nil || completeAudit.ActorType != "agent" || completeAudit.Outcome != agentv1.CommandStatusSucceeded ||
+	if completeAudit == nil || completeAudit.ActorType != "agent" || completeAudit.Outcome != "success" ||
 		completeAudit.TargetID != "node-id" || completeAudit.Metadata["command_id"] != command.ID || completeAudit.Metadata["version"] != "0.2.0" {
 		t.Fatalf("completion audit = %+v", completeAudit)
 	}

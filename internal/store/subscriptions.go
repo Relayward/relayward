@@ -36,6 +36,7 @@ type SubscriptionService struct {
 
 type SubscriptionSnapshot struct {
 	Authorization    Authorization
+	Settings         SystemSettings
 	UserName         string
 	NodeName         string
 	NodeAddress      string
@@ -124,6 +125,19 @@ WHERE authorization_id = ? AND period_id = ?`, snapshot.Authorization.ID, period
 	} else if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return SubscriptionSnapshot{}, fmt.Errorf("read subscription announcement: %w", err)
 	}
+
+	var settingsUpdatedAt int64
+	if err := tx.QueryRowContext(ctx, `
+SELECT session_lifetime_minutes, timezone, public_url, subscription_title,
+       support_url, profile_url, subscription_refresh_hours, updated_at
+FROM system_settings WHERE id = 1`).Scan(
+		&snapshot.Settings.SessionLifetimeMinutes, &snapshot.Settings.Timezone, &snapshot.Settings.PublicURL,
+		&snapshot.Settings.SubscriptionTitle, &snapshot.Settings.SupportURL, &snapshot.Settings.ProfileURL,
+		&snapshot.Settings.SubscriptionRefreshHours, &settingsUpdatedAt,
+	); err != nil {
+		return SubscriptionSnapshot{}, fmt.Errorf("read subscription settings: %w", err)
+	}
+	snapshot.Settings.UpdatedAt = fromUnix(settingsUpdatedAt)
 
 	rows, err := tx.QueryContext(ctx, `
 SELECT bindings.plugin_id, bindings.service_id, services.display_name, services.capabilities_json,

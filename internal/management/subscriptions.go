@@ -34,6 +34,7 @@ type RenderedSubscription struct {
 	Content    []byte
 	RenderedAt time.Time
 	Cached     bool
+	Settings   store.SystemSettings
 }
 
 func (service *Service) Subscription(ctx context.Context, token string) (store.SubscriptionSnapshot, error) {
@@ -92,7 +93,7 @@ func (service *Service) RenderSubscription(ctx context.Context, token, format st
 		return RenderedSubscription{}, cacheErr
 	}
 	if cacheErr == nil && subscriptionCacheWithin(cache, now, subscriptionCacheFresh) {
-		return cachedSubscription(cache, format, true), nil
+		return cachedSubscription(cache, format, true, snapshot.Settings), nil
 	}
 
 	renderContext, cancel := context.WithTimeout(ctx, subscriptionRenderLimit)
@@ -102,10 +103,10 @@ func (service *Service) RenderSubscription(ctx context.Context, token, format st
 		if err := service.store.SaveSubscriptionRenderCache(ctx, snapshot.Authorization.ID, rendered); err != nil {
 			return RenderedSubscription{}, err
 		}
-		return cachedSubscription(rendered, format, false), nil
+		return cachedSubscription(rendered, format, false, snapshot.Settings), nil
 	}
 	if cacheErr == nil && subscriptionCacheWithin(cache, now, subscriptionCacheMaxAge) {
-		return cachedSubscription(cache, format, true), nil
+		return cachedSubscription(cache, format, true, snapshot.Settings), nil
 	}
 	return RenderedSubscription{}, fmt.Errorf("%w: subscription plugins are unavailable", ErrUpstreamUnavailable)
 }
@@ -294,7 +295,7 @@ func sortedRawMessages(values map[string]json.RawMessage) []json.RawMessage {
 	return result
 }
 
-func cachedSubscription(value store.SubscriptionRenderCache, format string, cached bool) RenderedSubscription {
+func cachedSubscription(value store.SubscriptionRenderCache, format string, cached bool, settings store.SystemSettings) RenderedSubscription {
 	var content []byte
 	switch format {
 	case store.SubscriptionFormatBase64:
@@ -304,7 +305,7 @@ func cachedSubscription(value store.SubscriptionRenderCache, format string, cach
 	case store.SubscriptionFormatSingBox:
 		content = value.SingBox
 	}
-	return RenderedSubscription{Content: append([]byte(nil), content...), RenderedAt: value.RenderedAt, Cached: cached}
+	return RenderedSubscription{Content: append([]byte(nil), content...), RenderedAt: value.RenderedAt, Cached: cached, Settings: settings}
 }
 
 func (service *Service) ListPluginServices(ctx context.Context, nodeID string) ([]store.PluginService, error) {

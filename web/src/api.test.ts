@@ -1,6 +1,31 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { APIError, getLatestAgentUpdate, reconcileNodePlugin, requestAgentUpdate, revokeNodeCredential, type AgentUpdate } from "./api";
+import {
+  APIError,
+  createPluginUISession,
+  getSystemSettings,
+  getLatestAgentUpdate,
+  listAdministratorSessions,
+  reconcileNodePlugin,
+  requestAgentUpdate,
+  revokeAdministratorSession,
+  revokeNodeCredential,
+  updateAdministratorUsername,
+  updateSystemSettings,
+  type AgentUpdate,
+  type SystemSettings,
+} from "./api";
+
+const settings: SystemSettings = {
+  session_lifetime_minutes: 1440,
+  timezone: "Asia/Shanghai",
+  public_url: "https://panel.example.com",
+  subscription_title: "Relayward Home",
+  support_url: "https://support.example.com",
+  profile_url: "https://example.com/account",
+  subscription_refresh_hours: 12,
+  updated_at: "2026-08-05T00:00:00Z",
+};
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -85,6 +110,78 @@ describe("Node plugin API", () => {
   });
 });
 
+describe("Plugin UI API", () => {
+  it("creates a sandbox asset session with a safely encoded plugin ID", async () => {
+    const fetchMock = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(
+      async () => jsonResponse({ url: "/plugin-ui/token/index.html" }, 201),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("document", { cookie: "relayward_csrf=csrf-token" });
+
+    await expect(createPluginUISession("io.relayward/plugin")).resolves.toBe("/plugin-ui/token/index.html");
+    const [path, init] = fetchMock.mock.calls[0];
+    const headers = new Headers(init?.headers);
+    expect(path).toBe("/api/v1/plugins/io.relayward%2Fplugin/ui-session");
+    expect(init?.method).toBe("POST");
+    expect(headers.get("X-CSRF-Token")).toBe("csrf-token");
+  });
+});
+
+describe("settings API", () => {
+  it("loads the system settings", async () => {
+    const fetcher = vi.fn<typeof fetch>(async () => jsonResponse(settings));
+    vi.stubGlobal("fetch", fetcher);
+
+    await expect(getSystemSettings()).resolves.toEqual(settings);
+    expect(fetcher).toHaveBeenCalledWith("/api/v1/settings", expect.objectContaining({ credentials: "same-origin" }));
+  });
+
+  it("updates every editable setting", async () => {
+    const fetcher = vi.fn<typeof fetch>(async () => jsonResponse(settings));
+    vi.stubGlobal("fetch", fetcher);
+    const { updated_at: _, ...input } = settings;
+
+    await expect(updateSystemSettings(input)).resolves.toEqual(settings);
+    const [, request] = fetcher.mock.calls[0];
+    expect(request).toEqual(expect.objectContaining({ method: "PUT", body: JSON.stringify(input) }));
+  });
+});
+
+describe("administrator API", () => {
+  it("sends sensitive username updates without placing credentials in the URL", async () => {
+    const fetcher = vi.fn<typeof fetch>(async () => new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", fetcher);
+
+    await updateAdministratorUsername("operator", "current password", "123456");
+    const [path, request] = fetcher.mock.calls[0];
+    expect(path).toBe("/api/v1/auth/username");
+    expect(request).toEqual(expect.objectContaining({
+      method: "PUT",
+      body: JSON.stringify({ username: "operator", password: "current password", second_factor: "123456" }),
+    }));
+  });
+
+  it("lists sessions and safely encodes the revoked session ID", async () => {
+    const sessions = [{
+      id: "session/id",
+      user_agent: "Browser",
+      current: false,
+      created_at: "2026-08-05T00:00:00Z",
+      last_seen_at: "2026-08-05T00:01:00Z",
+      expires_at: "2026-08-06T00:00:00Z",
+    }];
+    const fetcher = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(jsonResponse({ items: sessions }))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", fetcher);
+
+    await expect(listAdministratorSessions()).resolves.toEqual(sessions);
+    await revokeAdministratorSession("session/id");
+    expect(fetcher.mock.calls[1][0]).toBe("/api/v1/auth/sessions/session%2Fid");
+    expect(fetcher.mock.calls[1][1]).toEqual(expect.objectContaining({ method: "DELETE" }));
+  });
+});
+
 function agentUpdate(): AgentUpdate {
   return {
     id: "update-id",
@@ -100,8 +197,8 @@ function agentUpdate(): AgentUpdate {
   };
 }
 
-function jsonResponse(body: unknown, status: number): Response {
-  return new Response(JSON.stringify(body), {
+function jsonResponse(value: unknown, status = 200): Response {
+  return new Response(JSON.stringify(value), {
     status,
     headers: { "Content-Type": "application/json" },
   });

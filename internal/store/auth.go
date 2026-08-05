@@ -18,9 +18,11 @@ type Administrator struct {
 }
 
 type Session struct {
+	ID              string
 	TokenHash       []byte
 	CSRFHash        []byte
 	AdministratorID int64
+	UserAgent       string
 	CreatedAt       time.Time
 	LastSeenAt      time.Time
 	ExpiresAt       time.Time
@@ -112,9 +114,9 @@ func scanAdministrator(row rowScanner) (Administrator, error) {
 
 func (store *Store) CreateSession(ctx context.Context, value Session) error {
 	_, err := store.db.ExecContext(ctx, `
-INSERT INTO sessions(token_hash, csrf_hash, administrator_id, created_at, last_seen_at, expires_at)
-VALUES (?, ?, ?, ?, ?, ?)`, value.TokenHash, value.CSRFHash, value.AdministratorID,
-		unixTime(value.CreatedAt), unixTime(value.LastSeenAt), unixTime(value.ExpiresAt))
+INSERT INTO sessions(id, token_hash, csrf_hash, administrator_id, user_agent, created_at, last_seen_at, expires_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, value.ID, value.TokenHash, value.CSRFHash, value.AdministratorID,
+		value.UserAgent, unixTime(value.CreatedAt), unixTime(value.LastSeenAt), unixTime(value.ExpiresAt))
 	if err != nil {
 		return fmt.Errorf("insert session: %w", err)
 	}
@@ -128,9 +130,9 @@ func (store *Store) CreateSessionWithAudit(ctx context.Context, value Session, e
 	}
 	defer tx.Rollback()
 	if _, err := tx.ExecContext(ctx, `
-INSERT INTO sessions(token_hash, csrf_hash, administrator_id, created_at, last_seen_at, expires_at)
-VALUES (?, ?, ?, ?, ?, ?)`, value.TokenHash, value.CSRFHash, value.AdministratorID,
-		unixTime(value.CreatedAt), unixTime(value.LastSeenAt), unixTime(value.ExpiresAt)); err != nil {
+INSERT INTO sessions(id, token_hash, csrf_hash, administrator_id, user_agent, created_at, last_seen_at, expires_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, value.ID, value.TokenHash, value.CSRFHash, value.AdministratorID,
+		value.UserAgent, unixTime(value.CreatedAt), unixTime(value.LastSeenAt), unixTime(value.ExpiresAt)); err != nil {
 		return fmt.Errorf("insert session: %w", err)
 	}
 	if err := appendAuditTx(ctx, tx, entry); err != nil {
@@ -141,7 +143,7 @@ VALUES (?, ?, ?, ?, ?, ?)`, value.TokenHash, value.CSRFHash, value.Administrator
 
 func (store *Store) SessionByTokenHash(ctx context.Context, tokenHash []byte, now time.Time) (Session, Administrator, error) {
 	row := store.db.QueryRowContext(ctx, `
-SELECT s.token_hash, s.csrf_hash, s.administrator_id, s.created_at, s.last_seen_at, s.expires_at,
+SELECT s.id, s.token_hash, s.csrf_hash, s.administrator_id, s.user_agent, s.created_at, s.last_seen_at, s.expires_at,
        a.id, a.username, a.password_hash, a.totp_enabled, a.created_at, a.updated_at
 FROM sessions s
 JOIN administrators a ON a.id = s.administrator_id
@@ -152,7 +154,7 @@ WHERE s.token_hash = ? AND s.expires_at > ?`, tokenHash, unixTime(now))
 	var sessionCreated, lastSeen, expires int64
 	var administratorCreated, administratorUpdated int64
 	var totpEnabled int
-	if err := row.Scan(&session.TokenHash, &session.CSRFHash, &session.AdministratorID,
+	if err := row.Scan(&session.ID, &session.TokenHash, &session.CSRFHash, &session.AdministratorID, &session.UserAgent,
 		&sessionCreated, &lastSeen, &expires,
 		&administrator.ID, &administrator.Username, &administrator.PasswordHash, &totpEnabled,
 		&administratorCreated, &administratorUpdated); err != nil {
@@ -168,6 +170,82 @@ WHERE s.token_hash = ? AND s.expires_at > ?`, tokenHash, unixTime(now))
 	administrator.CreatedAt = fromUnix(administratorCreated)
 	administrator.UpdatedAt = fromUnix(administratorUpdated)
 	return session, administrator, nil
+}
+
+func (store *Store) ListAdministratorSessions(ctx context.Context, administratorID int64, now time.Time) ([]Session, error) {
+	rows, err := store.db.QueryContext(ctx, `
+SELECT id, token_hash, csrf_hash, administrator_id, user_agent, created_at, last_seen_at, expires_at
+FROM sessions
+WHERE administrator_id = ? AND expires_at > ?
+ORDER BY last_seen_at DESC, created_at DESC`, administratorID, unixTime(now))
+	if err != nil {
+		return nil, fmt.Errorf("list administrator sessions: %w", err)
+	}
+	defer rows.Close()
+	values := make([]Session, 0)
+	for rows.Next() {
+		var value Session
+		var createdAt, lastSeenAt, expiresAt int64
+		if err := rows.Scan(&value.ID, &value.TokenHash, &value.CSRFHash, &value.AdministratorID, &value.UserAgent,
+			&createdAt, &lastSeenAt, &expiresAt); err != nil {
+			return nil, fmt.Errorf("scan administrator session: %w", err)
+		}
+		value.CreatedAt = fromUnix(createdAt)
+		value.LastSeenAt = fromUnix(lastSeenAt)
+		value.ExpiresAt = fromUnix(expiresAt)
+		values = append(values, value)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate administrator sessions: %w", err)
+	}
+	return values, nil
+}
+
+func (store *Store) DeleteSessionByIDWithAudit(ctx context.Context, administratorID int64, sessionID string, entry AuditEntry) error {
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin session revocation: %w", err)
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, "DELETE FROM sessions WHERE administrator_id = ? AND id = ?", administratorID, sessionID)
+	if err != nil {
+		return fmt.Errorf("revoke session: %w", err)
+	}
+	deleted, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("read session revocation result: %w", err)
+	}
+	if deleted != 1 {
+		return ErrNotFound
+	}
+	if err := appendAuditTx(ctx, tx, entry); err != nil {
+		return err
+	}
+	return commit(tx, "session revocation")
+}
+
+func (store *Store) DeleteOtherSessionsWithAudit(ctx context.Context, administratorID int64, currentSessionID string, entry AuditEntry) (int64, error) {
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, fmt.Errorf("begin other session revocation: %w", err)
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, "DELETE FROM sessions WHERE administrator_id = ? AND id <> ?", administratorID, currentSessionID)
+	if err != nil {
+		return 0, fmt.Errorf("revoke other sessions: %w", err)
+	}
+	deleted, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("read other session revocation result: %w", err)
+	}
+	entry.Metadata = map[string]any{"revoked_sessions": deleted}
+	if err := appendAuditTx(ctx, tx, entry); err != nil {
+		return 0, err
+	}
+	if err := commit(tx, "other session revocation"); err != nil {
+		return 0, err
+	}
+	return deleted, nil
 }
 
 func (store *Store) TouchSession(ctx context.Context, tokenHash []byte, now time.Time) error {
@@ -204,6 +282,52 @@ func (store *Store) DeleteExpiredSessions(ctx context.Context, now time.Time) er
 		return fmt.Errorf("delete expired sessions: %w", err)
 	}
 	return nil
+}
+
+func (store *Store) UpdateAdministratorUsername(ctx context.Context, username string, now time.Time) error {
+	return store.updateAdministratorCredentials(ctx, username, "", false, "administrator.username.update", "administrator", now)
+}
+
+func (store *Store) UpdateAdministratorPassword(ctx context.Context, passwordHash string, now time.Time) error {
+	return store.updateAdministratorCredentials(ctx, "", passwordHash, true, "administrator.password.update", "administrator", now)
+}
+
+func (store *Store) ResetAdministratorPassword(ctx context.Context, passwordHash string, now time.Time) error {
+	return store.updateAdministratorCredentials(ctx, "", passwordHash, true, "administrator.password.reset", "local_admin", now)
+}
+
+func (store *Store) updateAdministratorCredentials(ctx context.Context, username, passwordHash string, updatePassword bool, action, actorType string, now time.Time) error {
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin administrator credential update: %w", err)
+	}
+	defer tx.Rollback()
+	var result sql.Result
+	if updatePassword {
+		result, err = tx.ExecContext(ctx, "UPDATE administrators SET password_hash = ?, updated_at = ? WHERE id = 1", passwordHash, unixTime(now))
+	} else {
+		result, err = tx.ExecContext(ctx, "UPDATE administrators SET username = ?, updated_at = ? WHERE id = 1", username, unixTime(now))
+	}
+	if err != nil {
+		return fmt.Errorf("update administrator credentials: %w", err)
+	}
+	updated, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("read administrator credential update result: %w", err)
+	}
+	if updated != 1 {
+		return ErrNotFound
+	}
+	if _, err := tx.ExecContext(ctx, "DELETE FROM sessions WHERE administrator_id = 1"); err != nil {
+		return fmt.Errorf("revoke administrator sessions: %w", err)
+	}
+	if err := appendAuditTx(ctx, tx, AuditEntry{
+		OccurredAt: now, ActorType: actorType, ActorID: "1", Action: action,
+		TargetType: "administrator", TargetID: "1", Outcome: "success",
+	}); err != nil {
+		return err
+	}
+	return commit(tx, "administrator credential update")
 }
 
 func (store *Store) EnableTOTP(ctx context.Context, ciphertext []byte, recoveryCodeHashes [][]byte, counter int64, now time.Time) error {

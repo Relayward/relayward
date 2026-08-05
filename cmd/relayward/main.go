@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"flag"
@@ -11,6 +12,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -42,7 +44,7 @@ func main() {
 			fmt.Fprintln(os.Stdout, buildinfo.Version)
 			return
 		case "admin":
-			if err := runAdmin(os.Args[2:], os.Stdout, os.Stderr); err != nil {
+			if err := runAdmin(os.Args[2:], os.Stdin, os.Stdout, os.Stderr); err != nil {
 				fmt.Fprintln(os.Stderr, err)
 				os.Exit(1)
 			}
@@ -238,7 +240,7 @@ func serve(args []string, logger *slog.Logger) error {
 		}),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
-		WriteTimeout:      30 * time.Second,
+		WriteTimeout:      11 * time.Minute,
 		IdleTimeout:       2 * time.Minute,
 		MaxHeaderBytes:    1 << 20,
 	}
@@ -265,7 +267,7 @@ func serve(args []string, logger *slog.Logger) error {
 	return nil
 }
 
-func runAdmin(args []string, stdout, stderr io.Writer) error {
+func runAdmin(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
 		printAdminUsage(stderr)
 		return fmt.Errorf("unknown admin command")
@@ -273,12 +275,64 @@ func runAdmin(args []string, stdout, stderr io.Writer) error {
 	switch args[0] {
 	case "reset-totp":
 		return runAdminResetTOTP(args[1:], stdout, stderr)
+	case "reset-password":
+		return runAdminResetPassword(args[1:], stdin, stdout, stderr)
 	case "recover-secrets":
 		return runAdminRecoverSecrets(args[1:], stdout, stderr)
 	default:
 		printAdminUsage(stderr)
 		return fmt.Errorf("unknown admin command")
 	}
+}
+
+func runAdminResetPassword(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
+	flags := flag.NewFlagSet("relayward admin reset-password", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	dataDir := flags.String("data", "./data", "persistent data directory")
+	passwordStdin := flags.Bool("password-stdin", false, "read the new password from standard input")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if flags.NArg() != 0 {
+		return fmt.Errorf("unexpected reset-password argument %q", flags.Arg(0))
+	}
+	if !*passwordStdin {
+		return fmt.Errorf("reset-password requires -password-stdin")
+	}
+	reader := bufio.NewReader(io.LimitReader(stdin, 2049))
+	password, err := reader.ReadString('\n')
+	if err != nil && !errors.Is(err, io.EOF) {
+		return fmt.Errorf("read password from standard input: %w", err)
+	}
+	password = strings.TrimSuffix(strings.TrimSuffix(password, "\n"), "\r")
+	if reader.Buffered() > 0 || len(password) > 1024 {
+		return fmt.Errorf("password input is too long")
+	}
+	passwordHash, err := auth.HashPassword(password)
+	if err != nil {
+		return err
+	}
+	absoluteDataDir, err := filepath.Abs(*dataDir)
+	if err != nil {
+		return fmt.Errorf("resolve data directory: %w", err)
+	}
+	database, err := store.Open(context.Background(), filepath.Join(absoluteDataDir, "relayward.db"))
+	if err != nil {
+		return err
+	}
+	defer database.Close()
+	initialized, err := database.HasAdministrator(context.Background())
+	if err != nil {
+		return err
+	}
+	if !initialized {
+		return fmt.Errorf("Relayward is not initialized")
+	}
+	if err := database.ResetAdministratorPassword(context.Background(), passwordHash, time.Now()); err != nil {
+		return err
+	}
+	fmt.Fprintln(stdout, "Administrator password reset; all administrator sessions were revoked.")
+	return nil
 }
 
 func runAdminResetTOTP(args []string, stdout, stderr io.Writer) error {
@@ -383,5 +437,6 @@ func runAdminRecoverSecrets(args []string, stdout, stderr io.Writer) error {
 
 func printAdminUsage(output io.Writer) {
 	fmt.Fprintln(output, "usage: relayward admin reset-totp [-data <directory>]")
+	fmt.Fprintln(output, "       relayward admin reset-password [-data <directory>] -password-stdin")
 	fmt.Fprintln(output, "       relayward admin recover-secrets [-data <directory>] -confirm-discard-encrypted-secrets")
 }

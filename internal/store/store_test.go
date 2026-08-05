@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestOpenMigratesDatabase(t *testing.T) {
@@ -41,6 +42,35 @@ func TestOpenMigratesDatabase(t *testing.T) {
 	}
 	if permissions := info.Mode().Perm(); permissions != 0o600 {
 		t.Fatalf("database permissions = %o, want 600", permissions)
+	}
+}
+
+func TestAuditOutcomeNormalizationMigration(t *testing.T) {
+	ctx := context.Background()
+	database, err := Open(ctx, filepath.Join(t.TempDir(), "relayward.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	now := time.Now().UTC()
+	for _, outcome := range []string{"succeeded", "failed"} {
+		if err := database.AppendAudit(ctx, AuditEntry{
+			OccurredAt: now, ActorType: "agent", Action: "node.command.complete",
+			TargetType: "agent_command", Outcome: outcome,
+		}); err != nil {
+			t.Fatalf("AppendAudit(%q) error = %v", outcome, err)
+		}
+	}
+	if _, err := database.db.ExecContext(ctx, migrations[len(migrations)-1].sql); err != nil {
+		t.Fatalf("normalize audit outcomes: %v", err)
+	}
+	entries, err := database.ListAudit(ctx, 0, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 2 || entries[0].Outcome != "failure" || entries[1].Outcome != "success" {
+		t.Fatalf("normalized audit outcomes = %+v", entries)
 	}
 }
 

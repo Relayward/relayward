@@ -31,4 +31,9 @@ describe("message translation", () => {
   it("falls back to unknown source messages", () => {
     expect(translateMessage("zh-CN", "Plugin-provided message")).toBe("Plugin-provided message");
   });
+
+  it("translates settings and subscription profile messages", () => {
+    expect(translateMessage("zh-CN", "Settings saved.")).toBe("设置已保存。");
+    expect(translateMessage("zh-CN", "Refresh every {count} hours", { count: 24 })).toBe("每 24 小时刷新");
+  });
 });

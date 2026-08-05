@@ -1,11 +1,12 @@
 import { type FormEvent, type ReactNode, useEffect, useId, useMemo, useState } from "react";
-import { KeyRound, ListChecks, Pencil, Plus, Trash2 } from "lucide-react";
+import { BadgeCheck, Database, KeyRound, ListChecks, Network, Pencil, Plus, ShieldAlert, Trash2 } from "lucide-react";
 
 import {
   APIError,
   createAuthorization,
   createServiceBinding,
   deleteAuthorization,
+  getSystemSettings,
   listAuthorizations,
   listNodes,
   listPluginServices,
@@ -21,12 +22,15 @@ import {
   type ResetKind,
   type User,
   type ServiceBinding,
+  type SystemSettings,
 } from "../api";
 import { useI18n } from "../i18n";
 import { cn } from "../lib/utils";
 import { FormError } from "./AuthScreen";
 import { Modal } from "./Modal";
+import { PageHeader, StatusBadge, SummaryBar, SummaryItem } from "./PageLayout";
 import { Button } from "./ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
 import { Checkbox } from "./ui/checkbox";
 import { DialogFooter } from "./ui/dialog";
 import { Input } from "./ui/input";
@@ -42,6 +46,7 @@ export function AuthorizationsView() {
   const [items, setItems] = useState<Authorization[]>([]);
   const [nodes, setNodes] = useState<Node[]>([]);
   const [users, setUsers] = useState<User[]>([]);
+  const [settings, setSettings] = useState<SystemSettings>();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string>();
   const [editing, setEditing] = useState<Authorization | "new">();
@@ -49,14 +54,16 @@ export function AuthorizationsView() {
   const [rotating, setRotating] = useState<Authorization>();
   const [servicesFor, setServicesFor] = useState<Authorization>();
   const [shownToken, setShownToken] = useState<{ title: string; value: string }>();
+  const [search, setSearch] = useState("");
 
   useEffect(() => {
     let active = true;
-    Promise.all([listAuthorizations(), listNodes(), listUsers()]).then(([authorizations, nodeItems, userItems]) => {
+    Promise.all([listAuthorizations(), listNodes(), listUsers(), getSystemSettings()]).then(([authorizations, nodeItems, userItems, systemSettings]) => {
       if (!active) return;
       setItems(authorizations);
       setNodes(nodeItems);
       setUsers(userItems);
+      setSettings(systemSettings);
     }, (cause) => {
       if (active) setError(errorMessage(cause));
     }).finally(() => {
@@ -68,51 +75,89 @@ export function AuthorizationsView() {
   const nodeNames = useMemo(() => new Map(nodes.map((node) => [node.id, node.name])), [nodes]);
   const userNames = useMemo(() => new Map(users.map((user) => [user.id, user.display_name])), [users]);
   const canAdd = nodes.length > 0 && users.length > 0;
+  const visibleItems = items.filter((authorization) => {
+    const query = search.trim().toLocaleLowerCase();
+    return [userNames.get(authorization.user_id), nodeNames.get(authorization.node_id)]
+      .some((value) => value?.toLocaleLowerCase().includes(query));
+  });
+  const summary = useMemo(() => {
+    const enabled = items.filter((item) => item.enabled).length;
+    const quota = items.reduce((total, item) => total + (item.traffic_limit_bytes ?? 0), 0);
+    const unlimited = items.filter((item) => item.traffic_limit_bytes === null).length;
+    const ipLimited = items.filter((item) => item.soft_ip_limit !== null).length;
+    const needsAttention = items.filter((item) => item.enabled && (
+      item.enforcement === null || item.enforcement.reason !== "active" || item.enforcement.blocked_ip_count > 0
+    )).length;
+    return { enabled, quota, unlimited, ipLimited, needsAttention };
+  }, [items]);
 
   return (
     <section aria-labelledby="authorizations-title">
-      <div className="mb-6 flex items-end justify-between gap-4 max-[440px]:flex-col max-[440px]:items-start">
-        <div><p className="m-0 text-xs font-semibold text-muted-foreground">{t("Access")}</p><h1 className="mt-0.5 mb-0 text-[25px] font-semibold" id="authorizations-title">{t("Authorizations")}</h1></div>
-        <Button
-          size="sm"
-          disabled={!canAdd}
-          onClick={() => setEditing("new")}
-          title={canAdd ? t("Add authorization") : t("A node and user are required")}
-          type="button"
-        ><Plus size={17} />{t("Add")}</Button>
-      </div>
-      {error ? <div className="mb-3"><FormError message={t(error)} /></div> : null}
-      <div className="overflow-hidden rounded-md border border-border bg-card">
-        <Table className="min-w-[1000px]">
-          <TableHeader><TableRow className="hover:bg-transparent"><TableHead>{t("User")}</TableHead><TableHead>{t("Node")}</TableHead><TableHead>{t("Traffic")}</TableHead><TableHead>{t("Reset")}</TableHead><TableHead>{t("Expiry")}</TableHead><TableHead>{t("Enforcement")}</TableHead><TableHead>{t("IP slots")}</TableHead><TableHead className="text-right">{t("Actions")}</TableHead></TableRow></TableHeader>
-          <TableBody>
-            {loading ? <TableRow><TableCell colSpan={8} className="h-24 text-center text-muted-foreground">{t("Loading...")}</TableCell></TableRow> : null}
-            {!loading && items.length === 0 ? <TableRow><TableCell colSpan={8} className="h-24 text-center text-muted-foreground">{t("No authorizations have been created.")}</TableCell></TableRow> : null}
-            {items.map((authorization) => (
-              <TableRow key={authorization.id}>
-                <TableCell><strong className="font-semibold">{userNames.get(authorization.user_id) ?? t("Unknown user")}</strong></TableCell>
-                <TableCell className="text-muted-foreground">{nodeNames.get(authorization.node_id) ?? t("Unknown node")}</TableCell>
-                <TableCell><TrafficUsage value={authorization} /></TableCell>
-                <TableCell className="text-muted-foreground">{formatReset(authorization, t)}</TableCell>
-                <TableCell className="text-muted-foreground">{authorization.expires_at ? formatDate(authorization.expires_at) : t("Never")}</TableCell>
-                <TableCell><AuthorizationStatus value={authorization} /></TableCell>
-                <TableCell><IPStatus value={authorization} /></TableCell>
-                <TableCell className="w-px text-right whitespace-nowrap">
-                  <IconAction label={t("Manage services")} onClick={() => setServicesFor(authorization)}><ListChecks size={17} /></IconAction>
-                  <IconAction label={t("Rotate subscription token")} onClick={() => setRotating(authorization)}><KeyRound size={17} /></IconAction>
-                  <IconAction label={t("Edit authorization")} onClick={() => setEditing(authorization)}><Pencil size={17} /></IconAction>
-                  <IconAction label={t("Delete authorization")} danger onClick={() => setDeleting(authorization)}><Trash2 size={17} /></IconAction>
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      </div>
+      <PageHeader
+        id="authorizations-title"
+        eyebrow={t("Access")}
+        title={t("Authorizations")}
+        description={t("Manage node access, traffic quotas, expiry, and IP enforcement.")}
+      />
+      <SummaryBar>
+        <SummaryItem icon={<BadgeCheck size={17} />} label={t("Enabled authorizations")} value={`${summary.enabled} / ${items.length}`} tone="success" />
+        <SummaryItem icon={<Database size={17} />} label={t("Configured quota")} value={formatBytes(summary.quota)} note={summary.unlimited > 0 ? t("{count} unlimited", { count: summary.unlimited }) : t("All authorizations are limited")} tone="primary" />
+        <SummaryItem icon={<Network size={17} />} label={t("IP limits")} value={summary.ipLimited} note={t("Configured authorizations")} />
+        <SummaryItem icon={<ShieldAlert size={17} />} label={t("Needs attention")} value={summary.needsAttention} note={t("Enforcement or blocked IPs")} tone={summary.needsAttention > 0 ? "warning" : "success"} />
+      </SummaryBar>
+      <Card className="min-w-0 h-fit">
+        <CardHeader className="flex flex-col items-start justify-between space-y-0 gap-4 pb-4 sm:flex-row sm:items-center">
+          <div className="min-w-0">
+            <CardTitle>{t("Authorization list")}</CardTitle>
+            <CardDescription>{t("{count} authorizations", { count: visibleItems.length })}</CardDescription>
+          </div>
+          <div className="flex w-full flex-col gap-3 sm:w-auto sm:flex-row sm:items-center">
+            <Input className="max-w-sm" value={search} onChange={(event) => setSearch(event.target.value)} placeholder={t("Search users or nodes...")} />
+            <Button
+              className="shrink-0"
+              disabled={!canAdd}
+              onClick={() => setEditing("new")}
+              title={canAdd ? t("Add authorization") : t("A node and user are required")}
+              type="button"
+            ><Plus />{t("Add authorization")}</Button>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {error ? <FormError message={t(error)} /> : null}
+          <div className="rounded-lg border bg-card">
+            <Table className="min-w-[1000px]">
+              <TableHeader><TableRow className="hover:bg-transparent"><TableHead>{t("User")}</TableHead><TableHead>{t("Node")}</TableHead><TableHead>{t("Traffic")}</TableHead><TableHead>{t("Reset")}</TableHead><TableHead>{t("Expiry")}</TableHead><TableHead>{t("Enforcement")}</TableHead><TableHead>{t("IP slots")}</TableHead><TableHead className="text-right">{t("Actions")}</TableHead></TableRow></TableHeader>
+              <TableBody>
+                {loading ? <TableRow><TableCell colSpan={8} className="h-24 text-center text-muted-foreground">{t("Loading...")}</TableCell></TableRow> : null}
+                {!loading && items.length === 0 ? <TableRow><TableCell colSpan={8} className="h-24 text-center text-muted-foreground">{t("No authorizations have been created.")}</TableCell></TableRow> : null}
+                {visibleItems.map((authorization) => (
+                  <TableRow key={authorization.id}>
+                    <TableCell><strong className="font-semibold">{userNames.get(authorization.user_id) ?? t("Unknown user")}</strong></TableCell>
+                    <TableCell className="text-muted-foreground">{nodeNames.get(authorization.node_id) ?? t("Unknown node")}</TableCell>
+                    <TableCell><TrafficUsage value={authorization} /></TableCell>
+                    <TableCell className="text-muted-foreground">{formatReset(authorization, t)}</TableCell>
+                    <TableCell className="text-muted-foreground">{authorization.expires_at ? formatDate(authorization.expires_at) : t("Never")}</TableCell>
+                    <TableCell><AuthorizationStatus value={authorization} /></TableCell>
+                    <TableCell><IPStatus value={authorization} /></TableCell>
+                    <TableCell className="w-px text-right whitespace-nowrap">
+                      <IconAction label={t("Manage services")} onClick={() => setServicesFor(authorization)}><ListChecks size={17} /></IconAction>
+                      <IconAction label={t("Rotate subscription token")} onClick={() => setRotating(authorization)}><KeyRound size={17} /></IconAction>
+                      <IconAction label={t("Edit authorization")} onClick={() => setEditing(authorization)}><Pencil size={17} /></IconAction>
+                      <IconAction label={t("Delete authorization")} danger onClick={() => setDeleting(authorization)}><Trash2 size={17} /></IconAction>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        </CardContent>
+      </Card>
       {editing ? (
         <AuthorizationDialog
           value={editing === "new" ? undefined : editing}
           nodes={nodes}
           users={users}
+          defaultTimezone={settings?.timezone ?? "UTC"}
           onClose={() => setEditing(undefined)}
           onSaved={(authorization, token) => {
             setItems((current) => editing === "new" ? [authorization, ...current] : current.map((item) => item.id === authorization.id ? authorization : item));
@@ -154,7 +199,7 @@ export function AuthorizationsView() {
           onClose={() => setServicesFor(undefined)}
         />
       ) : null}
-      {shownToken ? <TokenDialog title={shownToken.title} token={shownToken.value} onClose={() => setShownToken(undefined)} /> : null}
+      {shownToken ? <TokenDialog title={shownToken.title} token={shownToken.value} publicURL={settings?.public_url ?? ""} onClose={() => setShownToken(undefined)} /> : null}
     </section>
   );
 }
@@ -250,10 +295,11 @@ function bindingKey(value: { plugin_id: string; service_id: string }): string {
   return `${value.plugin_id}\u0000${value.service_id}`;
 }
 
-function AuthorizationDialog({ value, nodes, users, onClose, onSaved }: {
+function AuthorizationDialog({ value, nodes, users, defaultTimezone, onClose, onSaved }: {
   value?: Authorization;
   nodes: Node[];
   users: User[];
+  defaultTimezone: string;
   onClose: () => void;
   onSaved: (authorization: Authorization, token?: string) => void;
 }) {
@@ -265,7 +311,7 @@ function AuthorizationDialog({ value, nodes, users, onClose, onSaved }: {
   const [quotaGiB, setQuotaGiB] = useState(value?.traffic_limit_bytes === null || value === undefined ? "" : String(value.traffic_limit_bytes / gibibyte));
   const [resetKind, setResetKind] = useState<ResetKind>(value?.reset.kind ?? "never");
   const [resetValue, setResetValue] = useState(value?.reset.value === null || value === undefined ? "" : String(value.reset.value));
-  const [timezone, setTimezone] = useState(value?.reset.timezone ?? "UTC");
+  const [timezone, setTimezone] = useState(value?.reset.timezone ?? defaultTimezone);
   const [periodAnchor, setPeriodAnchor] = useState(toLocalInput(value?.reset.period_anchor));
   const [expiresAt, setExpiresAt] = useState(toLocalInput(value?.expires_at));
   const [softIPLimit, setSoftIPLimit] = useState(value?.soft_ip_limit === null || value === undefined ? "" : String(value.soft_ip_limit));
@@ -347,7 +393,7 @@ function AuthorizationDialog({ value, nodes, users, onClose, onSaved }: {
           <NumberField label={t("Block duration (minutes)")} value={blockMinutes} onChange={setBlockMinutes} min="1" max="10080" step="1" />
         </div>
         <datalist id="relayward-timezones"><option value="UTC" /><option value="Asia/Shanghai" /><option value="Asia/Singapore" /><option value="Europe/London" /><option value="America/New_York" /></datalist>
-        <label className="flex min-h-8 cursor-pointer items-center gap-2 text-[13px] font-semibold text-foreground/80" htmlFor={enabledID}>
+        <label className="flex min-h-8 cursor-pointer items-center gap-2 text-sm font-semibold text-foreground/80" htmlFor={enabledID}>
           <Checkbox id={enabledID} checked={enabled} onCheckedChange={(checked) => setEnabled(checked === true)} />
           <span>{t("Enabled")}</span>
         </label>
@@ -365,11 +411,12 @@ function SelectField({ label, value, onChange, options, disabled = false }: {
   label: string; value: string; onChange: (value: string) => void; options: { value: string; label: string }[]; disabled?: boolean;
 }) {
   const id = useId();
+  const labelID = `${id}-label`;
   return (
     <label className="grid gap-1.5" htmlFor={id}>
-      <span className="text-[13px] font-semibold text-foreground/80">{label}</span>
+      <span className="text-sm font-semibold text-foreground/80" id={labelID}>{label}</span>
       <Select value={value} onValueChange={onChange} disabled={disabled} required>
-        <SelectTrigger id={id}><SelectValue /></SelectTrigger>
+        <SelectTrigger id={id} aria-labelledby={labelID}><SelectValue /></SelectTrigger>
         <SelectContent>{options.map((option) => <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>)}</SelectContent>
       </Select>
     </label>
@@ -387,7 +434,7 @@ function DateTimeField({ label, value, onChange, required = false }: { label: st
 }
 
 function FieldLabel({ label, children }: { label: string; children: ReactNode }) {
-  return <label className="grid gap-1.5"><span className="text-[13px] font-semibold text-foreground/80">{label}</span>{children}</label>;
+  return <label className="grid gap-1.5"><span className="text-sm font-semibold text-foreground/80">{label}</span>{children}</label>;
 }
 
 function ConfirmationDialog({ title, subject, action, danger = false, onClose, onConfirm }: {
@@ -418,10 +465,10 @@ function ConfirmationDialog({ title, subject, action, danger = false, onClose, o
   );
 }
 
-function TokenDialog({ title, token, onClose }: { title: string; token: string; onClose: () => void }) {
+function TokenDialog({ title, token, publicURL, onClose }: { title: string; token: string; publicURL: string; onClose: () => void }) {
   const { t } = useI18n();
   const [copied, setCopied] = useState(false);
-  const link = new URL(`/s/${encodeURIComponent(token)}`, window.location.origin).toString();
+  const link = buildSubscriptionLink(token, publicURL, window.location.origin);
   async function copy() {
     try {
       await navigator.clipboard.writeText(link);
@@ -432,7 +479,7 @@ function TokenDialog({ title, token, onClose }: { title: string; token: string; 
   }
   return (
     <Modal title={t(title)} onClose={onClose} dismissible={false}>
-      <code className="block [overflow-wrap:anywhere] rounded-sm border border-border bg-muted p-3 text-[13px]">{link}</code>
+      <code className="block [overflow-wrap:anywhere] rounded-sm border border-border bg-muted p-3 text-sm">{link}</code>
       <DialogFooter>
         <Button variant="secondary" onClick={copy} type="button">{copied ? t("Copied") : t("Copy")}</Button>
         <Button onClick={onClose} type="button">{t("Done")}</Button>
@@ -441,22 +488,26 @@ function TokenDialog({ title, token, onClose }: { title: string; token: string; 
   );
 }
 
+export function buildSubscriptionLink(token: string, publicURL: string, currentOrigin: string): string {
+  return new URL(`/s/${encodeURIComponent(token)}`, publicURL || currentOrigin).toString();
+}
+
 function AuthorizationStatus({ value }: { value: Authorization }) {
   const { t, formatDateTime } = useI18n();
   const status = value.enforcement;
-  if (!status) return <Status value={t("Not reported")} tone="warning" />;
+  if (!status) return <StatusBadge tone="warning">{t("Not reported")}</StatusBadge>;
   const labels = {
     active: "Active",
     administrator_disabled: "Disabled",
     expired: "Expired",
     quota_exceeded: "Quota reached",
   } as const;
-  const tone = status.reason === "active" && status.services_enabled ? "ok"
+  const tone = status.reason === "active" && status.services_enabled ? "success"
     : status.reason === "administrator_disabled" ? "muted" : "warning";
   return (
     <span className="grid gap-0.5 whitespace-nowrap" title={t("Observed {time}", { time: formatDateTime(status.observed_at) })}>
-      <Status value={t(labels[status.reason])} tone={tone} />
-      <small className="text-[11px] text-muted-foreground">{t("Generation {generation}", { generation: status.generation })}</small>
+      <StatusBadge tone={tone}>{t(labels[status.reason])}</StatusBadge>
+      <small className="text-xs text-muted-foreground">{t("Generation {generation}", { generation: status.generation })}</small>
     </span>
   );
 }
@@ -466,23 +517,27 @@ function TrafficUsage({ value }: { value: Authorization }) {
   const traffic = value.current_traffic;
   if (!traffic) return <span className="text-muted-foreground">{t("No data / {quota}", { quota: formatQuota(value.traffic_limit_bytes, t) })}</span>;
   const total = traffic.upload_bytes + traffic.download_bytes;
+  const percentage = value.traffic_limit_bytes === null || value.traffic_limit_bytes <= 0
+    ? 0
+    : Math.min(total / value.traffic_limit_bytes * 100, 100);
   const periodEnd = traffic.period.ends_at ? formatDateTime(traffic.period.ends_at) : t("No end");
   return (
     <span className="grid gap-0.5 whitespace-nowrap" title={t("{start} - {end}; observed {observed}", { start: formatDateTime(traffic.period.starts_at), end: periodEnd, observed: formatDateTime(traffic.observed_at) })}>
       <strong className="font-semibold">{formatBytes(total)}</strong>
-      <small className="text-[11px] text-muted-foreground">{t("of {quota}", { quota: formatQuota(value.traffic_limit_bytes, t) })}</small>
+      <small className="text-xs text-muted-foreground">{t("of {quota}", { quota: formatQuota(value.traffic_limit_bytes, t) })}</small>
+      {value.traffic_limit_bytes !== null ? <span className="mt-1 h-1.5 w-28 overflow-hidden rounded-full bg-muted"><span className={cn("block h-full rounded-full", percentage >= 100 ? "bg-destructive" : percentage >= 80 ? "bg-warning" : "bg-primary")} style={{ width: `${percentage}%` }} /></span> : null}
     </span>
   );
 }
 
 function IPStatus({ value }: { value: Authorization }) {
   const { t } = useI18n();
-  if (value.soft_ip_limit === null) return <span className="text-muted-foreground">{t("Not limited")}</span>;
-  if (!value.enforcement) return <span className="text-muted-foreground">{t("Not reported / {limit}", { limit: value.soft_ip_limit })}</span>;
+  if (value.soft_ip_limit === null) return <StatusBadge tone="muted">{t("Not limited")}</StatusBadge>;
+  if (!value.enforcement) return <StatusBadge tone="warning">{t("Not reported / {limit}", { limit: value.soft_ip_limit })}</StatusBadge>;
   return (
     <span className="grid gap-0.5 whitespace-nowrap">
-      <strong className="font-semibold">{value.enforcement.active_ip_count} / {value.soft_ip_limit}</strong>
-      <small className="text-[11px] text-muted-foreground">{t("{count} blocked", { count: value.enforcement.blocked_ip_count })}</small>
+      <StatusBadge tone={value.enforcement.blocked_ip_count > 0 ? "warning" : "info"}>{value.enforcement.active_ip_count} / {value.soft_ip_limit}</StatusBadge>
+      <small className="text-xs text-muted-foreground">{t("{count} blocked", { count: value.enforcement.blocked_ip_count })}</small>
     </span>
   );
 }
@@ -508,15 +563,6 @@ function IconAction({ label, danger = false, onClick, children }: { label: strin
       <TooltipContent>{label}</TooltipContent>
     </Tooltip>
   );
-}
-
-function Status({ value, tone }: { value: string; tone: "ok" | "warning" | "muted" }) {
-  const toneClass = {
-    ok: "bg-success",
-    warning: "bg-warning",
-    muted: "bg-muted-foreground",
-  }[tone];
-  return <span className="inline-flex items-center gap-1.5 whitespace-nowrap"><span className={cn("size-2 shrink-0 rounded-full", toneClass)} />{value}</span>;
 }
 
 const weekdayKeys = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];

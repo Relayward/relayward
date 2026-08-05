@@ -1,9 +1,11 @@
 package server
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"mime"
 	"net/http"
+	"net/url"
 	"path/filepath"
 	"time"
 
@@ -16,6 +18,11 @@ import (
 )
 
 const pluginUIContentSecurityPolicy = "default-src 'none'; script-src 'self'; style-src 'self'; style-src-attr 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'none'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'"
+
+const (
+	pluginUISecretOwnerType = "plugin_ui"
+	pluginUISecretName      = "asset_access"
+)
 
 type pluginReleaseRequest struct {
 	Repository          string   `json:"repository"`
@@ -40,6 +47,15 @@ type pluginReleaseCandidateResponse struct {
 	Tag        string            `json:"tag"`
 	Manifest   manifest.Manifest `json:"manifest"`
 	Update     bool              `json:"update"`
+}
+
+type pluginUISessionResponse struct {
+	URL string `json:"url"`
+}
+
+type pluginUIAccess struct {
+	Version   string    `json:"version"`
+	ExpiresAt time.Time `json:"expires_at"`
 }
 
 type pluginInstallationResponse struct {
@@ -182,9 +198,59 @@ func (server *Server) invokePluginUI(w http.ResponseWriter, request *http.Reques
 	_, _ = w.Write(value)
 }
 
-func (server *Server) servePluginUI(w http.ResponseWriter, request *http.Request, _ auth.Authenticated) {
+func (server *Server) createPluginUISession(w http.ResponseWriter, request *http.Request, authenticated auth.Authenticated) {
+	pluginID := request.PathValue("plugin_id")
+	installation, err := server.management.PluginInstallation(request.Context(), pluginID)
+	if err != nil {
+		server.resourceError(w, request, err, "Plugin")
+		return
+	}
+	if installation.Manifest.Requires.UIAPI == nil {
+		writeProblem(w, http.StatusConflict, protocol.ErrorConflict, "The plugin does not provide a user interface.", false)
+		return
+	}
+	payload, err := json.Marshal(pluginUIAccess{
+		Version: installation.ActiveVersion, ExpiresAt: authenticated.Session.ExpiresAt,
+	})
+	if err != nil {
+		server.internalError(w, request, err)
+		return
+	}
+	ciphertext, err := server.secrets.Encrypt(pluginUISecretOwnerType, pluginID, pluginUISecretName, payload)
+	if err != nil {
+		server.internalError(w, request, err)
+		return
+	}
+	token := base64.RawURLEncoding.EncodeToString(ciphertext)
+	path := "/plugin-ui/" + url.PathEscape(pluginID) + "/" + token + "/index.html"
+	writeJSON(w, http.StatusCreated, pluginUISessionResponse{URL: path})
+}
+
+func (server *Server) servePluginUI(w http.ResponseWriter, request *http.Request) {
+	pluginID := request.PathValue("plugin_id")
+	ciphertext, err := base64.RawURLEncoding.DecodeString(request.PathValue("token"))
+	if err != nil || len(ciphertext) > 4096 {
+		http.NotFound(w, request)
+		return
+	}
+	payload, err := server.secrets.Decrypt(pluginUISecretOwnerType, pluginID, pluginUISecretName, ciphertext)
+	if err != nil {
+		http.NotFound(w, request)
+		return
+	}
+	var access pluginUIAccess
+	if err := json.Unmarshal(payload, &access); err != nil || access.Version == "" ||
+		access.ExpiresAt.IsZero() || !time.Now().UTC().Before(access.ExpiresAt) {
+		http.NotFound(w, request)
+		return
+	}
+	installation, err := server.management.PluginInstallation(request.Context(), pluginID)
+	if err != nil || installation.ActiveVersion != access.Version {
+		http.NotFound(w, request)
+		return
+	}
 	name := request.PathValue("path")
-	file, info, err := server.management.OpenPluginUIFile(request.Context(), request.PathValue("plugin_id"), name)
+	file, info, err := server.management.OpenPluginUIFile(request.Context(), pluginID, name)
 	if err != nil {
 		server.resourceError(w, request, err, "Plugin UI asset")
 		return
@@ -196,6 +262,8 @@ func (server *Server) servePluginUI(w http.ResponseWriter, request *http.Request
 	}
 	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("Content-Security-Policy", pluginUIContentSecurityPolicy)
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Cross-Origin-Resource-Policy", "cross-origin")
 	w.Header().Del("X-Frame-Options")
 	http.ServeContent(w, request, info.Name(), info.ModTime(), file)
 }

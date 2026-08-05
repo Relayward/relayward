@@ -1,17 +1,24 @@
-import { useEffect, useState } from "react";
+import { useEffect, useId, useMemo, useState } from "react";
+import { RefreshCw } from "lucide-react";
 
 import { APIError, listAudit, type AuditEntry } from "../api";
 import { useI18n } from "../i18n";
-import { cn } from "../lib/utils";
 import { FormError } from "./AuthScreen";
+import { PageHeader, StatusBadge } from "./PageLayout";
 import { Button } from "./ui/button";
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "./ui/card";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "./ui/table";
 
 const pageSize = 100;
 
 export function AuditView() {
   const { t, formatDateTime } = useI18n();
+  const outcomeFilterID = useId();
+  const outcomeFilterLabelID = `${outcomeFilterID}-label`;
   const [items, setItems] = useState<AuditEntry[]>([]);
+  const [outcome, setOutcome] = useState("");
+  const [refreshKey, setRefreshKey] = useState(0);
   const [loading, setLoading] = useState(true);
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [hasMore, setHasMore] = useState(false);
@@ -19,6 +26,8 @@ export function AuditView() {
 
   useEffect(() => {
     let active = true;
+    setLoading(true);
+    setError(undefined);
     listAudit(undefined, pageSize).then((values) => {
       if (active) {
         setItems(values);
@@ -30,7 +39,10 @@ export function AuditView() {
       if (active) setLoading(false);
     });
     return () => { active = false; };
-  }, []);
+  }, [refreshKey]);
+
+  const outcomes = useMemo(() => [...new Set(items.map((item) => item.outcome))].sort(), [items]);
+  const visibleItems = useMemo(() => outcome === "" ? items : items.filter((item) => item.outcome === outcome), [items, outcome]);
 
   async function loadOlder() {
     const oldest = items.at(-1);
@@ -50,34 +62,54 @@ export function AuditView() {
 
   return (
     <section aria-labelledby="audit-title">
-      <div className="mb-6"><p className="m-0 text-xs font-semibold text-muted-foreground">{t("System")}</p><h1 className="mt-0.5 mb-0 text-[25px] font-semibold" id="audit-title">{t("Audit")}</h1></div>
-      {error ? <div className="mb-3"><FormError message={t(error)} /></div> : null}
-      <div className="overflow-hidden rounded-md border border-border bg-card">
-        <Table className="min-w-[760px]">
-          <TableHeader><TableRow className="hover:bg-transparent"><TableHead>{t("Time")}</TableHead><TableHead>{t("Action")}</TableHead><TableHead>{t("Target")}</TableHead><TableHead>{t("Actor")}</TableHead><TableHead>{t("Outcome")}</TableHead></TableRow></TableHeader>
-          <TableBody>
-            {items.map((entry) => (
-              <TableRow key={entry.id}>
-                <TableCell className="whitespace-nowrap text-muted-foreground">{formatDateTime(entry.occurred_at)}</TableCell>
-                <TableCell><code className="rounded-sm bg-muted px-1.5 py-1 text-xs">{entry.action}</code></TableCell>
-                <TableCell className="text-muted-foreground">{entry.target_type}{entry.target_id ? ` / ${shortID(entry.target_id)}` : ""}</TableCell>
-                <TableCell className="text-muted-foreground">{entry.actor_type}</TableCell>
-                <TableCell><AuditOutcome value={entry.outcome} /></TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-        {loading ? <div className="flex h-24 items-center justify-center px-4 text-center text-[13px] text-muted-foreground">{t("Loading...")}</div> : null}
-        {!loading && items.length === 0 ? <div className="flex h-24 items-center justify-center px-4 text-center text-[13px] text-muted-foreground">{t("No audit entries.")}</div> : null}
-      </div>
-      {hasMore ? <div className="flex justify-center pt-4"><Button variant="secondary" disabled={loadingOlder} onClick={loadOlder} type="button">{loadingOlder ? t("Loading...") : t("Load older")}</Button></div> : null}
+      <PageHeader id="audit-title" eyebrow={t("System")} title={t("Audit")} description={t("Review administrator and system operations recorded by the control plane.")} />
+      <Card className="min-w-0 h-fit">
+        <CardHeader className="flex flex-col items-start justify-between space-y-0 gap-4 pb-4 sm:flex-row sm:items-center">
+          <div className="min-w-0"><CardTitle>{t("Audit log")}</CardTitle><CardDescription>{t("{count} loaded entries", { count: visibleItems.length })}</CardDescription></div>
+          <div className="flex w-full flex-col gap-3 sm:w-auto sm:flex-row sm:items-center">
+            <label className="flex items-center gap-2 max-[520px]:w-full" htmlFor={outcomeFilterID}>
+              <span className="shrink-0 whitespace-nowrap text-xs font-semibold text-muted-foreground" id={outcomeFilterLabelID}>{t("Outcome")}</span>
+              <Select value={outcome || "all"} onValueChange={(value) => setOutcome(value === "all" ? "" : value)}>
+                <SelectTrigger className="h-9 min-w-40 max-[520px]:flex-1" id={outcomeFilterID} aria-labelledby={outcomeFilterLabelID}><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">{t("All outcomes")}</SelectItem>
+                  {outcomes.map((value) => <SelectItem key={value} value={value}>{t(titleCase(value))}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </label>
+            <Button className="shrink-0" variant="outline" onClick={() => setRefreshKey((value) => value + 1)} type="button"><RefreshCw size={16} />{t("Refresh")}</Button>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {error ? <FormError message={t(error)} /> : null}
+          <div className="rounded-lg border bg-card">
+            <Table className="min-w-[760px]">
+              <TableHeader><TableRow className="hover:bg-transparent"><TableHead>{t("Time")}</TableHead><TableHead>{t("Action")}</TableHead><TableHead>{t("Target")}</TableHead><TableHead>{t("Actor")}</TableHead><TableHead>{t("Outcome")}</TableHead></TableRow></TableHeader>
+              <TableBody>
+                {!loading ? visibleItems.map((entry) => (
+                  <TableRow key={entry.id}>
+                    <TableCell className="whitespace-nowrap text-muted-foreground">{formatDateTime(entry.occurred_at)}</TableCell>
+                    <TableCell><code className="rounded-sm bg-muted px-1.5 py-1 text-xs">{entry.action}</code></TableCell>
+                    <TableCell className="text-muted-foreground">{entry.target_type}{entry.target_id ? ` / ${shortID(entry.target_id)}` : ""}</TableCell>
+                    <TableCell className="text-muted-foreground">{entry.actor_type}</TableCell>
+                    <TableCell><AuditOutcome value={entry.outcome} /></TableCell>
+                  </TableRow>
+                )) : null}
+                {loading ? <TableRow><TableCell colSpan={5} className="h-24 text-center text-muted-foreground">{t("Loading...")}</TableCell></TableRow> : null}
+                {!loading && visibleItems.length === 0 ? <TableRow><TableCell colSpan={5} className="h-24 text-center text-muted-foreground">{t("No audit entries.")}</TableCell></TableRow> : null}
+              </TableBody>
+            </Table>
+          </div>
+        </CardContent>
+        {hasMore ? <CardFooter className="justify-center"><Button variant="outline" disabled={loadingOlder} onClick={loadOlder} type="button">{loadingOlder ? t("Loading...") : t("Load older")}</Button></CardFooter> : null}
+      </Card>
     </section>
   );
 }
 
 function AuditOutcome({ value }: { value: string }) {
   const { t } = useI18n();
-  return <span className="inline-flex items-center gap-1.5 whitespace-nowrap"><span className={cn("size-2 shrink-0 rounded-full", value === "success" ? "bg-success" : "bg-warning")} />{t(titleCase(value))}</span>;
+  return <StatusBadge tone={value === "success" ? "success" : "danger"}>{t(titleCase(value))}</StatusBadge>;
 }
 
 function shortID(value: string): string {

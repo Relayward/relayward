@@ -1,12 +1,14 @@
-import { useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 
 import { APIError, getSession, getSetupStatus, initialize, login, logout, type SessionInfo } from "./api";
-import { LoginScreen, SetupScreen } from "./components/AuthScreen";
-import { Dashboard } from "./components/Dashboard";
-import { SubscriptionPage } from "./components/SubscriptionPage";
 import { Button } from "./components/ui/button";
 import { LanguageSwitcher, useI18n } from "./i18n";
 import { loadSystemInfo, type SystemInfo } from "./system";
+
+const Dashboard = lazy(() => import("./components/Dashboard").then((module) => ({ default: module.Dashboard })));
+const LoginScreen = lazy(() => import("./components/AuthScreen").then((module) => ({ default: module.LoginScreen })));
+const SetupScreen = lazy(() => import("./components/AuthScreen").then((module) => ({ default: module.SetupScreen })));
+const SubscriptionPage = lazy(() => import("./components/SubscriptionPage").then((module) => ({ default: module.SubscriptionPage })));
 
 type AppState =
   | { phase: "loading" }
@@ -57,29 +59,29 @@ export function App() {
   }
 
   if (subscriptionToken !== undefined) {
-    return <SubscriptionPage token={subscriptionToken} />;
+    return <Suspense fallback={<AppLoading />}><SubscriptionPage token={subscriptionToken} /></Suspense>;
   }
   if (state.phase === "loading") {
-    return <div className="flex min-h-screen flex-col items-center justify-center gap-3.5 p-6"><span className="flex size-11 items-center justify-center rounded-md bg-foreground text-[22px] font-bold text-background">R</span><span>Relayward</span></div>;
+    return <AppLoading />;
   }
   if (state.phase === "setup") {
-    return <SetupScreen busy={state.busy} error={state.error} onSubmit={setup} />;
+    return <Suspense fallback={<AppLoading />}><SetupScreen busy={state.busy} error={state.error} onSubmit={setup} /></Suspense>;
   }
   if (state.phase === "login") {
-    return <LoginScreen busy={state.busy} error={state.error} secondFactorRequired={state.secondFactorRequired} onSubmit={signIn} />;
+    return <Suspense fallback={<AppLoading />}><LoginScreen busy={state.busy} error={state.error} secondFactorRequired={state.secondFactorRequired} onSubmit={signIn} /></Suspense>;
   }
   if (state.phase === "error") {
     return (
       <main className="relative flex min-h-screen flex-col items-center justify-center gap-3.5 p-6 text-center">
         <LanguageSwitcher className="absolute top-5 right-5" />
-        <span className="flex size-11 items-center justify-center rounded-md bg-foreground text-[22px] font-bold text-background">R</span>
+        <span className="flex size-11 items-center justify-center rounded-md bg-foreground text-xl font-bold text-background">R</span>
         <h1 className="m-0 text-2xl font-semibold">{t("Relayward unavailable")}</h1>
         <p className="m-0 text-sm text-muted-foreground">{t(state.message)}</p>
         <Button size="sm" onClick={() => window.location.reload()}>{t("Retry")}</Button>
       </main>
     );
   }
-  return (
+  return <Suspense fallback={<AppLoading />}>
     <Dashboard
       session={state.session}
       system={state.system}
@@ -87,7 +89,11 @@ export function App() {
       onSessionChange={(session) => setState({ ...state, session })}
       onSessionRevoked={() => setState({ phase: "login", busy: false, secondFactorRequired: false })}
     />
-  );
+  </Suspense>;
+}
+
+function AppLoading() {
+  return <div className="flex min-h-screen flex-col items-center justify-center gap-3.5 p-6" role="status"><span className="flex size-11 items-center justify-center rounded-md bg-foreground text-xl font-bold text-background">R</span><span>Relayward</span></div>;
 }
 
 function subscriptionTokenFromPath(): string | undefined {

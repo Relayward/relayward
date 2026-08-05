@@ -386,12 +386,19 @@ DELETE FROM secrets WHERE owner_type = ? AND owner_id = ? AND name = ?`,
 	}
 	if err := appendAuditTx(ctx, tx, AuditEntry{
 		OccurredAt: now, ActorType: "agent", ActorID: nodeID, Action: auditAction,
-		TargetType: auditTargetType, TargetID: auditTargetID, Outcome: result.Status,
+		TargetType: auditTargetType, TargetID: auditTargetID, Outcome: agentCommandAuditOutcome(result.Status),
 		Metadata: auditMetadata,
 	}); err != nil {
 		return err
 	}
 	return commit(tx, "Agent command completion")
+}
+
+func agentCommandAuditOutcome(status string) string {
+	if status == agentv1.CommandStatusSucceeded {
+		return "success"
+	}
+	return "failure"
 }
 
 func updatePolicyReconcileResultTx(ctx context.Context, tx *sql.Tx, nodeID string,

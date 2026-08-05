@@ -1,5 +1,5 @@
 import { type FormEvent, type ReactNode, useEffect, useId, useState } from "react";
-import { Plus, Settings2 } from "lucide-react";
+import { Boxes, HeartPulse, Play, Settings2, TimerReset, Plus } from "lucide-react";
 
 import {
   APIError,
@@ -13,10 +13,11 @@ import {
   type PluginState,
 } from "../api";
 import { useI18n } from "../i18n";
-import { cn } from "../lib/utils";
 import { FormError } from "./AuthScreen";
 import { Modal } from "./Modal";
+import { PageHeader, StatusBadge, SummaryBar, SummaryItem } from "./PageLayout";
 import { Button } from "./ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
 import { DialogFooter } from "./ui/dialog";
 import { Input } from "./ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
@@ -64,50 +65,62 @@ export function PluginInstancesView({ embedded = false }: { embedded?: boolean }
     };
   }, []);
 
+  const running = items.filter((item) => item.actual_state === "running").length;
+  const healthy = items.filter((item) => item.health === "healthy").length;
+  const pending = items.filter((item) => item.command_status === "pending" || item.reconcile_status === "pending").length;
+
   return (
     <section aria-labelledby={embedded ? "node-plugin-instances-title" : "plugins-title"}>
       {embedded ? <h2 className="sr-only" id="node-plugin-instances-title">{t("Node plugin instances")}</h2> : (
-        <div className="mb-6 flex items-end justify-between gap-4">
-          <div><p className="m-0 text-xs font-semibold text-muted-foreground">{t("Runtime")}</p><h1 className="mt-0.5 mb-0 text-[25px] font-semibold" id="plugins-title">{t("Node plugins")}</h1></div>
-        </div>
+        <PageHeader id="plugins-title" eyebrow={t("Runtime")} title={t("Node plugins")} description={t("Manage the desired and observed state of node runtime plugins.")} />
       )}
-      {embedded ? (
-        <div className="mb-3 flex min-h-11 flex-wrap items-center justify-end gap-4">
-          {error ? <div className="mr-auto"><FormError message={t(error)} /></div> : null}
-          <Button size="sm" onClick={() => setCreating(true)} type="button">
-            <Plus size={17} />{t("Configure plugin")}
-          </Button>
-        </div>
-      ) : error ? <div className="mb-3"><FormError message={t(error)} /></div> : null}
-      <div className="overflow-hidden rounded-md border border-border bg-card">
-        <Table className="min-w-[1000px]">
-          <TableHeader><TableRow className="hover:bg-transparent"><TableHead>{t("Plugin")}</TableHead><TableHead>{t("Node")}</TableHead><TableHead>{t("Desired")}</TableHead><TableHead>{t("Actual")}</TableHead><TableHead>{t("Generation")}</TableHead><TableHead>{t("Health")}</TableHead><TableHead>{t("Version")}</TableHead><TableHead>{t("Delivery")}</TableHead><TableHead className="text-right">{t("Actions")}</TableHead></TableRow></TableHeader>
-          <TableBody>
-            {items.map((item) => (
-              <TableRow key={`${item.node_id}:${item.plugin_id}`}>
-                <TableCell><span className="grid max-w-[210px] gap-0.5"><strong className="font-semibold">{item.plugin_name}</strong><small className="overflow-hidden text-ellipsis whitespace-nowrap text-muted-foreground">{item.plugin_id}</small></span></TableCell>
-                <TableCell>{item.node_name}</TableCell>
-                <TableCell><StateStatus value={item.desired_state} /></TableCell>
-                <TableCell><StateStatus value={item.actual_state} /></TableCell>
-                <TableCell className="text-muted-foreground" title={t("Actual / desired")}>{item.actual_generation} / {item.generation}</TableCell>
-                <TableCell><HealthStatus value={item} /></TableCell>
-                <TableCell className="text-muted-foreground">{item.active_version || item.desired_version || t("None")}</TableCell>
-                <TableCell><DeliveryStatus value={item} /></TableCell>
-                <TableCell className="w-px text-right whitespace-nowrap">
-                  <IconAction
-                    label={t("Configure node plugin")}
-                    description={item.command_status === "pending" ? t("A reconciliation is already pending") : t("Configure node plugin")}
-                    disabled={item.command_status === "pending"}
-                    onClick={() => setEditing(item)}
-                  ><Settings2 size={17} /></IconAction>
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-        {loading ? <div className="flex h-24 items-center justify-center border-t border-border px-4 text-center text-[13px] text-muted-foreground">{t("Loading...")}</div> : null}
-        {!loading && items.length === 0 ? <div className="flex h-24 items-center justify-center border-t border-border px-4 text-center text-[13px] text-muted-foreground">{t("No node plugins have been configured.")}</div> : null}
-      </div>
+      <SummaryBar>
+        <SummaryItem icon={<Boxes size={17} />} label={t("Configured instances")} value={items.length} tone="primary" />
+        <SummaryItem icon={<Play size={17} />} label={t("Running instances")} value={`${running} / ${items.length}`} tone={items.length === 0 ? "default" : "success"} />
+        <SummaryItem icon={<HeartPulse size={17} />} label={t("Healthy instances")} value={`${healthy} / ${items.length}`} tone={items.length === 0 ? "default" : healthy === items.length ? "success" : "warning"} />
+        <SummaryItem icon={<TimerReset size={17} />} label={t("Pending changes")} value={pending} tone={pending > 0 ? "warning" : "default"} />
+      </SummaryBar>
+      <Card className="min-w-0 h-fit">
+        <CardHeader className="flex flex-col items-start justify-between space-y-0 gap-4 pb-4 sm:flex-row sm:items-center">
+          <div className="min-w-0">
+            <CardTitle>{t("Node plugin list")}</CardTitle>
+            <CardDescription>{t("{count} configured instances", { count: items.length })}</CardDescription>
+          </div>
+          {embedded ? <Button className="shrink-0" onClick={() => setCreating(true)} type="button"><Plus size={17} />{t("Configure plugin")}</Button> : null}
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {error ? <FormError message={t(error)} /> : null}
+          <div className="rounded-lg border bg-card">
+            <Table className="min-w-[1000px]">
+              <TableHeader><TableRow className="hover:bg-transparent"><TableHead>{t("Plugin")}</TableHead><TableHead>{t("Node")}</TableHead><TableHead>{t("Desired")}</TableHead><TableHead>{t("Actual")}</TableHead><TableHead>{t("Generation")}</TableHead><TableHead>{t("Health")}</TableHead><TableHead>{t("Version")}</TableHead><TableHead>{t("Delivery")}</TableHead><TableHead className="text-right">{t("Actions")}</TableHead></TableRow></TableHeader>
+              <TableBody>
+                {!loading ? items.map((item) => (
+                  <TableRow key={`${item.node_id}:${item.plugin_id}`}>
+                    <TableCell><span className="grid max-w-[210px] gap-0.5"><strong className="font-semibold">{item.plugin_name}</strong><small className="overflow-hidden text-ellipsis whitespace-nowrap text-muted-foreground">{item.plugin_id}</small></span></TableCell>
+                    <TableCell>{item.node_name}</TableCell>
+                    <TableCell><StateStatus value={item.desired_state} /></TableCell>
+                    <TableCell><StateStatus value={item.actual_state} /></TableCell>
+                    <TableCell className="text-muted-foreground" title={t("Actual / desired")}>{item.actual_generation} / {item.generation}</TableCell>
+                    <TableCell><HealthStatus value={item} /></TableCell>
+                    <TableCell className="text-muted-foreground">{item.active_version || item.desired_version || t("None")}</TableCell>
+                    <TableCell><DeliveryStatus value={item} /></TableCell>
+                    <TableCell className="w-px text-right whitespace-nowrap">
+                      <IconAction
+                        label={t("Configure node plugin")}
+                        description={item.command_status === "pending" ? t("A reconciliation is already pending") : t("Configure node plugin")}
+                        disabled={item.command_status === "pending"}
+                        onClick={() => setEditing(item)}
+                      ><Settings2 size={17} /></IconAction>
+                    </TableCell>
+                  </TableRow>
+                )) : null}
+                {loading ? <TableRow><TableCell colSpan={9} className="h-24 text-center text-muted-foreground">{t("Loading...")}</TableCell></TableRow> : null}
+                {!loading && items.length === 0 ? <TableRow><TableCell colSpan={9} className="h-24 text-center text-muted-foreground">{t("No node plugins have been configured.")}</TableCell></TableRow> : null}
+              </TableBody>
+            </Table>
+          </div>
+        </CardContent>
+      </Card>
       {editing ? (
         <PluginConfigurationDialog
           value={editing}
@@ -289,11 +302,12 @@ function SelectField({ label, value, onChange, options, disabled = false, placeh
   placeholder?: string;
 }) {
   const id = useId();
+  const labelID = `${id}-label`;
   return (
     <label className="grid gap-1.5" htmlFor={id}>
-      <span className="text-[13px] font-semibold text-foreground/80">{label}</span>
+      <span className="text-sm font-semibold text-foreground/80" id={labelID}>{label}</span>
       <Select value={value} onValueChange={onChange} disabled={disabled}>
-        <SelectTrigger id={id}><SelectValue placeholder={placeholder} /></SelectTrigger>
+        <SelectTrigger id={id} aria-labelledby={labelID}><SelectValue placeholder={placeholder} /></SelectTrigger>
         <SelectContent>{options.map((option) => <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>)}</SelectContent>
       </Select>
     </label>
@@ -301,7 +315,7 @@ function SelectField({ label, value, onChange, options, disabled = false, placeh
 }
 
 function FieldLabel({ label, children }: { label: string; children: ReactNode }) {
-  return <label className="grid gap-1.5"><span className="text-[13px] font-semibold text-foreground/80">{label}</span>{children}</label>;
+  return <label className="grid gap-1.5"><span className="text-sm font-semibold text-foreground/80">{label}</span>{children}</label>;
 }
 
 function parseConfiguration(value: string): Record<string, unknown> | undefined {
@@ -336,13 +350,8 @@ function DeliveryStatus({ value }: { value: NodePluginInstance }) {
 }
 
 function Status({ value, tone }: { value: string; tone: "ok" | "warning" | "error" | "muted" }) {
-  const toneClass = {
-    ok: "bg-success",
-    warning: "bg-warning",
-    error: "bg-destructive",
-    muted: "bg-muted-foreground",
-  }[tone];
-  return <span className="inline-flex items-center gap-1.5 whitespace-nowrap"><span className={cn("size-2 shrink-0 rounded-full", toneClass)} />{value}</span>;
+  const badgeTone = { ok: "success", warning: "warning", error: "danger", muted: "muted" } as const;
+  return <StatusBadge tone={badgeTone[tone]}>{value}</StatusBadge>;
 }
 
 function IconAction({ label, description, disabled, onClick, children }: {

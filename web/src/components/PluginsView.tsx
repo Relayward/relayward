@@ -1,5 +1,5 @@
 import { type FormEvent, type ReactNode, useEffect, useId, useState } from "react";
-import { ExternalLink, KeyRound, PackagePlus, RefreshCw, Trash2 } from "lucide-react";
+import { Activity, Boxes, ExternalLink, KeyRound, PackagePlus, Puzzle, RefreshCw, ServerCog, Trash2 } from "lucide-react";
 
 import {
   APIError,
@@ -16,13 +16,14 @@ import { useI18n } from "../i18n";
 import { cn } from "../lib/utils";
 import { FormError } from "./AuthScreen";
 import { Modal } from "./Modal";
+import { PageHeader, StatusBadge, SummaryBar, SummaryItem } from "./PageLayout";
 import { PluginFrame, type PluginNavigationTarget } from "./PluginFrame";
 import { PluginInstancesView } from "./PluginInstancesView";
 import { Button } from "./ui/button";
+import { Card, CardAction, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "./ui/card";
 import { Checkbox } from "./ui/checkbox";
 import { DialogFooter } from "./ui/dialog";
 import { Input } from "./ui/input";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "./ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 
@@ -39,13 +40,16 @@ export function PluginsView({ onNavigate }: { onNavigate: (target: PluginNavigat
   return (
     <Tabs value={tab} onValueChange={(value) => setTab(value as PluginTab)}>
       <section aria-labelledby="plugins-title">
-        <div className="mb-6 flex items-center justify-between gap-4 max-[700px]:flex-col max-[700px]:items-start">
-          <div><p className="m-0 text-xs font-semibold text-muted-foreground">{t("Extensions")}</p><h1 className="mt-0.5 mb-0 text-[25px] font-semibold" id="plugins-title">{t("Plugins")}</h1></div>
-          <TabsList aria-label={t("Plugin view")}>
+        <PageHeader
+          id="plugins-title"
+          eyebrow={t("Extensions")}
+          title={t("Plugins")}
+          description={t("Install center features and manage runtime plugins across nodes.")}
+          actions={<TabsList aria-label={t("Plugin view")}>
             <TabsTrigger value="installations">{t("Installations")}</TabsTrigger>
             <TabsTrigger value="instances">{t("Node instances")}</TabsTrigger>
-          </TabsList>
-        </div>
+          </TabsList>}
+        />
         <TabsContent value="installations"><PluginInstallationsView onOpen={setOpenedPlugin} /></TabsContent>
         <TabsContent value="instances"><PluginInstancesView embedded /></TabsContent>
       </section>
@@ -87,43 +91,56 @@ function PluginInstallationsView({ onOpen }: { onOpen: (plugin: PluginInstallati
     });
   }
 
+  const active = items.filter((item) => item.state === "active").length;
+  const healthy = items.filter((item) => item.health === "healthy").length;
+  const runtime = items.filter((item) => item.kind === "runtime").length;
+  const features = items.filter((item) => item.kind === "feature").length;
+
   return (
     <>
-      <div className="mb-3 flex min-h-11 flex-wrap items-center justify-end gap-4">
+      <SummaryBar>
+        <SummaryItem icon={<Boxes size={17} />} label={t("Installed plugins")} value={items.length} tone="primary" />
+        <SummaryItem icon={<Activity size={17} />} label={t("Active plugins")} value={`${active} / ${items.length}`} tone={items.length === 0 ? "default" : active === items.length ? "success" : "warning"} />
+        <SummaryItem icon={<ServerCog size={17} />} label={t("Runtime plugins")} value={runtime} />
+        <SummaryItem icon={<Puzzle size={17} />} label={t("Feature plugins")} value={features} note={t("{count} healthy", { count: healthy })} />
+      </SummaryBar>
+      <div className="mb-3 flex min-h-10 flex-wrap items-center justify-end gap-4">
         {error ? <div className="mr-auto"><FormError message={t(error)} /></div> : null}
         <Button size="sm" onClick={() => setInstalling(true)} type="button">
           <PackagePlus size={17} />{t("Install plugin")}
         </Button>
       </div>
-      <div className="overflow-hidden rounded-md border border-border bg-card">
-        <Table className="min-w-[840px]">
-          <TableHeader><TableRow className="hover:bg-transparent"><TableHead>{t("Plugin")}</TableHead><TableHead>{t("Kind")}</TableHead><TableHead>{t("Version")}</TableHead><TableHead>{t("State")}</TableHead><TableHead>{t("Health")}</TableHead><TableHead>{t("Permissions")}</TableHead><TableHead className="text-right">{t("Actions")}</TableHead></TableRow></TableHeader>
-          <TableBody>
-            {items.map((item) => {
-              const hasUI = item.manifest.artifacts.some((artifact) => artifact.role === "ui");
-              return (
-                <TableRow key={item.plugin_id}>
-                  <TableCell><span className="grid max-w-[210px] gap-0.5"><strong className="font-semibold">{item.manifest.name}</strong><small className="overflow-hidden text-ellipsis whitespace-nowrap text-muted-foreground">{item.plugin_id}</small></span></TableCell>
-                  <TableCell className="text-muted-foreground">{t(label(item.kind))}</TableCell>
-                  <TableCell><span className="grid gap-0.5"><strong className="font-semibold">{item.active_version}</strong>{item.previous_version ? <small className="whitespace-nowrap text-muted-foreground">{t("Previous {version}", { version: item.previous_version })}</small> : null}</span></TableCell>
-                  <TableCell><Status value={t(label(item.state))} tone={installationStateTone(item.state)} /></TableCell>
-                  <TableCell><Status value={t(label(item.health))} tone={item.health === "healthy" ? "ok" : item.health === "unhealthy" ? "error" : "muted"} /></TableCell>
-                  <TableCell className="text-muted-foreground">{item.approved_permissions.length}</TableCell>
-                  <TableCell className="w-px text-right whitespace-nowrap">
-                    {hasUI ? (
-                      <IconAction label={t("Open {name}", { name: item.manifest.name })} description={t("Open plugin")} onClick={() => onOpen(item)}><ExternalLink size={17} /></IconAction>
-                    ) : null}
-                    <IconAction label={t("Upgrade {name}", { name: item.manifest.name })} description={t("Check for upgrade")} onClick={() => setUpgrading(item)}><RefreshCw size={17} /></IconAction>
-                    <IconAction label={t("Replace GitHub token for {name}", { name: item.manifest.name })} description={t("Replace GitHub token")} onClick={() => setReplacingToken(item)}><KeyRound size={17} /></IconAction>
-                    <IconAction label={t("Uninstall {name}", { name: item.manifest.name })} description={t("Uninstall plugin")} danger onClick={() => setRemoving(item)}><Trash2 size={17} /></IconAction>
-                  </TableCell>
-                </TableRow>
-              );
-            })}
-          </TableBody>
-        </Table>
-        {loading ? <div className="flex h-24 items-center justify-center border-t border-border px-4 text-center text-[13px] text-muted-foreground">{t("Loading...")}</div> : null}
-        {!loading && items.length === 0 ? <div className="flex h-24 items-center justify-center border-t border-border px-4 text-center text-[13px] text-muted-foreground">{t("No plugins are installed.")}</div> : null}
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+        {items.map((item) => {
+          const hasUI = item.manifest.artifacts.some((artifact) => artifact.role === "ui");
+          return (
+            <Card key={item.plugin_id}>
+              <CardHeader>
+                <CardTitle>{item.manifest.name}</CardTitle>
+                <CardDescription className="truncate" title={item.plugin_id}>{item.plugin_id}</CardDescription>
+                <CardAction><Status value={t(label(item.state))} tone={installationStateTone(item.state)} /></CardAction>
+              </CardHeader>
+              <CardContent>
+                <dl className="grid grid-cols-2 gap-4 text-sm">
+                  <PluginDetail label={t("Kind")} value={t(label(item.kind))} />
+                  <PluginDetail label={t("Version")} value={item.active_version} />
+                  <PluginDetail label={t("Health")} value={<Status value={t(label(item.health))} tone={item.health === "healthy" ? "ok" : item.health === "unhealthy" ? "error" : "muted"} />} />
+                  <PluginDetail label={t("Permissions")} value={item.approved_permissions.length} />
+                </dl>
+              </CardContent>
+              <CardFooter className="justify-end gap-1 border-t pt-6">
+                {hasUI ? (
+                  <Button variant="outline" size="sm" onClick={() => onOpen(item)}><ExternalLink />{t("Open plugin")}</Button>
+                ) : null}
+                <IconAction label={t("Upgrade {name}", { name: item.manifest.name })} description={t("Check for upgrade")} onClick={() => setUpgrading(item)}><RefreshCw size={17} /></IconAction>
+                <IconAction label={t("Replace GitHub token for {name}", { name: item.manifest.name })} description={t("Replace GitHub token")} onClick={() => setReplacingToken(item)}><KeyRound size={17} /></IconAction>
+                <IconAction label={t("Uninstall {name}", { name: item.manifest.name })} description={t("Uninstall plugin")} danger onClick={() => setRemoving(item)}><Trash2 size={17} /></IconAction>
+              </CardFooter>
+            </Card>
+          );
+        })}
+        {loading ? <Card className="flex min-h-40 items-center justify-center text-sm text-muted-foreground">{t("Loading...")}</Card> : null}
+        {!loading && items.length === 0 ? <Card className="flex min-h-40 items-center justify-center text-sm text-muted-foreground">{t("No plugins are installed.")}</Card> : null}
       </div>
       {installing ? <PluginReleaseDialog onClose={() => setInstalling(false)} onSaved={(value) => { replace(value); setInstalling(false); }} /> : null}
       {upgrading ? <PluginReleaseDialog existing={upgrading} onClose={() => setUpgrading(undefined)} onSaved={(value) => { replace(value); setUpgrading(undefined); }} /> : null}
@@ -139,6 +156,15 @@ function PluginInstallationsView({ onOpen }: { onOpen: (plugin: PluginInstallati
         />
       ) : null}
     </>
+  );
+}
+
+function PluginDetail({ label: detailLabel, value }: { label: string; value: ReactNode }) {
+  return (
+    <div className="grid gap-1">
+      <dt className="text-muted-foreground">{detailLabel}</dt>
+      <dd className="m-0 font-medium">{value}</dd>
+    </div>
   );
 }
 
@@ -269,7 +295,7 @@ function PluginReleaseDialog({ existing, onClose, onSaved }: {
             <span className="shrink-0 text-sm">v{candidate.manifest.version}</span>
           </div>
           <div className="mt-3.5 grid gap-2" aria-label={t("Requested permissions")}>
-            {candidate.manifest.permissions.length === 0 ? <p className="m-0 text-[13px] text-muted-foreground">{t("No kernel permissions requested.")}</p> : null}
+            {candidate.manifest.permissions.length === 0 ? <p className="m-0 text-sm text-muted-foreground">{t("No kernel permissions requested.")}</p> : null}
             {candidate.manifest.permissions.map((permission) => (
               <PermissionOption
                 key={permission.name}
@@ -307,13 +333,13 @@ function PermissionOption({ name, reason, checked, onCheckedChange }: {
   return (
     <label className="flex cursor-pointer items-start gap-2.5 rounded-sm border border-border bg-muted/45 px-3 py-2.5" htmlFor={id}>
       <Checkbox id={id} className="mt-0.5" checked={checked} onCheckedChange={(value) => onCheckedChange(value === true)} />
-      <span className="grid min-w-0 gap-0.5"><strong className="[overflow-wrap:anywhere] text-[13px] font-semibold">{name}</strong><small className="[overflow-wrap:anywhere] text-xs text-muted-foreground">{reason}</small></span>
+      <span className="grid min-w-0 gap-0.5"><strong className="[overflow-wrap:anywhere] text-sm font-semibold">{name}</strong><small className="[overflow-wrap:anywhere] text-xs text-muted-foreground">{reason}</small></span>
     </label>
   );
 }
 
 function FieldLabel({ label, children }: { label: string; children: ReactNode }) {
-  return <label className="grid gap-1.5"><span className="text-[13px] font-semibold text-foreground/80">{label}</span>{children}</label>;
+  return <label className="grid gap-1.5"><span className="text-sm font-semibold text-foreground/80">{label}</span>{children}</label>;
 }
 
 function PluginUninstallDialog({ plugin, onClose, onRemoved }: {
@@ -350,13 +376,8 @@ function PluginUninstallDialog({ plugin, onClose, onRemoved }: {
 }
 
 function Status({ value, tone }: { value: string; tone: "ok" | "warning" | "error" | "muted" }) {
-  const toneClass = {
-    ok: "bg-success",
-    warning: "bg-warning",
-    error: "bg-destructive",
-    muted: "bg-muted-foreground",
-  }[tone];
-  return <span className="inline-flex items-center gap-1.5 whitespace-nowrap"><span className={cn("size-2 shrink-0 rounded-full", toneClass)} />{value}</span>;
+  const badgeTone = { ok: "success", warning: "warning", error: "danger", muted: "muted" } as const;
+  return <StatusBadge tone={badgeTone[tone]}>{value}</StatusBadge>;
 }
 
 function IconAction({ label, description, danger = false, onClick, children }: {

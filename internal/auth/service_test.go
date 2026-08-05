@@ -195,6 +195,92 @@ func TestRegenerateRecoveryCodesAndDisableTOTP(t *testing.T) {
 	}
 }
 
+func TestCredentialUpdatesAndSessionManagement(t *testing.T) {
+	service, database, _ := newTestService(t)
+	ctx := context.Background()
+	fixed := time.Date(2026, time.August, 5, 9, 0, 0, 0, time.UTC)
+	service.now = func() time.Time { return fixed }
+
+	first, err := service.Setup(ctx, "admin", "correct horse battery staple", SessionDetails{UserAgent: "First browser"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings, err := database.SystemSettings(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings.SessionLifetimeMinutes = 120
+	if err := database.UpdateSystemSettings(ctx, settings, fixed); err != nil {
+		t.Fatal(err)
+	}
+	second, err := service.Login(ctx, "admin", "correct horse battery staple", "", SessionDetails{UserAgent: "Second browser"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !second.ExpiresAt.Equal(fixed.Add(2 * time.Hour)) {
+		t.Fatalf("second session expiry = %v", second.ExpiresAt)
+	}
+	secondAuth, err := service.Authenticate(ctx, second.SessionToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessions, err := service.ListSessions(ctx, secondAuth)
+	if err != nil || len(sessions) != 2 {
+		t.Fatalf("sessions = %+v, %v", sessions, err)
+	}
+	firstAuth, err := service.Authenticate(ctx, first.SessionToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	current, err := service.RevokeSession(ctx, secondAuth, firstAuth.Session.ID)
+	if err != nil || current {
+		t.Fatalf("revoke first session current = %t, %v", current, err)
+	}
+	if _, err := service.Authenticate(ctx, first.SessionToken); !errors.Is(err, ErrInvalidCredentials) {
+		t.Fatalf("first session remains valid: %v", err)
+	}
+
+	third, err := service.Login(ctx, "admin", "correct horse battery staple", "", SessionDetails{UserAgent: "Third browser"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if revoked, err := service.RevokeOtherSessions(ctx, secondAuth); err != nil || revoked != 1 {
+		t.Fatalf("revoke other sessions = %d, %v", revoked, err)
+	}
+	if _, err := service.Authenticate(ctx, third.SessionToken); !errors.Is(err, ErrInvalidCredentials) {
+		t.Fatalf("third session remains valid: %v", err)
+	}
+
+	if err := service.ChangeUsername(ctx, "operator", "wrong password", ""); !errors.Is(err, ErrInvalidCredentials) {
+		t.Fatalf("ChangeUsername() wrong password error = %v", err)
+	}
+	if err := service.ChangeUsername(ctx, "operator", "correct horse battery staple", ""); err != nil {
+		t.Fatalf("ChangeUsername() error = %v", err)
+	}
+	if _, err := service.Authenticate(ctx, second.SessionToken); !errors.Is(err, ErrInvalidCredentials) {
+		t.Fatalf("session remains valid after username change: %v", err)
+	}
+	if _, err := service.Login(ctx, "admin", "correct horse battery staple", ""); !errors.Is(err, ErrInvalidCredentials) {
+		t.Fatalf("old username login error = %v", err)
+	}
+	login, err := service.Login(ctx, "operator", "correct horse battery staple", "")
+	if err != nil {
+		t.Fatalf("new username login error = %v", err)
+	}
+	if err := service.ChangePassword(ctx, "correct horse battery staple", "replacement administrator password", ""); err != nil {
+		t.Fatalf("ChangePassword() error = %v", err)
+	}
+	if _, err := service.Authenticate(ctx, login.SessionToken); !errors.Is(err, ErrInvalidCredentials) {
+		t.Fatalf("session remains valid after password change: %v", err)
+	}
+	if _, err := service.Login(ctx, "operator", "correct horse battery staple", ""); !errors.Is(err, ErrInvalidCredentials) {
+		t.Fatalf("old password login error = %v", err)
+	}
+	if _, err := service.Login(ctx, "operator", "replacement administrator password", ""); err != nil {
+		t.Fatalf("new password login error = %v", err)
+	}
+}
+
 func newTestService(t *testing.T) (*Service, *store.Store, string) {
 	t.Helper()
 	directory := t.TempDir()

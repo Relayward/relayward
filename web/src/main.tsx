@@ -10,6 +10,10 @@ import "./tailwind.css";
 const styleNonce = document.querySelector<HTMLMetaElement>('meta[name="relayward-style-nonce"]')?.content;
 if (styleNonce) setNonce(styleNonce);
 
+const storedTheme = window.localStorage.getItem("relayward.theme");
+const darkTheme = storedTheme === "dark" || (storedTheme === null && window.matchMedia("(prefers-color-scheme: dark)").matches);
+document.documentElement.classList.toggle("dark", darkTheme);
+
 const root = document.getElementById("root");
 
 if (root === null) {

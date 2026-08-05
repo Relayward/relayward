@@ -92,10 +92,17 @@ func New(options Options) http.Handler {
 	mux.HandleFunc("POST /api/v1/auth/login", server.login)
 	mux.HandleFunc("GET /api/v1/auth/session", server.withAuthentication(server.session))
 	mux.HandleFunc("POST /api/v1/auth/logout", server.withAuthentication(server.withCSRF(server.logout)))
+	mux.HandleFunc("PUT /api/v1/auth/username", server.withAuthentication(server.withCSRF(server.updateUsername)))
+	mux.HandleFunc("PUT /api/v1/auth/password", server.withAuthentication(server.withCSRF(server.updatePassword)))
+	mux.HandleFunc("GET /api/v1/auth/sessions", server.withAuthentication(server.listSessions))
+	mux.HandleFunc("DELETE /api/v1/auth/sessions/{session_id}", server.withAuthentication(server.withCSRF(server.revokeSession)))
+	mux.HandleFunc("POST /api/v1/auth/sessions/revoke-others", server.withAuthentication(server.withCSRF(server.revokeOtherSessions)))
 	mux.HandleFunc("POST /api/v1/auth/totp/prepare", server.withAuthentication(server.withCSRF(server.prepareTOTP)))
 	mux.HandleFunc("POST /api/v1/auth/totp/enable", server.withAuthentication(server.withCSRF(server.enableTOTP)))
 	mux.HandleFunc("POST /api/v1/auth/totp/disable", server.withAuthentication(server.withCSRF(server.disableTOTP)))
 	mux.HandleFunc("POST /api/v1/auth/recovery-codes/regenerate", server.withAuthentication(server.withCSRF(server.regenerateRecoveryCodes)))
+	mux.HandleFunc("GET /api/v1/settings", server.withAuthentication(server.getSystemSettings))
+	mux.HandleFunc("PUT /api/v1/settings", server.withAuthentication(server.withCSRF(server.updateSystemSettings)))
 	mux.HandleFunc("GET /api/v1/nodes", server.withAuthentication(server.listNodes))
 	mux.HandleFunc("POST /api/v1/nodes", server.withAuthentication(server.withCSRF(server.createNode)))
 	mux.HandleFunc("GET /api/v1/nodes/{node_id}", server.withAuthentication(server.getNode))
@@ -115,8 +122,9 @@ func New(options Options) http.Handler {
 	mux.HandleFunc("POST /api/v1/plugins/{plugin_id}/upgrade", server.withAuthentication(server.withCSRF(server.upgradePlugin)))
 	mux.HandleFunc("PUT /api/v1/plugins/{plugin_id}/github-token", server.withAuthentication(server.withCSRF(server.replacePluginGitHubToken)))
 	mux.HandleFunc("DELETE /api/v1/plugins/{plugin_id}", server.withAuthentication(server.withCSRF(server.uninstallPlugin)))
+	mux.HandleFunc("POST /api/v1/plugins/{plugin_id}/ui-session", server.withAuthentication(server.withCSRF(server.createPluginUISession)))
 	mux.HandleFunc("POST /api/v1/plugins/{plugin_id}/ui/{method}", server.withAuthentication(server.withCSRF(server.invokePluginUI)))
-	mux.HandleFunc("GET /api/v1/plugins/{plugin_id}/ui/{path...}", server.withAuthentication(server.servePluginUI))
+	mux.HandleFunc("GET /plugin-ui/{plugin_id}/{token}/{path...}", server.servePluginUI)
 	mux.HandleFunc("GET /api/v1/users", server.withAuthentication(server.listUsers))
 	mux.HandleFunc("POST /api/v1/users", server.withAuthentication(server.withCSRF(server.createUser)))
 	mux.HandleFunc("GET /api/v1/users/{user_id}", server.withAuthentication(server.getUser))
@@ -200,7 +208,7 @@ func (server *Server) setup(w http.ResponseWriter, request *http.Request) {
 		writeProblem(w, http.StatusBadRequest, protocol.ErrorInvalidArgument, "Invalid setup request.", false)
 		return
 	}
-	credentials, err := server.auth.Setup(request.Context(), input.Username, input.Password)
+	credentials, err := server.auth.Setup(request.Context(), input.Username, input.Password, requestSessionDetails(request))
 	if errors.Is(err, store.ErrAlreadyInitialized) {
 		writeProblem(w, http.StatusConflict, protocol.ErrorConflict, "Relayward is already initialized.", false)
 		return
@@ -234,7 +242,7 @@ func (server *Server) login(w http.ResponseWriter, request *http.Request) {
 		writeProblem(w, http.StatusTooManyRequests, protocol.ErrorUnavailable, "Too many login attempts. Try again later.", true)
 		return
 	}
-	credentials, err := server.auth.Login(request.Context(), input.Username, input.Password, input.SecondFactor)
+	credentials, err := server.auth.Login(request.Context(), input.Username, input.Password, input.SecondFactor, requestSessionDetails(request))
 	switch {
 	case err == nil:
 		server.loginLimiter.Reset(limiterKey)
@@ -263,6 +271,109 @@ func (server *Server) logout(w http.ResponseWriter, request *http.Request, authe
 	}
 	server.clearCredentials(w)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+type credentialUpdateRequest struct {
+	Password     string `json:"password"`
+	SecondFactor string `json:"second_factor,omitempty"`
+}
+
+func (server *Server) updateUsername(w http.ResponseWriter, request *http.Request, _ auth.Authenticated) {
+	var input struct {
+		credentialUpdateRequest
+		Username string `json:"username"`
+	}
+	if err := decodeJSON(request, &input); err != nil {
+		writeProblem(w, http.StatusBadRequest, protocol.ErrorInvalidArgument, "Invalid username update request.", false)
+		return
+	}
+	if err := server.auth.ChangeUsername(request.Context(), input.Username, input.Password, input.SecondFactor); err != nil {
+		if errors.Is(err, auth.ErrInvalidUsername) {
+			writeProblemWithViolations(w, http.StatusBadRequest, protocol.ErrorInvalidArgument, err.Error(), false,
+				[]protocol.FieldViolation{{Field: "username", Description: "must contain 3 to 64 letters, numbers, dots, underscores, or hyphens"}})
+			return
+		}
+		server.sensitiveActionError(w, request, err)
+		return
+	}
+	server.clearCredentials(w)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (server *Server) updatePassword(w http.ResponseWriter, request *http.Request, _ auth.Authenticated) {
+	var input struct {
+		credentialUpdateRequest
+		NewPassword string `json:"new_password"`
+	}
+	if err := decodeJSON(request, &input); err != nil {
+		writeProblem(w, http.StatusBadRequest, protocol.ErrorInvalidArgument, "Invalid password update request.", false)
+		return
+	}
+	if err := server.auth.ChangePassword(request.Context(), input.Password, input.NewPassword, input.SecondFactor); err != nil {
+		if errors.Is(err, auth.ErrInvalidPassword) {
+			writeProblemWithViolations(w, http.StatusBadRequest, protocol.ErrorInvalidArgument, err.Error(), false,
+				[]protocol.FieldViolation{{Field: "new_password", Description: "must contain 12 to 1024 characters"}})
+			return
+		}
+		server.sensitiveActionError(w, request, err)
+		return
+	}
+	server.clearCredentials(w)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+type sessionView struct {
+	ID         string    `json:"id"`
+	UserAgent  string    `json:"user_agent"`
+	Current    bool      `json:"current"`
+	CreatedAt  time.Time `json:"created_at"`
+	LastSeenAt time.Time `json:"last_seen_at"`
+	ExpiresAt  time.Time `json:"expires_at"`
+}
+
+func (server *Server) listSessions(w http.ResponseWriter, request *http.Request, authenticated auth.Authenticated) {
+	values, err := server.auth.ListSessions(request.Context(), authenticated)
+	if err != nil {
+		server.internalError(w, request, err)
+		return
+	}
+	items := make([]sessionView, len(values))
+	for index, value := range values {
+		items[index] = sessionView{
+			ID: value.ID, UserAgent: value.UserAgent, Current: value.ID == authenticated.Session.ID,
+			CreatedAt: value.CreatedAt, LastSeenAt: value.LastSeenAt, ExpiresAt: value.ExpiresAt,
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+}
+
+func (server *Server) revokeSession(w http.ResponseWriter, request *http.Request, authenticated auth.Authenticated) {
+	current, err := server.auth.RevokeSession(request.Context(), authenticated, request.PathValue("session_id"))
+	if errors.Is(err, store.ErrNotFound) {
+		writeProblem(w, http.StatusNotFound, protocol.ErrorNotFound, "Session not found.", false)
+		return
+	}
+	if err != nil {
+		server.internalError(w, request, err)
+		return
+	}
+	if current {
+		server.clearCredentials(w)
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (server *Server) revokeOtherSessions(w http.ResponseWriter, request *http.Request, authenticated auth.Authenticated) {
+	revoked, err := server.auth.RevokeOtherSessions(request.Context(), authenticated)
+	if err != nil {
+		server.internalError(w, request, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]int64{"revoked": revoked})
+}
+
+func requestSessionDetails(request *http.Request) auth.SessionDetails {
+	return auth.SessionDetails{UserAgent: request.UserAgent()}
 }
 
 func (server *Server) prepareTOTP(w http.ResponseWriter, request *http.Request, authenticated auth.Authenticated) {

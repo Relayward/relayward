@@ -371,6 +371,37 @@ ALTER TABLE nodes ADD COLUMN registration_count INTEGER NOT NULL DEFAULT 0 CHECK
 UPDATE nodes SET registration_count = 1 WHERE registered_at IS NOT NULL;
 `,
 	},
+	{
+		version: 11,
+		sql: `
+ALTER TABLE sessions ADD COLUMN id TEXT NOT NULL DEFAULT '';
+UPDATE sessions SET id = lower(hex(token_hash)) WHERE id = '';
+CREATE UNIQUE INDEX sessions_id_idx ON sessions(id);
+ALTER TABLE sessions ADD COLUMN user_agent TEXT NOT NULL DEFAULT '';
+
+CREATE TABLE system_settings (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    session_lifetime_minutes INTEGER NOT NULL DEFAULT 1440
+        CHECK (session_lifetime_minutes BETWEEN 60 AND 525600),
+    timezone TEXT NOT NULL DEFAULT 'UTC',
+    public_url TEXT NOT NULL DEFAULT '',
+    subscription_title TEXT NOT NULL DEFAULT 'Relayward',
+    support_url TEXT NOT NULL DEFAULT '',
+    profile_url TEXT NOT NULL DEFAULT '',
+    subscription_refresh_hours INTEGER NOT NULL DEFAULT 12
+        CHECK (subscription_refresh_hours BETWEEN 0 AND 8760),
+    updated_at INTEGER NOT NULL
+);
+INSERT INTO system_settings(id, updated_at) VALUES (1, unixepoch());
+`,
+	},
+	{
+		version: 12,
+		sql: `
+UPDATE audit_log SET outcome = 'success' WHERE outcome = 'succeeded';
+UPDATE audit_log SET outcome = 'failure' WHERE outcome = 'failed';
+`,
+	},
 }
 
 func migrate(ctx context.Context, db *sql.DB) error {

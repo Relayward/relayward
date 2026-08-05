@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
-import { Download } from "lucide-react";
+import { CalendarClock, Download, Gauge, House, LifeBuoy, RefreshCw, RotateCcw, Server, WalletCards } from "lucide-react";
 
 import { APIError, getSubscription, type SubscriptionInfo } from "../api";
 import { LanguageSwitcher, useI18n } from "../i18n";
-import { cn } from "../lib/utils";
+import { BrandMark, StatusBadge, SummaryBar, SummaryItem } from "./PageLayout";
 import { Button } from "./ui/button";
+import { Card, CardAction, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "./ui/card";
 
 const gibibyte = 1024 ** 3;
 const weekdays = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
@@ -28,7 +29,7 @@ export function SubscriptionPage({ token }: { token: string }) {
     return (
       <main className="relative flex min-h-screen flex-col items-center justify-center gap-3.5 p-6 text-center">
         <LanguageSwitcher className="absolute top-5 right-5" />
-        <span className="flex size-11 items-center justify-center rounded-md bg-foreground text-[22px] font-bold text-background">R</span>
+        <BrandMark />
         <h1 className="m-0 text-2xl font-semibold">{t("Subscription unavailable")}</h1>
         <p className="m-0 max-w-lg text-sm text-muted-foreground">{t(error)}</p>
         <Button size="sm" onClick={() => window.location.reload()} type="button">{t("Retry")}</Button>
@@ -36,53 +37,74 @@ export function SubscriptionPage({ token }: { token: string }) {
     );
   }
   if (!subscription) {
-    return <main className="flex min-h-screen flex-col items-center justify-center gap-3.5 p-6"><span className="flex size-11 items-center justify-center rounded-md bg-foreground text-[22px] font-bold text-background">R</span><span>Relayward</span></main>;
+    return <main className="flex min-h-screen flex-col items-center justify-center gap-3.5 p-6"><BrandMark /><span className="text-xs text-muted-foreground">{t("Loading...")}</span></main>;
   }
 
+  const trafficPercentage = subscription.traffic_limit_bytes !== null && subscription.traffic_limit_bytes > 0 && subscription.traffic_used_bytes !== null
+    ? Math.min(subscription.traffic_used_bytes / subscription.traffic_limit_bytes * 100, 100)
+    : 0;
+  const status = statusLabel(subscription.status, t);
+  const downloadsAvailable = subscription.status === "active" && subscription.services.length > 0;
+
   return (
-    <main className="mx-auto min-h-screen w-full max-w-[820px] px-6 pb-12 max-[440px]:px-[18px] max-[440px]:pb-9">
-      <header className="flex h-16 items-center gap-2.5"><span className="flex size-[30px] items-center justify-center rounded-md bg-foreground text-[15px] font-bold text-background">R</span><strong>Relayward</strong><LanguageSwitcher className="ml-auto" /></header>
-      <section className="border-b border-border pt-13 pb-8.5 max-[440px]:pt-8.5">
-        <p className="m-0 text-xs font-semibold text-muted-foreground">{subscription.user_name}</p>
-        <h1 className="mt-1 mb-2.5 text-[34px] font-semibold max-[440px]:text-[30px]">{subscription.node_name}</h1>
-        <p className="m-0 inline-flex items-center gap-2 text-sm font-semibold"><span className={cn("size-2.5 rounded-full", statusTone(subscription.status))} />{statusLabel(subscription.status, t)}</p>
-        {subscription.node_address ? <p className="mt-3 mb-0 text-sm text-muted-foreground">{subscription.node_address}</p> : null}
-      </section>
-      <dl className="mt-7 grid grid-cols-2 gap-x-6 max-[440px]:grid-cols-1" aria-label={t("Subscription details")}>
-        <Detail label={t("Traffic quota")} value={subscription.traffic_limit_bytes === null ? t("Unlimited") : formatBytes(subscription.traffic_limit_bytes)} />
-        <Detail label={t("Traffic used")} value={subscription.traffic_used_bytes === null ? t("Unavailable") : formatBytes(subscription.traffic_used_bytes)} />
-        <Detail label={t("Reset")} value={formatReset(subscription.reset, t)} />
-        <Detail label={t("Expires")} value={subscription.expires_at ? formatDateTime(subscription.expires_at) : t("Never")} />
-      </dl>
-      {subscription.announcement ? <section className="mt-7 border-t border-border pt-6"><h2 className="mt-0 mb-3 text-[17px] font-semibold">{t("Announcement")}</h2><p className="m-0 whitespace-pre-wrap text-sm text-muted-foreground">{subscription.announcement}</p></section> : null}
-      <section className="mt-7 border-t border-border pt-6" aria-labelledby="services-title">
-        <h2 className="mt-0 mb-3 text-[17px] font-semibold" id="services-title">{t("Services")}</h2>
-        {subscription.services.length === 0 ? <p className="m-0 text-sm text-muted-foreground">{t("No services available.")}</p> : null}
-        {subscription.services.length > 0 ? (
-          <ul className="m-0 list-none p-0">{subscription.services.map((service) => (
-            <li className="flex items-baseline justify-between gap-4 border-b border-border py-3.5 max-[440px]:flex-col max-[440px]:items-start max-[440px]:gap-1" key={`${service.plugin_id}/${service.service_id}`}>
-              <strong className="font-semibold">{service.display_name}</strong>
-              <span className="text-right text-xs text-muted-foreground [overflow-wrap:anywhere] max-[440px]:text-left">{service.plugin_id} / {service.service_id}</span>
-            </li>
-          ))}</ul>
-        ) : null}
-      </section>
-      {subscription.status === "active" && subscription.services.length > 0 ? (
-        <section className="mt-7 border-t border-border pt-6" aria-labelledby="downloads-title">
-          <h2 className="mt-0 mb-3 text-[17px] font-semibold" id="downloads-title">{t("Downloads")}</h2>
-          <div className="flex flex-wrap gap-2.5 max-[440px]:grid">
-            <DownloadLink href={downloadURL(token, "base64")} label="Base64" />
-            <DownloadLink href={downloadURL(token, "mihomo.yaml")} label="Mihomo" />
-            <DownloadLink href={downloadURL(token, "sing-box.json")} label="sing-box" />
+    <div className="min-h-screen bg-background">
+      <header className="border-b border-border bg-card">
+        <div className="mx-auto flex h-16 w-full max-w-[1040px] items-center px-6 max-[440px]:px-4"><BrandMark /><LanguageSwitcher className="ml-auto" /></div>
+      </header>
+      <main className="mx-auto w-full max-w-[1040px] px-6 py-10 max-[640px]:px-4 max-[640px]:py-7">
+        <section className="mb-7 flex items-start justify-between gap-5 max-[640px]:flex-col" aria-labelledby="subscription-title">
+          <div className="min-w-0">
+            <p className="m-0 text-xs font-semibold text-muted-foreground">{subscription.user_name} · {subscription.node_name}</p>
+            <h1 className="mt-1 mb-2 text-2xl leading-tight font-bold" id="subscription-title">{subscription.title}</h1>
+            {subscription.node_address ? <p className="m-0 break-all text-xs text-muted-foreground">{subscription.node_address}</p> : null}
           </div>
+          <StatusBadge tone={statusTone(subscription.status)} className="shrink-0">{status}</StatusBadge>
         </section>
-      ) : null}
-    </main>
+
+        <SummaryBar>
+          <SummaryItem icon={<Gauge size={17} />} label={t("Traffic used")} value={subscription.traffic_used_bytes === null ? t("Unavailable") : formatBytes(subscription.traffic_used_bytes)} tone="primary" />
+          <SummaryItem icon={<WalletCards size={17} />} label={t("Traffic quota")} value={subscription.traffic_limit_bytes === null ? t("Unlimited") : formatBytes(subscription.traffic_limit_bytes)} />
+          <SummaryItem icon={<RotateCcw size={17} />} label={t("Reset")} value={formatReset(subscription.reset, t)} />
+          <SummaryItem icon={<CalendarClock size={17} />} label={t("Expires")} value={subscription.expires_at ? formatDateTime(subscription.expires_at) : t("Never")} tone={subscription.status === "expired" ? "warning" : "default"} />
+        </SummaryBar>
+
+        {subscription.traffic_limit_bytes !== null ? <section className="mb-5" aria-label={t("Traffic usage")}><div className="mb-2 flex items-center justify-between gap-4 text-xs text-muted-foreground"><span>{t("Traffic usage")}</span><span>{Math.round(trafficPercentage)}%</span></div><div className="h-2 overflow-hidden rounded-full bg-muted"><div className={trafficPercentage >= 100 ? "h-full rounded-full bg-destructive" : trafficPercentage >= 80 ? "h-full rounded-full bg-warning" : "h-full rounded-full bg-primary"} style={{ width: `${trafficPercentage}%` }} /></div></section> : null}
+
+        {subscription.refresh_hours > 0 || subscription.support_url || subscription.profile_url ? (
+          <section className="mb-5 flex flex-wrap items-center gap-x-6 gap-y-3 border-y border-border py-3 text-sm text-muted-foreground" aria-label={t("Subscription profile")}>
+            {subscription.refresh_hours > 0 ? <span className="inline-flex items-center gap-2"><RefreshCw className="size-4" />{refreshLabel(subscription.refresh_hours, t)}</span> : null}
+            {subscription.support_url ? <a className="inline-flex items-center gap-2 font-medium text-foreground underline-offset-4 hover:underline" href={subscription.support_url} target="_blank" rel="noreferrer"><LifeBuoy className="size-4" />{t("Support")}</a> : null}
+            {subscription.profile_url ? <a className="inline-flex items-center gap-2 font-medium text-foreground underline-offset-4 hover:underline" href={subscription.profile_url} target="_blank" rel="noreferrer"><House className="size-4" />{t("Homepage")}</a> : null}
+          </section>
+        ) : null}
+
+        {subscription.announcement ? <section className="mb-5 border-l-[3px] border-primary bg-primary-soft px-5 py-4"><h2 className="m-0 text-sm font-semibold text-primary-strong">{t("Announcement")}</h2><p className="mt-2 mb-0 whitespace-pre-wrap text-xs leading-6 text-foreground/80">{subscription.announcement}</p></section> : null}
+
+        <Card aria-labelledby="services-title">
+          <CardHeader>
+            <CardTitle id="services-title">{t("Services")}</CardTitle>
+            <CardDescription>{t("{count} services are available", { count: subscription.services.length })}</CardDescription>
+            {downloadsAvailable ? <CardAction className="flex flex-wrap justify-end gap-2 max-[640px]:hidden"><DownloadLink href={downloadURL(token, "base64")} label="Base64" /><DownloadLink href={downloadURL(token, "mihomo.yaml")} label="Mihomo" /><DownloadLink href={downloadURL(token, "sing-box.json")} label="sing-box" /></CardAction> : null}
+          </CardHeader>
+          <CardContent className="divide-y divide-border">
+            {subscription.services.length === 0 ? <p className="my-0 py-10 text-center text-sm text-muted-foreground">{t("No services available.")}</p> : null}
+            {subscription.services.map((service) => (
+              <div className="flex items-center gap-4 py-4" key={`${service.plugin_id}/${service.service_id}`}>
+                <span className="flex size-9 shrink-0 items-center justify-center rounded-md bg-primary-soft text-primary"><Server size={17} /></span>
+                <span className="grid min-w-0 flex-1 gap-1"><strong className="truncate text-sm font-semibold">{service.display_name}</strong><small className="truncate text-xs text-muted-foreground" title={`${service.plugin_id} / ${service.service_id}`}>{service.plugin_id} / {service.service_id}</small></span>
+                <span className="max-w-[40%] truncate text-right text-xs text-muted-foreground max-[560px]:hidden">{service.capabilities.join(", ") || t("No reported capabilities")}</span>
+              </div>
+            ))}
+          </CardContent>
+          {downloadsAvailable ? <CardFooter className="hidden flex-wrap gap-2 border-t max-[640px]:flex"><DownloadLink href={downloadURL(token, "base64")} label="Base64" /><DownloadLink href={downloadURL(token, "mihomo.yaml")} label="Mihomo" /><DownloadLink href={downloadURL(token, "sing-box.json")} label="sing-box" /></CardFooter> : null}
+        </Card>
+      </main>
+    </div>
   );
 }
 
-function Detail({ label, value }: { label: string; value: string }) {
-  return <div className="flex min-h-[76px] flex-col gap-1.5 border-b border-border py-3.5"><dt className="text-xs text-muted-foreground">{label}</dt><dd className="m-0 font-semibold">{value}</dd></div>;
+export function refreshLabel(hours: number, t: (message: string, values?: Record<string, string | number>) => string): string {
+  return hours === 1 ? t("Refresh every hour") : t("Refresh every {count} hours", { count: hours });
 }
 
 function statusLabel(status: SubscriptionInfo["status"], t: (message: string) => string): string {
@@ -95,10 +117,10 @@ function statusLabel(status: SubscriptionInfo["status"], t: (message: string) =>
   }
 }
 
-function statusTone(status: SubscriptionInfo["status"]): string {
-  if (status === "active") return "bg-success";
-  if (status === "disabled") return "bg-muted-foreground";
-  return "bg-warning";
+function statusTone(status: SubscriptionInfo["status"]): "success" | "muted" | "warning" {
+  if (status === "active") return "success";
+  if (status === "disabled") return "muted";
+  return "warning";
 }
 
 function DownloadLink({ href, label }: { href: string; label: string }) {

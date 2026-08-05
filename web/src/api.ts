@@ -20,6 +20,26 @@ export interface RecoveryCodes {
   recovery_codes: string[];
 }
 
+export interface AdministratorSession {
+  id: string;
+  user_agent: string;
+  current: boolean;
+  created_at: string;
+  last_seen_at: string;
+  expires_at: string;
+}
+
+export interface SystemSettings {
+  session_lifetime_minutes: number;
+  timezone: string;
+  public_url: string;
+  subscription_title: string;
+  support_url: string;
+  profile_url: string;
+  subscription_refresh_hours: number;
+  updated_at: string;
+}
+
 export interface Node {
   id: string;
   name: string;
@@ -320,6 +340,10 @@ export interface AuditEntry {
 }
 
 export interface SubscriptionInfo {
+  title: string;
+  support_url: string;
+  profile_url: string;
+  refresh_hours: number;
   status: "active" | "disabled" | "expired" | "node_disabled" | "quota_exceeded";
   user_name: string;
   node_name: string;
@@ -385,6 +409,32 @@ export async function logout(): Promise<void> {
   return request("/api/v1/auth/logout", { method: "POST" });
 }
 
+export async function updateAdministratorUsername(username: string, password: string, secondFactor: string): Promise<void> {
+  return request("/api/v1/auth/username", {
+    method: "PUT", body: JSON.stringify({ username, password, second_factor: secondFactor }),
+  });
+}
+
+export async function updateAdministratorPassword(password: string, newPassword: string, secondFactor: string): Promise<void> {
+  return request("/api/v1/auth/password", {
+    method: "PUT", body: JSON.stringify({ password, new_password: newPassword, second_factor: secondFactor }),
+  });
+}
+
+export async function listAdministratorSessions(): Promise<AdministratorSession[]> {
+  const response = await request<{ items: AdministratorSession[] }>("/api/v1/auth/sessions");
+  return response.items;
+}
+
+export async function revokeAdministratorSession(id: string): Promise<void> {
+  return request(`/api/v1/auth/sessions/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
+export async function revokeOtherAdministratorSessions(): Promise<number> {
+  const response = await request<{ revoked: number }>("/api/v1/auth/sessions/revoke-others", { method: "POST" });
+  return response.revoked;
+}
+
 export async function prepareTOTP(): Promise<TOTPPreparation> {
   return request("/api/v1/auth/totp/prepare", { method: "POST" });
 }
@@ -405,6 +455,14 @@ export async function regenerateRecoveryCodes(password: string, secondFactor: st
     method: "POST",
     body: JSON.stringify({ password, second_factor: secondFactor }),
   });
+}
+
+export async function getSystemSettings(): Promise<SystemSettings> {
+  return request("/api/v1/settings");
+}
+
+export async function updateSystemSettings(input: Omit<SystemSettings, "updated_at">): Promise<SystemSettings> {
+  return request("/api/v1/settings", { method: "PUT", body: JSON.stringify(input) });
 }
 
 export async function listNodes(): Promise<Node[]> {
@@ -489,6 +547,13 @@ export async function replacePluginGitHubToken(pluginID: string, githubToken: st
 
 export async function uninstallPlugin(pluginID: string): Promise<void> {
   return request(`/api/v1/plugins/${encodeURIComponent(pluginID)}`, { method: "DELETE" });
+}
+
+export async function createPluginUISession(pluginID: string): Promise<string> {
+  const response = await request<{ url: string }>(`/api/v1/plugins/${encodeURIComponent(pluginID)}/ui-session`, {
+    method: "POST",
+  });
+  return response.url;
 }
 
 export async function invokePluginUI<T>(pluginID: string, method: string, parameters: Record<string, unknown>): Promise<T> {

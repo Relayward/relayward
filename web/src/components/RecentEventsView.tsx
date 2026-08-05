@@ -14,8 +14,9 @@ import {
 } from "../api";
 import { FormError } from "./AuthScreen";
 import { useI18n } from "../i18n";
-import { cn } from "../lib/utils";
+import { PageHeader, StatusBadge } from "./PageLayout";
 import { Button } from "./ui/button";
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "./ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "./ui/table";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
@@ -25,11 +26,15 @@ const pageSize = 100;
 export function RecentEventsView() {
   const { t, formatDateTime } = useI18n();
   const nodeFilterID = useId();
+  const actionFilterID = useId();
+  const nodeFilterLabelID = `${nodeFilterID}-label`;
+  const actionFilterLabelID = `${actionFilterID}-label`;
   const [items, setItems] = useState<AccessEvent[]>([]);
   const [nodes, setNodes] = useState<Node[]>([]);
   const [users, setUsers] = useState<User[]>([]);
   const [authorizations, setAuthorizations] = useState<Authorization[]>([]);
   const [nodeID, setNodeID] = useState("");
+  const [action, setAction] = useState<"" | AccessEvent["action"]>("");
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(false);
@@ -68,6 +73,7 @@ export function RecentEventsView() {
   const nodeNames = useMemo(() => new Map(nodes.map((node) => [node.id, node.name])), [nodes]);
   const userNames = useMemo(() => new Map(users.map((user) => [user.id, user.display_name])), [users]);
   const authorizationUsers = useMemo(() => new Map(authorizations.map((value) => [value.id, value.user_id])), [authorizations]);
+  const visibleItems = useMemo(() => action === "" ? items : items.filter((item) => item.action === action), [action, items]);
 
   async function loadMore() {
     const beforeID = items.at(-1)?.id;
@@ -87,59 +93,75 @@ export function RecentEventsView() {
 
   return (
     <section aria-labelledby="recent-events-title">
-      <div className="mb-6 flex items-end justify-between gap-4 max-[700px]:flex-col max-[700px]:items-start">
-        <div><p className="m-0 text-xs font-semibold text-muted-foreground">{t("Telemetry")}</p><h1 className="mt-0.5 mb-0 text-[25px] font-semibold" id="recent-events-title">{t("Recent events")}</h1></div>
-        <div className="flex items-center gap-2">
-          <label className="flex items-center gap-2" htmlFor={nodeFilterID}>
-            <span className="shrink-0 whitespace-nowrap text-xs font-semibold text-muted-foreground">{t("Node")}</span>
-            <Select value={nodeID || "all"} onValueChange={(value) => setNodeID(value === "all" ? "" : value)}>
-              <SelectTrigger className="h-9 min-w-40" id={nodeFilterID}><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">{t("All nodes")}</SelectItem>
-                {nodes.map((node) => <SelectItem key={node.id} value={node.id}>{node.name}</SelectItem>)}
-              </SelectContent>
-            </Select>
-          </label>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button variant="ghost" size="icon" onClick={() => setRefreshKey((value) => value + 1)} aria-label={t("Refresh events")} type="button"><RefreshCw size={17} /></Button>
-            </TooltipTrigger>
-            <TooltipContent>{t("Refresh events")}</TooltipContent>
-          </Tooltip>
-        </div>
-      </div>
-      {error ? <div className="mb-3"><FormError message={t(error)} /></div> : null}
-      <div className="overflow-hidden rounded-md border border-border bg-card">
-        <Table className="min-w-[1000px]">
-          <TableHeader><TableRow className="hover:bg-transparent"><TableHead>{t("Time")}</TableHead><TableHead>{t("Node")}</TableHead><TableHead>{t("User")}</TableHead><TableHead>{t("Source")}</TableHead><TableHead>{t("Destination")}</TableHead><TableHead>{t("Protocol")}</TableHead><TableHead>{t("Action")}</TableHead></TableRow></TableHeader>
-          <TableBody>
-            {!loading ? items.map((event) => {
-              const userID = authorizationUsers.get(event.authorization_id);
-              return (
-                <TableRow key={event.id}>
-                  <TableCell className="whitespace-nowrap" title={t("Received {time}", { time: formatDateTime(event.received_at) })}>{formatDateTime(event.observed_at)}</TableCell>
-                  <TableCell><span className="grid max-w-[190px] gap-0.5"><strong className="font-semibold">{nodeNames.get(event.node_id) ?? t("Unknown node")}</strong><small className="overflow-hidden text-ellipsis whitespace-nowrap text-[11px] text-muted-foreground" title={`${event.plugin_id} / ${event.service_id}`}>{event.plugin_id} / {event.service_id}</small></span></TableCell>
-                  <TableCell>{userID ? userNames.get(userID) ?? t("Unknown user") : t("Unknown authorization")}</TableCell>
-                  <TableCell className="whitespace-nowrap">{event.source_ip || t("Not reported")}</TableCell>
-                  <TableCell className="whitespace-nowrap">{formatDestination(event, t)}</TableCell>
-                  <TableCell>{[event.network, event.protocol].filter(Boolean).join(" / ") || t("Not reported")}</TableCell>
-                  <TableCell><EventAction value={event.action} /></TableCell>
-                </TableRow>
-              );
-            }) : null}
-          </TableBody>
-        </Table>
-        {loading ? <div className="flex h-24 items-center justify-center px-4 text-center text-[13px] text-muted-foreground">{t("Loading...")}</div> : null}
-        {!loading && items.length === 0 ? <div className="flex h-24 items-center justify-center px-4 text-center text-[13px] text-muted-foreground">{t("No recent access events.")}</div> : null}
-      </div>
-      {hasMore ? <div className="flex justify-center pt-4"><Button variant="secondary" disabled={loadingMore} onClick={loadMore} type="button">{loadingMore ? t("Loading...") : t("Load older")}</Button></div> : null}
+      <PageHeader
+        id="recent-events-title"
+        eyebrow={t("Telemetry")}
+        title={t("Recent events")}
+        description={t("Inspect standardized access events received from runtime plugins.")}
+      />
+      <Card className="min-w-0 h-fit">
+        <CardHeader className="flex flex-col items-start justify-between space-y-0 gap-4 pb-4 sm:flex-row sm:items-center">
+          <div className="min-w-0"><CardTitle>{t("Event list")}</CardTitle><CardDescription>{t("{count} loaded events", { count: visibleItems.length })}</CardDescription></div>
+          <div className="flex w-full flex-col gap-3 sm:w-auto sm:flex-row sm:flex-wrap sm:items-center sm:justify-end">
+            <label className="flex items-center gap-2 max-[520px]:w-full" htmlFor={nodeFilterID}>
+              <span className="shrink-0 whitespace-nowrap text-xs font-semibold text-muted-foreground" id={nodeFilterLabelID}>{t("Node")}</span>
+              <Select value={nodeID || "all"} onValueChange={(value) => setNodeID(value === "all" ? "" : value)}>
+                <SelectTrigger className="h-9 min-w-40 max-[520px]:flex-1" id={nodeFilterID} aria-labelledby={nodeFilterLabelID}><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">{t("All nodes")}</SelectItem>
+                  {nodes.map((node) => <SelectItem key={node.id} value={node.id}>{node.name}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </label>
+            <label className="flex items-center gap-2 max-[520px]:w-full" htmlFor={actionFilterID}>
+              <span className="shrink-0 whitespace-nowrap text-xs font-semibold text-muted-foreground" id={actionFilterLabelID}>{t("Action")}</span>
+              <Select value={action || "all"} onValueChange={(value) => setAction(value === "all" ? "" : value as AccessEvent["action"])}>
+                <SelectTrigger className="h-9 min-w-36 max-[520px]:flex-1" id={actionFilterID} aria-labelledby={actionFilterLabelID}><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">{t("All actions")}</SelectItem>
+                  <SelectItem value="accepted">{t("Accepted")}</SelectItem>
+                  <SelectItem value="blocked">{t("Blocked")}</SelectItem>
+                </SelectContent>
+              </Select>
+            </label>
+            <Tooltip><TooltipTrigger asChild><Button className="shrink-0" variant="outline" onClick={() => setRefreshKey((value) => value + 1)} aria-label={t("Refresh events")} type="button"><RefreshCw size={16} />{t("Refresh")}</Button></TooltipTrigger><TooltipContent>{t("Refresh events")}</TooltipContent></Tooltip>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {error ? <FormError message={t(error)} /> : null}
+          <div className="rounded-lg border bg-card">
+            <Table className="min-w-[1000px]">
+              <TableHeader><TableRow className="hover:bg-transparent"><TableHead>{t("Time")}</TableHead><TableHead>{t("Node")}</TableHead><TableHead>{t("User")}</TableHead><TableHead>{t("Source")}</TableHead><TableHead>{t("Destination")}</TableHead><TableHead>{t("Protocol")}</TableHead><TableHead>{t("Action")}</TableHead></TableRow></TableHeader>
+              <TableBody>
+                {!loading ? visibleItems.map((event) => {
+                  const userID = authorizationUsers.get(event.authorization_id);
+                  return (
+                    <TableRow key={event.id}>
+                      <TableCell className="whitespace-nowrap" title={t("Received {time}", { time: formatDateTime(event.received_at) })}>{formatDateTime(event.observed_at)}</TableCell>
+                      <TableCell><span className="grid max-w-[190px] gap-0.5"><strong className="font-semibold">{nodeNames.get(event.node_id) ?? t("Unknown node")}</strong><small className="overflow-hidden text-ellipsis whitespace-nowrap text-xs text-muted-foreground" title={`${event.plugin_id} / ${event.service_id}`}>{event.plugin_id} / {event.service_id}</small></span></TableCell>
+                      <TableCell>{userID ? userNames.get(userID) ?? t("Unknown user") : t("Unknown authorization")}</TableCell>
+                      <TableCell className="whitespace-nowrap">{event.source_ip || t("Not reported")}</TableCell>
+                      <TableCell className="whitespace-nowrap">{formatDestination(event, t)}</TableCell>
+                      <TableCell>{[event.network, event.protocol].filter(Boolean).join(" / ") || t("Not reported")}</TableCell>
+                      <TableCell><EventAction value={event.action} /></TableCell>
+                    </TableRow>
+                  );
+                }) : null}
+                {loading ? <TableRow><TableCell colSpan={7} className="h-24 text-center text-muted-foreground">{t("Loading...")}</TableCell></TableRow> : null}
+                {!loading && visibleItems.length === 0 ? <TableRow><TableCell colSpan={7} className="h-24 text-center text-muted-foreground">{t("No recent access events.")}</TableCell></TableRow> : null}
+              </TableBody>
+            </Table>
+          </div>
+        </CardContent>
+        {hasMore ? <CardFooter className="justify-center"><Button variant="outline" disabled={loadingMore} onClick={loadMore} type="button">{loadingMore ? t("Loading...") : t("Load older")}</Button></CardFooter> : null}
+      </Card>
     </section>
   );
 }
 
 function EventAction({ value }: { value: AccessEvent["action"] }) {
   const { t } = useI18n();
-  return <span className="inline-flex items-center gap-1.5 whitespace-nowrap"><span className={cn("size-2 shrink-0 rounded-full", value === "accepted" ? "bg-success" : "bg-warning")} />{value === "accepted" ? t("Accepted") : t("Blocked")}</span>;
+  return <StatusBadge tone={value === "accepted" ? "success" : "warning"}>{value === "accepted" ? t("Accepted") : t("Blocked")}</StatusBadge>;
 }
 
 function formatDestination(event: AccessEvent, t: (message: string) => string): string {

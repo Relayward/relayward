@@ -194,6 +194,105 @@ func TestLoginUsesStandardProblem(t *testing.T) {
 	}
 }
 
+func TestAdministratorSettingsCredentialsAndSessionsHTTPFlow(t *testing.T) {
+	handler, _ := newTestHandler(t)
+	setup := performRequest(handler, http.MethodPost, "/api/v1/setup",
+		[]byte(`{"username":"admin","password":"correct horse battery staple"}`),
+		map[string]string{"Content-Type": "application/json", "User-Agent": "Relayward Test Browser A"})
+	if setup.Code != http.StatusCreated {
+		t.Fatalf("setup status = %d, body = %s", setup.Code, setup.Body.String())
+	}
+	firstSession := cookieByName(t, setup.Result().Cookies(), sessionCookieName)
+	firstCSRF := cookieByName(t, setup.Result().Cookies(), csrfCookieName)
+	headers := map[string]string{"Content-Type": "application/json", "X-CSRF-Token": firstCSRF.Value}
+
+	settings := performRequest(handler, http.MethodPut, "/api/v1/settings", []byte(`{
+      "session_lifetime_minutes":180,
+      "timezone":"Asia/Shanghai",
+      "public_url":"https://panel.example.com",
+      "subscription_title":"Relayward Home",
+      "support_url":"https://support.example.com",
+      "profile_url":"https://example.com/account",
+      "subscription_refresh_hours":24
+    }`), headers, firstSession)
+	if settings.Code != http.StatusOK {
+		t.Fatalf("settings update status = %d, body = %s", settings.Code, settings.Body.String())
+	}
+	var settingsBody systemSettingsResponse
+	decodeResponse(t, settings, &settingsBody)
+	if settingsBody.Timezone != "Asia/Shanghai" || settingsBody.SessionLifetimeMinutes != 180 {
+		t.Fatalf("settings body = %+v", settingsBody)
+	}
+
+	login := performRequest(handler, http.MethodPost, "/api/v1/auth/login",
+		[]byte(`{"username":"admin","password":"correct horse battery staple"}`),
+		map[string]string{"Content-Type": "application/json", "User-Agent": "Relayward Test Browser B"})
+	if login.Code != http.StatusOK {
+		t.Fatalf("second login status = %d, body = %s", login.Code, login.Body.String())
+	}
+	secondSession := cookieByName(t, login.Result().Cookies(), sessionCookieName)
+
+	list := performRequest(handler, http.MethodGet, "/api/v1/auth/sessions", nil, nil, firstSession)
+	var listed struct {
+		Items []sessionView `json:"items"`
+	}
+	decodeResponse(t, list, &listed)
+	if list.Code != http.StatusOK || len(listed.Items) != 2 {
+		t.Fatalf("session list status = %d, body = %+v", list.Code, listed)
+	}
+	var secondID string
+	for _, item := range listed.Items {
+		if item.UserAgent == "Relayward Test Browser B" {
+			secondID = item.ID
+		}
+	}
+	if secondID == "" {
+		t.Fatalf("second session missing: %+v", listed.Items)
+	}
+	revoke := performRequest(handler, http.MethodDelete, "/api/v1/auth/sessions/"+secondID, nil, headers, firstSession)
+	if revoke.Code != http.StatusNoContent {
+		t.Fatalf("revoke session status = %d, body = %s", revoke.Code, revoke.Body.String())
+	}
+	if response := performRequest(handler, http.MethodGet, "/api/v1/auth/session", nil, nil, secondSession); response.Code != http.StatusUnauthorized {
+		t.Fatalf("revoked session status = %d", response.Code)
+	}
+
+	wrong := performRequest(handler, http.MethodPut, "/api/v1/auth/username",
+		[]byte(`{"username":"operator","password":"wrong password"}`), headers, firstSession)
+	if wrong.Code != http.StatusUnauthorized {
+		t.Fatalf("wrong password username update status = %d", wrong.Code)
+	}
+	username := performRequest(handler, http.MethodPut, "/api/v1/auth/username",
+		[]byte(`{"username":"operator","password":"correct horse battery staple"}`), headers, firstSession)
+	if username.Code != http.StatusNoContent || cookieByName(t, username.Result().Cookies(), sessionCookieName).MaxAge != -1 {
+		t.Fatalf("username update status = %d, cookies = %+v", username.Code, username.Result().Cookies())
+	}
+	if response := performRequest(handler, http.MethodGet, "/api/v1/auth/session", nil, nil, firstSession); response.Code != http.StatusUnauthorized {
+		t.Fatalf("session after username update status = %d", response.Code)
+	}
+
+	operatorLogin := performRequest(handler, http.MethodPost, "/api/v1/auth/login",
+		[]byte(`{"username":"operator","password":"correct horse battery staple"}`),
+		map[string]string{"Content-Type": "application/json"})
+	if operatorLogin.Code != http.StatusOK {
+		t.Fatalf("operator login status = %d, body = %s", operatorLogin.Code, operatorLogin.Body.String())
+	}
+	operatorSession := cookieByName(t, operatorLogin.Result().Cookies(), sessionCookieName)
+	operatorCSRF := cookieByName(t, operatorLogin.Result().Cookies(), csrfCookieName)
+	password := performRequest(handler, http.MethodPut, "/api/v1/auth/password",
+		[]byte(`{"password":"correct horse battery staple","new_password":"replacement administrator password"}`),
+		map[string]string{"Content-Type": "application/json", "X-CSRF-Token": operatorCSRF.Value}, operatorSession)
+	if password.Code != http.StatusNoContent {
+		t.Fatalf("password update status = %d, body = %s", password.Code, password.Body.String())
+	}
+	newLogin := performRequest(handler, http.MethodPost, "/api/v1/auth/login",
+		[]byte(`{"username":"operator","password":"replacement administrator password"}`),
+		map[string]string{"Content-Type": "application/json"})
+	if newLogin.Code != http.StatusOK {
+		t.Fatalf("new password login status = %d, body = %s", newLogin.Code, newLogin.Body.String())
+	}
+}
+
 func TestTOTPHTTPFlow(t *testing.T) {
 	handler, _ := newTestHandler(t)
 	setup := performRequest(handler, http.MethodPost, "/api/v1/setup",

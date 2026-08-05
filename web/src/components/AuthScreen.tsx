@@ -1,8 +1,11 @@
 import { type FormEvent, type ReactNode, useState } from "react";
 
 import { LanguageSwitcher, useI18n } from "../i18n";
+import { BrandMark } from "./PageLayout";
 import { Button } from "./ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
 import { Input } from "./ui/input";
+import { Label } from "./ui/label";
 
 interface SetupProps {
   busy: boolean;
@@ -85,14 +88,18 @@ export function LoginScreen({ busy, error, secondFactorRequired, onSubmit }: Log
 
 function AuthLayout({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <main className="flex min-h-screen items-center justify-center px-5 py-8">
-      <section className="relative w-full max-w-[420px] rounded-md border border-border bg-card p-8 shadow-[0_14px_34px_rgba(25,32,38,0.08)] max-[440px]:px-5 max-[440px]:py-6" aria-labelledby="auth-title">
-        <LanguageSwitcher className="absolute top-5 right-5" />
-        <div className="flex size-11 items-center justify-center rounded-md bg-foreground text-[22px] font-bold text-background">R</div>
-        <p className="mt-3.5 mb-1 text-[13px] font-semibold text-muted-foreground">Relayward</p>
-        <h1 className="mt-0 mb-6.5 text-2xl font-semibold" id="auth-title">{title}</h1>
-        {children}
-      </section>
+    <main className="relative flex min-h-svh flex-col items-center justify-center gap-6 bg-muted p-6 md:p-10">
+      <LanguageSwitcher className="absolute top-5 right-5" />
+      <BrandMark />
+      <div className="w-full max-w-sm">
+        <Card>
+          <CardHeader className="text-center">
+            <CardTitle className="text-xl"><h1 id="auth-title">{title}</h1></CardTitle>
+            <CardDescription>Relayward Control Plane</CardDescription>
+          </CardHeader>
+          <CardContent>{children}</CardContent>
+        </Card>
+      </div>
     </main>
   );
 }
@@ -110,8 +117,8 @@ interface FieldProps {
 
 export function Field({ label, value, onChange, type = "text", autoComplete, autoFocus, disabled = false, required = true }: FieldProps) {
   return (
-    <label className="grid gap-1.5">
-      <span className="text-[13px] font-semibold text-foreground/80">{label}</span>
+    <Label className="grid gap-2">
+      <span>{label}</span>
       <Input
         type={type}
         value={value}
@@ -121,10 +128,10 @@ export function Field({ label, value, onChange, type = "text", autoComplete, aut
         disabled={disabled}
         required={required}
       />
-    </label>
+    </Label>
   );
 }
 
 export function FormError({ message }: { message?: string }) {
-  return message ? <p className="m-0 text-[13px] leading-relaxed text-destructive" role="alert">{message}</p> : null;
+  return message ? <p className="m-0 text-sm text-destructive" role="alert">{message}</p> : null;
 }

@@ -90,6 +90,23 @@ Preferred recovery is to restore the complete data volume, including the origina
 
 Node, user, authorization, traffic, event, and audit data are not deleted by this reset. Tokens and credentials stored only as hashes do not depend on the instance key.
 
+## Administrator Password Recovery
+
+If the administrator password is lost, reset it locally against the persistent data volume. Stop the center first so no running process can continue using stale session state. The new password must contain at least 12 characters and is read from standard input so it does not appear in the process list or shell history.
+
+```bash
+docker compose stop relayward
+read -rsp 'New administrator password: ' RELAYWARD_PASSWORD
+printf '\n'
+printf '%s\n' "$RELAYWARD_PASSWORD" | docker compose run --rm --no-deps -T relayward \
+  admin reset-password -data /var/lib/relayward -password-stdin
+unset RELAYWARD_PASSWORD
+docker compose up -d
+docker compose exec relayward relayward healthcheck
+```
+
+The reset revokes every administrator session. Sign in with the new password after the service starts. TOTP remains enabled and still requires the existing authenticator or a recovery code.
+
 ## Node Credential Recovery
 
 Revoking a node credential immediately disconnects that Agent and prevents reconnection. Create a new one-time registration token for the same node, then rerun the Agent installer or enrollment flow on that node. Registration tokens are short-lived and single-use; do not store them in shell history or deployment files.

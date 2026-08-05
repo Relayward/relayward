@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/Relayward/relayward-sdk/protocol"
@@ -20,6 +21,10 @@ type subscriptionServiceResponse struct {
 }
 
 type subscriptionResponse struct {
+	Title             string                        `json:"title"`
+	SupportURL        string                        `json:"support_url"`
+	ProfileURL        string                        `json:"profile_url"`
+	RefreshHours      int                           `json:"refresh_hours"`
 	Status            string                        `json:"status"`
 	UserName          string                        `json:"user_name"`
 	NodeName          string                        `json:"node_name"`
@@ -59,6 +64,8 @@ func (server *Server) subscription(w http.ResponseWriter, request *http.Request)
 		}
 	}
 	writeJSON(w, http.StatusOK, subscriptionResponse{
+		Title: snapshot.Settings.SubscriptionTitle, SupportURL: snapshot.Settings.SupportURL,
+		ProfileURL: snapshot.Settings.ProfileURL, RefreshHours: snapshot.Settings.SubscriptionRefreshHours,
 		Status: management.SubscriptionStatus(snapshot, time.Now()), UserName: snapshot.UserName,
 		NodeName: snapshot.NodeName, NodeAddress: snapshot.NodeAddress,
 		TrafficLimitBytes: snapshot.Authorization.TrafficLimitBytes, TrafficUsedBytes: snapshot.TrafficUsedBytes,
@@ -91,6 +98,15 @@ func (server *Server) downloadSubscription(format, mediaType, filename string) h
 		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename=%q`, filename))
 		w.Header().Set("Content-Type", mediaType)
 		w.Header().Set("Last-Modified", value.RenderedAt.UTC().Format(http.TimeFormat))
+		if value.Settings.SubscriptionRefreshHours > 0 {
+			w.Header().Set("Profile-Update-Interval", strconv.Itoa(value.Settings.SubscriptionRefreshHours))
+		}
+		if value.Settings.SupportURL != "" {
+			w.Header().Set("Support-URL", value.Settings.SupportURL)
+		}
+		if value.Settings.ProfileURL != "" {
+			w.Header().Set("Profile-Web-Page-URL", value.Settings.ProfileURL)
+		}
 		if value.Cached {
 			w.Header().Set("X-Relayward-Cache", "hit")
 		} else {

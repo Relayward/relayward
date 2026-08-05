@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { ChevronLeft } from "lucide-react";
 
-import { invokePluginUI, type PluginInstallation } from "../api";
+import { createPluginUISession, invokePluginUI, type PluginInstallation } from "../api";
 import { useI18n } from "../i18n";
 import { cn } from "../lib/utils";
 import { bridgeFailure, bridgeSuccess, isRecord, parsePluginUIRequest } from "../pluginBridge";
 import { Button } from "./ui/button";
+import { Card } from "./ui/card";
 
 export type PluginNavigationTarget = "plugins" | "nodes" | "users" | "authorizations" | "audit";
 
@@ -20,6 +21,23 @@ export function PluginFrame({ plugin, onClose, onNavigate }: PluginFrameProps) {
   const frame = useRef<HTMLIFrameElement>(null);
   const [loading, setLoading] = useState(true);
   const [failed, setFailed] = useState(false);
+  const [source, setSource] = useState<string>();
+
+  useEffect(() => {
+    let active = true;
+    setLoading(true);
+    setFailed(false);
+    setSource(undefined);
+    createPluginUISession(plugin.plugin_id).then((url) => {
+      if (active) setSource(url);
+    }, () => {
+      if (active) {
+        setLoading(false);
+        setFailed(true);
+      }
+    });
+    return () => { active = false; };
+  }, [plugin.plugin_id]);
 
   useEffect(() => {
     async function receive(event: MessageEvent<unknown>) {
@@ -31,7 +49,10 @@ export function PluginFrame({ plugin, onClose, onNavigate }: PluginFrameProps) {
         let result: unknown;
         switch (request.method) {
           case "context":
-            result = { plugin_id: plugin.plugin_id, theme: "light" };
+            result = {
+              plugin_id: plugin.plugin_id,
+              theme: document.documentElement.classList.contains("dark") ? "dark" : "light",
+            };
             break;
           case "rpc": {
             if (!isRecord(request.payload) || typeof request.payload.method !== "string" || !isRecord(request.payload.parameters)) {
@@ -73,24 +94,26 @@ export function PluginFrame({ plugin, onClose, onNavigate }: PluginFrameProps) {
           <Button className="-ml-2 h-8 px-2" variant="ghost" size="sm" onClick={onClose} type="button">
             <ChevronLeft size={17} />{t("Plugins")}
           </Button>
-          <h1 className="mt-1.5 mb-0 text-[25px] font-semibold" id="plugin-frame-title">{plugin.manifest.name}</h1>
+          <h1 className="mt-1.5 mb-0 text-2xl font-bold tracking-tight" id="plugin-frame-title">{plugin.manifest.name}</h1>
         </div>
         <span className="shrink-0 text-xs font-semibold text-muted-foreground">v{plugin.active_version}</span>
       </div>
-      <div className="relative h-[min(75vh,800px)] min-h-[520px] overflow-hidden rounded-md border border-border bg-card max-[700px]:h-[calc(100vh-220px)] max-[700px]:min-h-[460px]">
+      <Card className="relative h-[min(75vh,800px)] min-h-[520px] overflow-hidden py-0 max-[700px]:h-[calc(100vh-220px)] max-[700px]:min-h-[460px]">
         {loading && !failed ? <div className="absolute inset-0 flex items-center justify-center text-sm text-muted-foreground">{t("Loading...")}</div> : null}
         {failed ? <div className="absolute inset-0 flex items-center justify-center px-4 text-center text-sm text-destructive">{t("Plugin page could not be loaded.")}</div> : null}
-        <iframe
-          ref={frame}
-          className={cn("block size-full border-0", (loading || failed) && "invisible")}
-          title={t("{name} plugin", { name: plugin.manifest.name })}
-          src={`/api/v1/plugins/${encodeURIComponent(plugin.plugin_id)}/ui/index.html`}
-          sandbox="allow-scripts"
-          referrerPolicy="no-referrer"
-          onLoad={() => setLoading(false)}
-          onError={() => { setLoading(false); setFailed(true); }}
-        />
-      </div>
+        {source !== undefined ? (
+          <iframe
+            ref={frame}
+            className={cn("block size-full border-0", (loading || failed) && "invisible")}
+            title={t("{name} plugin", { name: plugin.manifest.name })}
+            src={source}
+            sandbox="allow-scripts"
+            referrerPolicy="no-referrer"
+            onLoad={() => setLoading(false)}
+            onError={() => { setLoading(false); setFailed(true); }}
+          />
+        ) : null}
+      </Card>
     </section>
   );
 }

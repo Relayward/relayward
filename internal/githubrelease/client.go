@@ -21,11 +21,12 @@ import (
 )
 
 const (
-	ManifestAssetName     = "relayward-plugin.json"
-	maximumManifestBytes  = 1 << 20
-	maximumReleaseJSON    = 2 << 20
-	maximumRedirects      = 5
-	defaultRequestTimeout = 30 * time.Second
+	ManifestAssetName       = "relayward-plugin.json"
+	maximumManifestBytes    = 1 << 20
+	maximumReleaseJSON      = 2 << 20
+	maximumRedirects        = 5
+	defaultRequestTimeout   = 30 * time.Second
+	artifactDownloadTimeout = 5 * time.Minute
 )
 
 var (
@@ -71,13 +72,10 @@ func NewClient(client *http.Client) *Client {
 
 func newClient(client *http.Client, apiBase *url.URL, validateArtifactURL func(*url.URL) error) *Client {
 	if client == nil {
-		client = &http.Client{Timeout: defaultRequestTimeout}
+		client = &http.Client{}
 	}
 	copyClient := *client
 	copyClient.CheckRedirect = func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }
-	if copyClient.Timeout == 0 {
-		copyClient.Timeout = defaultRequestTimeout
-	}
 	return &Client{httpClient: &copyClient, apiBase: apiBase, validateArtifactURL: validateArtifactURL}
 }
 
@@ -107,6 +105,8 @@ func ParseRepository(raw string) (Repository, error) {
 }
 
 func (client *Client) Inspect(ctx context.Context, rawRepository, version, token string) (Release, error) {
+	ctx, cancel := context.WithTimeout(ctx, defaultRequestTimeout)
+	defer cancel()
 	repository, err := ParseRepository(rawRepository)
 	if err != nil {
 		return Release{}, err
@@ -177,6 +177,8 @@ func (client *Client) Inspect(ctx context.Context, rawRepository, version, token
 }
 
 func (client *Client) DownloadAsset(ctx context.Context, repository Repository, asset Asset, token, expectedSHA256 string, destination io.Writer) error {
+	ctx, cancel := context.WithTimeout(ctx, artifactDownloadTimeout)
+	defer cancel()
 	if asset.ID < 1 || asset.Size < 1 {
 		return errors.New("asset metadata is invalid")
 	}
@@ -206,6 +208,8 @@ func (client *Client) DownloadAsset(ctx context.Context, repository Repository, 
 }
 
 func (client *Client) ResolveAssetURL(ctx context.Context, repository Repository, assetID int64, token string) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, defaultRequestTimeout)
+	defer cancel()
 	if assetID < 1 || token == "" {
 		return "", errors.New("a private asset and GitHub token are required")
 	}

@@ -1,5 +1,5 @@
 import { type FormEvent, type ReactNode, useEffect, useId, useState } from "react";
-import { KeyRound, Pencil, Plus, RefreshCw, ShieldX, Trash2 } from "lucide-react";
+import { KeyRound, Mail, MessageCircle, Pencil, Plus, RefreshCw, Server, ShieldX, Trash2, Users } from "lucide-react";
 
 import {
   APIError,
@@ -26,15 +26,18 @@ import { useI18n } from "../i18n";
 import { cn } from "../lib/utils";
 import { Field, FormError } from "./AuthScreen";
 import { Modal } from "./Modal";
+import { PageHeader, SummaryBar, SummaryItem } from "./PageLayout";
 import { Button } from "./ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
 import { Checkbox } from "./ui/checkbox";
 import { DialogFooter } from "./ui/dialog";
+import { Input } from "./ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "./ui/table";
 import { Textarea } from "./ui/textarea";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 
 export function NodesView() {
-  const { t } = useI18n();
+  const { t, formatDateTime } = useI18n();
   const [items, setItems] = useState<Node[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string>();
@@ -45,7 +48,10 @@ export function NodesView() {
   const [tokenNode, setTokenNode] = useState<Node>();
   const [updatingNodeID, setUpdatingNodeID] = useState<string>();
   const [updates, setUpdates] = useState<Record<string, AgentUpdate | null>>({});
+  const [search, setSearch] = useState("");
   const updating = items.find((node) => node.id === updatingNodeID);
+  const visibleItems = items.filter((node) => [node.name, node.public_address, node.agent_os, node.agent_status]
+    .some((value) => value?.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase())));
 
   useEffect(() => {
     let active = true;
@@ -84,17 +90,31 @@ export function NodesView() {
 
   return (
     <section aria-labelledby="nodes-title">
-      <ResourceHeading eyebrow={t("Infrastructure")} title={t("Nodes")} id="nodes-title" onAdd={() => setEditing("new")} />
-      <ResourceTable tableClassName="min-w-[1000px]" headers={["Name", "Address", "Agent", "Version", "Policy", "Update", "State", "Actions"].map((value) => t(value))} loading={loading} empty={t("No nodes have been created.")} error={error}>
-        {items.map((node) => (
+      <PageHeader id="nodes-title" eyebrow={t("Infrastructure")} title={t("Nodes")} description={t("Manage Agent registration, runtime state, policy delivery, and updates.")} />
+      <SummaryBar>
+        <SummaryItem icon={<Server size={17} />} label={t("Online nodes")} value={`${items.filter((node) => node.agent_status === "online").length} / ${items.length}`} tone="success" />
+        <SummaryItem icon={<KeyRound size={17} />} label={t("Registered Agents")} value={items.filter((node) => node.registered_at !== null).length} tone="primary" />
+        <SummaryItem icon={<RefreshCw size={17} />} label={t("Pending updates")} value={Object.values(updates).filter((update) => update?.status === "pending").length} tone="warning" />
+        <SummaryItem icon={<ShieldX size={17} />} label={t("Disabled nodes")} value={items.filter((node) => !node.enabled).length} tone={items.some((node) => !node.enabled) ? "warning" : "default"} />
+      </SummaryBar>
+      <ResourceTable
+        title={t("Node list")}
+        description={t("{count} nodes", { count: visibleItems.length })}
+        actions={<><Input className="max-w-sm" value={search} onChange={(event) => setSearch(event.target.value)} placeholder={t("Search nodes...")} /><Button className="shrink-0" onClick={() => setEditing("new")} type="button"><Plus />{t("Add node")}</Button></>}
+        tableClassName="min-w-[1040px]"
+        headers={["Node", "Address", "Agent", "Policy", "Update", "Last seen", "Actions"].map((value) => t(value))}
+        loading={loading}
+        empty={t("No nodes have been created.")}
+        error={error}
+      >
+        {visibleItems.map((node) => (
           <TableRow key={node.id}>
-            <TableCell><strong className="font-semibold">{node.name}</strong></TableCell>
+            <TableCell><span className="flex min-w-[170px] items-center gap-3"><span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-primary-soft text-primary"><Server size={16} /></span><span className="grid min-w-0 gap-0.5"><strong className="truncate font-semibold">{node.name}</strong><small className="truncate text-xs text-muted-foreground">{[node.agent_os, node.agent_arch].filter(Boolean).join(" · ") || t("Not reported")}</small></span></span></TableCell>
             <TableCell className="text-muted-foreground">{node.public_address || t("Not set")}</TableCell>
-            <TableCell><Status value={t(agentStatusLabel(node.agent_status))} tone={agentStatusTone(node.agent_status)} /></TableCell>
-            <TableCell className="text-muted-foreground">{node.agent_version || t("Not reported")}</TableCell>
+            <TableCell><span className="grid gap-1"><Status value={t(agentStatusLabel(node.agent_status))} tone={agentStatusTone(node.agent_status)} /><small className="text-xs text-muted-foreground">{node.agent_version || t("Not reported")}</small></span></TableCell>
             <TableCell><NodePolicyStatus node={node} /></TableCell>
             <TableCell><AgentUpdateStatus value={updates[node.id]} /></TableCell>
-            <TableCell><Status value={node.enabled ? t("Enabled") : t("Disabled")} tone={node.enabled ? "ok" : "muted"} /></TableCell>
+            <TableCell className="whitespace-nowrap text-muted-foreground">{node.last_seen_at ? formatDateTime(node.last_seen_at) : t("Never")}</TableCell>
             <TableCell className="w-px text-right whitespace-nowrap">
               <IconAction label={t("Create registration token")} onClick={() => issueToken(node)}><KeyRound size={17} /></IconAction>
               <IconAction
@@ -172,6 +192,9 @@ export function UsersView() {
   const [error, setError] = useState<string>();
   const [editing, setEditing] = useState<User | "new">();
   const [deleting, setDeleting] = useState<User>();
+  const [search, setSearch] = useState("");
+  const visibleItems = items.filter((user) => [user.display_name, user.email, user.telegram]
+    .some((value) => value?.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase())));
 
   useEffect(() => {
     let active = true;
@@ -187,11 +210,25 @@ export function UsersView() {
 
   return (
     <section aria-labelledby="users-title">
-      <ResourceHeading eyebrow={t("Access")} title={t("Users")} id="users-title" onAdd={() => setEditing("new")} />
-      <ResourceTable tableClassName="min-w-[640px]" headers={["Name", "Email", "Telegram", "Actions"].map((value) => t(value))} loading={loading} empty={t("No users have been created.")} error={error}>
-        {items.map((user) => (
+      <PageHeader id="users-title" eyebrow={t("Access")} title={t("Users")} description={t("Manage subscription users and their contact details.")} />
+      <SummaryBar className="xl:grid-cols-3">
+        <SummaryItem icon={<Users size={17} />} label={t("Users")} value={items.length} tone="primary" />
+        <SummaryItem icon={<Mail size={17} />} label={t("Email configured")} value={items.filter((user) => user.email).length} tone="default" />
+        <SummaryItem icon={<MessageCircle size={17} />} label={t("Telegram configured")} value={items.filter((user) => user.telegram).length} tone="default" />
+      </SummaryBar>
+      <ResourceTable
+        title={t("User list")}
+        description={t("{count} users", { count: visibleItems.length })}
+        actions={<><Input className="max-w-sm" value={search} onChange={(event) => setSearch(event.target.value)} placeholder={t("Search users...")} /><Button className="shrink-0" onClick={() => setEditing("new")} type="button"><Plus />{t("Add user")}</Button></>}
+        tableClassName="min-w-[640px]"
+        headers={["Name", "Email", "Telegram", "Actions"].map((value) => t(value))}
+        loading={loading}
+        empty={t("No users have been created.")}
+        error={error}
+      >
+        {visibleItems.map((user) => (
           <TableRow key={user.id}>
-            <TableCell><strong className="font-semibold">{user.display_name}</strong></TableCell>
+            <TableCell><span className="flex items-center gap-3"><span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-primary-soft text-xs font-bold text-primary-strong">{user.display_name.slice(0, 1).toUpperCase()}</span><strong className="font-semibold">{user.display_name}</strong></span></TableCell>
             <TableCell className="text-muted-foreground">{user.email || t("Not set")}</TableCell>
             <TableCell className="text-muted-foreground">{user.telegram || t("Not set")}</TableCell>
             <TableCell className="w-px text-right whitespace-nowrap">
@@ -228,17 +265,10 @@ export function UsersView() {
   );
 }
 
-function ResourceHeading({ eyebrow, title, id, onAdd }: { eyebrow: string; title: string; id: string; onAdd: () => void }) {
-  const { t } = useI18n();
-  return (
-    <div className="mb-6 flex items-end justify-between gap-4">
-      <div><p className="m-0 text-xs font-semibold text-muted-foreground">{eyebrow}</p><h1 className="mt-0.5 mb-0 text-[25px] font-semibold" id={id}>{title}</h1></div>
-      <Button size="sm" onClick={onAdd} type="button"><Plus size={17} />{t("Add")}</Button>
-    </div>
-  );
-}
-
-function ResourceTable({ tableClassName, headers, loading, empty, error, children }: {
+function ResourceTable({ title, description, actions, tableClassName, headers, loading, empty, error, children }: {
+  title: string;
+  description: string;
+  actions?: ReactNode;
   tableClassName: string;
   headers: string[];
   loading: boolean;
@@ -248,18 +278,27 @@ function ResourceTable({ tableClassName, headers, loading, empty, error, childre
 }) {
   const { t } = useI18n();
   return (
-    <>
-      {error ? <div className="mb-3"><FormError message={t(error)} /></div> : null}
-      <div className="overflow-hidden rounded-md border border-border bg-card">
-        <Table className={tableClassName}>
-          <TableHeader><TableRow className="hover:bg-transparent">{headers.map((header, index) => <TableHead className={index === headers.length - 1 ? "text-right" : undefined} key={`${header}-${index}`}>{header}</TableHead>)}</TableRow></TableHeader>
-          <TableBody>
-            {loading ? <TableRow><TableCell colSpan={headers.length} className="h-24 text-center text-muted-foreground">{t("Loading...")}</TableCell></TableRow> : children}
-            {!loading && !error && Array.isArray(children) && children.length === 0 ? <TableRow><TableCell colSpan={headers.length} className="h-24 text-center text-muted-foreground">{empty}</TableCell></TableRow> : null}
-          </TableBody>
-        </Table>
-      </div>
-    </>
+      <Card className="min-w-0 h-fit">
+        <CardHeader className="flex flex-col items-start justify-between space-y-0 gap-4 pb-4 sm:flex-row sm:items-center">
+          <div className="min-w-0">
+            <CardTitle>{title}</CardTitle>
+            <CardDescription>{description}</CardDescription>
+          </div>
+          {actions ? <div className="flex w-full flex-col gap-3 sm:w-auto sm:flex-row sm:items-center">{actions}</div> : null}
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {error ? <FormError message={t(error)} /> : null}
+          <div className="rounded-lg border bg-card">
+            <Table className={tableClassName}>
+              <TableHeader><TableRow className="hover:bg-transparent">{headers.map((header, index) => <TableHead className={index === headers.length - 1 ? "text-right" : undefined} key={`${header}-${index}`}>{header}</TableHead>)}</TableRow></TableHeader>
+              <TableBody>
+                {loading ? <TableRow><TableCell colSpan={headers.length} className="h-24 text-center text-muted-foreground">{t("Loading...")}</TableCell></TableRow> : children}
+                {!loading && !error && Array.isArray(children) && children.length === 0 ? <TableRow><TableCell colSpan={headers.length} className="h-24 text-center text-muted-foreground">{empty}</TableCell></TableRow> : null}
+              </TableBody>
+            </Table>
+          </div>
+        </CardContent>
+      </Card>
   );
 }
 
@@ -291,7 +330,7 @@ function NodeDialog({ value, onClose, onSaved }: { value?: Node; onClose: () => 
         <div className="grid gap-4">
           <Field label={t("Name")} value={name} onChange={setName} autoFocus />
           <Field label={t("Public address")} value={address} onChange={setAddress} required={false} />
-          <label className="flex min-h-8 cursor-pointer items-center gap-2 text-[13px] font-semibold text-foreground/80" htmlFor={enabledID}>
+          <label className="flex min-h-8 cursor-pointer items-center gap-2 text-sm font-semibold text-foreground/80" htmlFor={enabledID}>
             <Checkbox id={enabledID} checked={enabled} onCheckedChange={(checked) => setEnabled(checked === true)} />
             <span>{t("Enabled")}</span>
           </label>
@@ -332,7 +371,7 @@ function UserDialog({ value, onClose, onSaved }: { value?: User; onClose: () => 
           <Field label={t("Display name")} value={displayName} onChange={setDisplayName} autoFocus />
           <Field label={t("Email")} value={email} onChange={setEmail} type="email" required={false} />
           <Field label={t("Telegram")} value={telegram} onChange={setTelegram} required={false} />
-          <label className="grid gap-1.5"><span className="text-[13px] font-semibold text-foreground/80">{t("Note")}</span><Textarea value={note} onChange={(event) => setNote(event.target.value)} rows={4} /></label>
+          <label className="grid gap-1.5"><span className="text-sm font-semibold text-foreground/80">{t("Note")}</span><Textarea value={note} onChange={(event) => setNote(event.target.value)} rows={4} /></label>
         </div>
         <FormError message={error !== undefined ? t(error) : undefined} />
         <DialogActions busy={busy} onClose={onClose} submitLabel={value ? t("Save") : t("Add user")} />
@@ -390,8 +429,8 @@ function TokenDialog({ node, token, onClose }: { node: Node; token: NodeRegistra
   }
   return (
     <Modal title={t("{name} registration token", { name: node.name })} onClose={onClose} dismissible={false}>
-      <code className="block [overflow-wrap:anywhere] rounded-sm border border-border bg-muted p-3 text-[13px]">{token.token}</code>
-      <dl className="m-0 flex items-center justify-between gap-4 text-[13px]"><dt className="text-muted-foreground">{t("Expires")}</dt><dd className="m-0 text-right">{formatDateTime(token.expires_at)}</dd></dl>
+      <code className="block [overflow-wrap:anywhere] rounded-sm border border-border bg-muted p-3 text-sm">{token.token}</code>
+      <dl className="m-0 flex items-center justify-between gap-4 text-sm"><dt className="text-muted-foreground">{t("Expires")}</dt><dd className="m-0 text-right">{formatDateTime(token.expires_at)}</dd></dl>
       <DialogFooter>
         <Button variant="secondary" onClick={copy} type="button">{copied ? t("Copied") : t("Copy")}</Button>
         <Button onClick={onClose} type="button">{t("Done")}</Button>
@@ -429,7 +468,7 @@ function AgentUpdateDialog({ node, latest, onClose, onUpdated }: {
 
   return (
     <Modal title={t("{name} Agent update", { name: node.name })} onClose={onClose}>
-      <dl className="m-0 divide-y divide-border border-y border-border text-[13px]">
+      <dl className="m-0 divide-y divide-border border-y border-border text-sm">
         <UpdateDetail label={t("Current version")}>{node.agent_version || t("Not reported")}</UpdateDetail>
         {latest ? (
           <>
@@ -442,7 +481,7 @@ function AgentUpdateDialog({ node, latest, onClose, onUpdated }: {
           </>
         ) : null}
       </dl>
-      {latest?.problem ? <p className="m-0 [overflow-wrap:anywhere] border-l-[3px] border-destructive bg-destructive/10 px-3 py-2.5 text-[13px] text-destructive" role="alert">{t(latest.problem.message)}</p> : null}
+      {latest?.problem ? <p className="m-0 [overflow-wrap:anywhere] border-l-[3px] border-destructive bg-destructive/10 px-3 py-2.5 text-sm text-destructive" role="alert">{t(latest.problem.message)}</p> : null}
       <form className="grid gap-5" onSubmit={submit}>
         <Field label={t("Target version")} value={version} onChange={setVersion} autoFocus disabled={pending || busy} />
         <FormError message={error !== undefined ? t(error) : undefined} />
