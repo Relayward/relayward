@@ -531,10 +531,10 @@ UPDATE node_plugin_instances SET
     active_version = NULLIF(?, ''), actual_state = ?, actual_generation = ?,
     actual_configuration_sha256 = ?, health = ?, reason = '', restart_count = 0,
     reconcile_status = 'succeeded', last_problem_json = NULL,
-    actual_observed_at_ns = ?, updated_at = ?
+    updated_at = ?
 WHERE node_id = ? AND plugin_id = ? AND generation = ?`,
 		reconcile.Version, reconcile.DesiredState, int64(reconcile.Generation), configurationSHA256,
-		health, resultObservedAt, unixTime(now), nodeID, reconcile.PluginID, int64(reconcile.Generation))
+		health, unixTime(now), nodeID, reconcile.PluginID, int64(reconcile.Generation))
 	if err != nil {
 		return fmt.Errorf("record successful plugin reconciliation: %w", err)
 	}

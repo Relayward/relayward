@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -184,6 +185,61 @@ func TestNodePluginDesiredCommandCompletionAndStatus(t *testing.T) {
 	}
 	if _, err := database.Secret(ctx, NodePluginSecretOwnerType, ownerID, NodePluginConfigurationSecret); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("deleted node configuration secret error = %v", err)
+	}
+}
+
+func TestNodePluginStatusGeneratedBeforeResultCanArriveAfterResult(t *testing.T) {
+	ctx := context.Background()
+	database, err := Open(ctx, filepath.Join(t.TempDir(), "relayward.db"))
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	defer database.Close()
+	now := time.Date(2026, time.August, 2, 15, 0, 0, 0, time.UTC)
+	credential := make([]byte, 32)
+	credential[0] = 1
+	preparePluginStore(t, database, credential, now)
+
+	configuration := json.RawMessage(`{"enabled":true}`)
+	digest, err := agentv1.PluginConfigurationDigest(configuration)
+	if err != nil {
+		t.Fatalf("PluginConfigurationDigest() error = %v", err)
+	}
+	request := testPluginCommand(t, 1, agentv1.PluginStateRunning, configuration, now)
+	if _, err := database.ApplyNodePluginDesired(ctx, NodePluginDesired{
+		NodeID: "node-id", PluginID: "io.relayward.test", Generation: 1,
+		DesiredState: agentv1.PluginStateRunning, DesiredVersion: "1.2.3",
+		DesiredConfigurationSHA256: digest, ArtifactSize: 1234, ArtifactSHA256: strings.Repeat("b", 64),
+	}, []byte("encrypted configuration"), "plugin-command-1", request, []byte("encrypted command"), now); err != nil {
+		t.Fatalf("ApplyNodePluginDesired() error = %v", err)
+	}
+
+	requestDigest, _ := agentv1.CommandDigest(request)
+	output, _ := agentv1.EncodePluginReconcileOutput(agentv1.PluginReconcileOutput{
+		PluginID: "io.relayward.test", Generation: 1, State: agentv1.PluginStateRunning,
+		Version: "1.2.3", ConfigurationSHA256: digest,
+	})
+	completedAt := now.Add(2 * time.Minute)
+	if err := database.CompleteEncryptedAgentCommand(ctx, "node-id", credential, agentv1.CommandResult{
+		CommandID: "plugin-command-1", RequestSHA256: requestDigest, Status: agentv1.CommandStatusSucceeded,
+		CompletedAt: completedAt, Output: output,
+	}, request, completedAt); err != nil {
+		t.Fatalf("CompleteEncryptedAgentCommand() error = %v", err)
+	}
+
+	observedAt := completedAt.Add(-time.Second)
+	capabilities := []string{"activity.recent", "blocking.dynamic", "service.control", "traffic.counters"}
+	if err := database.RecordNodePluginStatus(ctx, "node-id", agentv1.PluginStatusEvent{
+		PluginID: "io.relayward.test", Generation: 1, State: agentv1.PluginStateRunning,
+		Version: "1.2.3", ConfigurationSHA256: digest, Health: agentv1.PluginHealthHealthy,
+		Capabilities: capabilities,
+	}, observedAt, completedAt.Add(time.Second)); err != nil {
+		t.Fatalf("RecordNodePluginStatus() error = %v", err)
+	}
+	actual, err := database.NodePluginInstanceByID(ctx, "node-id", "io.relayward.test")
+	if err != nil || !slices.Equal(actual.Capabilities, capabilities) || actual.ActualObservedAt == nil ||
+		!actual.ActualObservedAt.Equal(observedAt) {
+		t.Fatalf("node plugin after delayed status = %+v, %v", actual, err)
 	}
 }
 
