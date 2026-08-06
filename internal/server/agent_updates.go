@@ -1,13 +1,16 @@
 package server
 
 import (
+	"errors"
 	"net/http"
 	"time"
 
 	agentv1 "github.com/Relayward/relayward-sdk/agent/v1"
 	"github.com/Relayward/relayward-sdk/protocol"
 
+	"github.com/Relayward/relayward/internal/agentrelease"
 	"github.com/Relayward/relayward/internal/auth"
+	"github.com/Relayward/relayward/internal/management"
 	"github.com/Relayward/relayward/internal/store"
 )
 
@@ -27,6 +30,19 @@ type agentUpdateResponse struct {
 	ExpiresAt   time.Time         `json:"expires_at"`
 	CreatedAt   time.Time         `json:"created_at"`
 	UpdatedAt   time.Time         `json:"updated_at"`
+}
+
+type agentReleaseResponse struct {
+	Version     string    `json:"version"`
+	Tag         string    `json:"tag"`
+	PublishedAt time.Time `json:"published_at"`
+	CheckedAt   time.Time `json:"checked_at"`
+}
+
+type agentUpdateAvailabilityResponse struct {
+	CurrentVersion string               `json:"current_version"`
+	LatestRelease  agentReleaseResponse `json:"latest_release"`
+	Relation       string               `json:"relation"`
 }
 
 func (server *Server) requestAgentUpdate(w http.ResponseWriter, request *http.Request, _ auth.Authenticated) {
@@ -60,6 +76,46 @@ func (server *Server) latestAgentUpdate(w http.ResponseWriter, request *http.Req
 		return
 	}
 	writeJSON(w, http.StatusOK, response)
+}
+
+func (server *Server) agentUpdateAvailability(w http.ResponseWriter, request *http.Request, _ auth.Authenticated) {
+	value, err := server.management.AgentUpdateAvailability(request.Context(), request.PathValue("node_id"))
+	if err != nil {
+		server.agentReleaseError(w, request, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, agentUpdateAvailabilityResponse{
+		CurrentVersion: value.CurrentVersion,
+		LatestRelease:  agentReleaseView(value.LatestRelease),
+		Relation:       value.Relation,
+	})
+}
+
+func (server *Server) requestLatestAgentUpdate(w http.ResponseWriter, request *http.Request, _ auth.Authenticated) {
+	value, err := server.management.RequestLatestAgentUpdate(request.Context(), request.PathValue("node_id"))
+	if err != nil {
+		server.agentReleaseError(w, request, err)
+		return
+	}
+	response, err := agentUpdateView(value)
+	if err != nil {
+		server.internalError(w, request, err)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, response)
+}
+
+func (server *Server) agentReleaseError(w http.ResponseWriter, request *http.Request, err error) {
+	if errors.Is(err, management.ErrUpstreamUnavailable) {
+		server.logger.Warn("Agent release lookup failed", "error", err)
+	}
+	server.resourceError(w, request, err, "Agent release")
+}
+
+func agentReleaseView(value agentrelease.Release) agentReleaseResponse {
+	return agentReleaseResponse{
+		Version: value.Version, Tag: value.Tag, PublishedAt: value.PublishedAt, CheckedAt: value.CheckedAt,
+	}
 }
 
 func agentUpdateView(value store.AgentCommand) (agentUpdateResponse, error) {

@@ -1,32 +1,32 @@
-import { type FormEvent, type ReactNode, useEffect, useId, useState } from "react";
+import { type FormEvent, type ReactNode, useCallback, useEffect, useId, useState } from "react";
 import { Eye, KeyRound, Mail, MessageCircle, Pencil, Plus, RefreshCw, Server, ShieldX, Trash2, Users } from "lucide-react";
 
 import {
   APIError,
   createNode,
-  createNodeRegistrationToken,
   createUser,
   deleteNode,
   deleteUser,
   getLatestAgentUpdate,
   listNodes,
   listUsers,
-  requestAgentUpdate,
   revokeNodeCredential,
   updateNode,
   updateUser,
   type AgentUpdate,
   type Node,
   type NodeInput,
-  type NodeRegistrationToken,
   type User,
   type UserInput,
 } from "../api";
+import { agentUpdatePresentation } from "../agentUpdate";
 import { useI18n } from "../i18n";
 import { cn } from "../lib/utils";
 import { Field, FormError } from "./AuthScreen";
+import { AgentUpdateDialog } from "./AgentUpdateDialog";
 import { Modal } from "./Modal";
 import { NodeDetailsDialog } from "./NodeDetailsDialog";
+import { NodeEnrollmentDialog } from "./NodeEnrollmentDialog";
 import { PageHeader, SummaryBar, SummaryItem } from "./PageLayout";
 import { Button } from "./ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
@@ -45,16 +45,22 @@ export function NodesView() {
   const [editing, setEditing] = useState<Node | "new">();
   const [deleting, setDeleting] = useState<Node>();
   const [revoking, setRevoking] = useState<Node>();
-  const [token, setToken] = useState<NodeRegistrationToken>();
-  const [tokenNode, setTokenNode] = useState<Node>();
+  const [enrollment, setEnrollment] = useState<{ nodeID: string; mode: "register" | "reregister" }>();
   const [updatingNodeID, setUpdatingNodeID] = useState<string>();
   const [updates, setUpdates] = useState<Record<string, AgentUpdate | null>>({});
   const [inspectingNodeID, setInspectingNodeID] = useState<string>();
   const [search, setSearch] = useState("");
   const updating = items.find((node) => node.id === updatingNodeID);
   const inspecting = items.find((node) => node.id === inspectingNodeID);
+  const enrolling = items.find((node) => node.id === enrollment?.nodeID);
   const visibleItems = items.filter((node) => [node.name, node.public_address, node.agent_os, node.agent_status]
     .some((value) => value?.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase())));
+  const updateListedNode = useCallback((node: Node) => {
+    setItems((current) => current.map((item) => item.id === node.id ? node : item).sort(byName));
+  }, []);
+  const updateListedAgentUpdate = useCallback((nodeID: string, value: AgentUpdate | null) => {
+    setUpdates((current) => ({ ...current, [nodeID]: value }));
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -81,16 +87,6 @@ export function NodesView() {
     };
   }, []);
 
-  async function issueToken(node: Node) {
-    setError(undefined);
-    try {
-      setToken(await createNodeRegistrationToken(node.id));
-      setTokenNode(node);
-    } catch (cause) {
-      setError(errorMessage(cause));
-    }
-  }
-
   return (
     <section aria-labelledby="nodes-title">
       <PageHeader id="nodes-title" eyebrow={t("Infrastructure")} title={t("Nodes")} description={t("Manage Agent registration, runtime state, policy delivery, and updates.")} />
@@ -116,11 +112,14 @@ export function NodesView() {
             <TableCell className="text-muted-foreground">{node.public_address || t("Not set")}</TableCell>
             <TableCell><span className="grid gap-1"><Status value={t(agentStatusLabel(node.agent_status))} tone={agentStatusTone(node.agent_status)} /><small className="text-xs text-muted-foreground">{node.agent_version || t("Not reported")}</small></span></TableCell>
             <TableCell><NodePolicyStatus node={node} /></TableCell>
-            <TableCell><AgentUpdateStatus value={updates[node.id]} /></TableCell>
+            <TableCell><AgentUpdateStatus node={node} value={updates[node.id]} /></TableCell>
             <TableCell className="whitespace-nowrap text-muted-foreground">{node.last_seen_at ? formatDateTime(node.last_seen_at) : t("Never")}</TableCell>
             <TableCell className="w-px text-right whitespace-nowrap">
               <IconAction label={t("View node details")} onClick={() => setInspectingNodeID(node.id)}><Eye size={17} /></IconAction>
-              <IconAction label={t("Create registration token")} onClick={() => issueToken(node)}><KeyRound size={17} /></IconAction>
+              <IconAction
+                label={t(node.registered_at ? "Re-register Agent" : "Register Agent")}
+                onClick={() => setEnrollment({ nodeID: node.id, mode: node.registered_at ? "reregister" : "register" })}
+              ><KeyRound size={17} /></IconAction>
               <IconAction
                 label={t("Update Agent")}
                 title={translatedOptional(agentUpdateUnavailable(node), t)}
@@ -151,8 +150,10 @@ export function NodesView() {
           value={editing === "new" ? undefined : editing}
           onClose={() => setEditing(undefined)}
           onSaved={(node) => {
-            setItems((current) => editing === "new" ? [...current, node].sort(byName) : current.map((item) => item.id === node.id ? node : item).sort(byName));
+            const created = editing === "new";
+            setItems((current) => created ? [...current, node].sort(byName) : current.map((item) => item.id === node.id ? node : item).sort(byName));
             setEditing(undefined);
+            if (created) setEnrollment({ nodeID: node.id, mode: "register" });
           }}
         />
       ) : null}
@@ -182,13 +183,22 @@ export function NodesView() {
           }}
         />
       ) : null}
-      {token && tokenNode ? <TokenDialog node={tokenNode} token={token} onClose={() => { setToken(undefined); setTokenNode(undefined); }} /> : null}
+      {enrollment && enrolling ? (
+        <NodeEnrollmentDialog
+          key={`${enrollment.nodeID}:${enrollment.mode}`}
+          node={enrolling}
+          mode={enrollment.mode}
+          onClose={() => setEnrollment(undefined)}
+          onNodeUpdated={updateListedNode}
+        />
+      ) : null}
       {updating ? (
         <AgentUpdateDialog
           node={updating}
           latest={updates[updating.id]}
           onClose={() => setUpdatingNodeID(undefined)}
-          onUpdated={(value) => setUpdates((current) => ({ ...current, [value.node_id]: value }))}
+          onNodeUpdated={updateListedNode}
+          onUpdateChanged={updateListedAgentUpdate}
         />
       ) : null}
     </section>
@@ -426,103 +436,16 @@ function ConfirmAction({ title, name, action, onClose, onConfirm }: { title: str
   );
 }
 
-function TokenDialog({ node, token, onClose }: { node: Node; token: NodeRegistrationToken; onClose: () => void }) {
-  const { t, formatDateTime } = useI18n();
-  const [copied, setCopied] = useState(false);
-  async function copy() {
-    try {
-      await navigator.clipboard.writeText(token.token);
-      setCopied(true);
-    } catch {
-      setCopied(false);
-    }
-  }
-  return (
-    <Modal title={t("{name} registration token", { name: node.name })} onClose={onClose} dismissible={false}>
-      <code className="block [overflow-wrap:anywhere] rounded-sm border border-border bg-muted p-3 text-sm">{token.token}</code>
-      <dl className="m-0 flex items-center justify-between gap-4 text-sm"><dt className="text-muted-foreground">{t("Expires")}</dt><dd className="m-0 text-right">{formatDateTime(token.expires_at)}</dd></dl>
-      <DialogFooter>
-        <Button variant="secondary" onClick={copy} type="button">{copied ? t("Copied") : t("Copy")}</Button>
-        <Button onClick={onClose} type="button">{t("Done")}</Button>
-      </DialogFooter>
-    </Modal>
-  );
-}
-
-function AgentUpdateDialog({ node, latest, onClose, onUpdated }: {
-  node: Node;
-  latest: AgentUpdate | null | undefined;
-  onClose: () => void;
-  onUpdated: (value: AgentUpdate) => void;
-}) {
-  const { t, formatDateTime } = useI18n();
-  const [version, setVersion] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string>();
-  const pending = latest?.status === "pending";
-
-  async function submit(event: FormEvent) {
-    event.preventDefault();
-    setBusy(true);
-    setError(undefined);
-    try {
-      const value = await requestAgentUpdate(node.id, version);
-      onUpdated(value);
-      setVersion("");
-    } catch (cause) {
-      setError(errorMessage(cause));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <Modal title={t("{name} Agent update", { name: node.name })} onClose={onClose}>
-      <dl className="m-0 divide-y divide-border border-y border-border text-sm">
-        <UpdateDetail label={t("Current version")}>{node.agent_version || t("Not reported")}</UpdateDetail>
-        {latest ? (
-          <>
-            <UpdateDetail label={t("Target version")}>{latest.version}</UpdateDetail>
-            <UpdateDetail label={t("Status")}><Status value={t(agentUpdateStatusLabel(latest.status))} tone={agentUpdateStatusTone(latest.status)} /></UpdateDetail>
-            <UpdateDetail label={t("Delivery attempts")}>{latest.attempts}</UpdateDetail>
-            <UpdateDetail label={t("Last sent")}>{latest.last_sent_at ? formatDateTime(latest.last_sent_at) : t("Not yet")}</UpdateDetail>
-            <UpdateDetail label={t("Completed")}>{latest.completed_at ? formatDateTime(latest.completed_at) : t("Not yet")}</UpdateDetail>
-            <UpdateDetail label={t("Expires")}>{formatDateTime(latest.expires_at)}</UpdateDetail>
-          </>
-        ) : null}
-      </dl>
-      {latest?.problem ? <p className="m-0 [overflow-wrap:anywhere] border-l-[3px] border-destructive bg-destructive/10 px-3 py-2.5 text-sm text-destructive" role="alert">{t(latest.problem.message)}</p> : null}
-      <form className="grid gap-5" onSubmit={submit}>
-        <Field label={t("Target version")} value={version} onChange={setVersion} autoFocus disabled={pending || busy} />
-        <FormError message={error !== undefined ? t(error) : undefined} />
-        <DialogFooter>
-          <Button variant="ghost" onClick={onClose} type="button">{t("Close")}</Button>
-          <Button disabled={pending || busy} type="submit">{busy ? t("Queuing...") : t("Queue update")}</Button>
-        </DialogFooter>
-      </form>
-    </Modal>
-  );
-}
-
-function UpdateDetail({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <div className="flex min-h-10 items-center justify-between gap-4 py-2">
-      <dt className="text-muted-foreground">{label}</dt>
-      <dd className="m-0 [overflow-wrap:anywhere] text-right">{children}</dd>
-    </div>
-  );
-}
-
-function AgentUpdateStatus({ value }: { value: AgentUpdate | null | undefined }) {
+function AgentUpdateStatus({ node, value }: { node: Node; value: AgentUpdate | null | undefined }) {
   const { t } = useI18n();
-  if (!value) return <span className="text-muted-foreground">{t("Never")}</span>;
-  const detail = value.status === "pending"
-    ? (value.attempts === 0 ? t("Waiting") : t("{count} sent", { count: value.attempts }))
-    : value.problem ? t(value.problem.message) : undefined;
+  const presentation = agentUpdatePresentation(value, node.agent_status);
+  const tone = presentation.tone === "success" ? "ok"
+    : presentation.tone === "danger" ? "error"
+      : presentation.tone;
   return (
-    <span className="grid max-w-[150px] gap-0.5" title={value.problem ? t(value.problem.message) : undefined}>
-      <Status value={t(agentUpdateStatusLabel(value.status))} tone={agentUpdateStatusTone(value.status)} />
-      {detail ? <small className="overflow-hidden text-ellipsis whitespace-nowrap text-muted-foreground">{detail}</small> : null}
+    <span className="grid max-w-[150px] gap-0.5" title={value?.problem ? t(value.problem.message) : undefined}>
+      <Status value={t(presentation.label)} tone={tone} />
+      {value && presentation.detail ? <small className="overflow-hidden text-ellipsis whitespace-nowrap text-muted-foreground">{t(presentation.detail)}</small> : null}
     </span>
   );
 }
@@ -599,17 +522,6 @@ function agentStatusTone(status: Node["agent_status"]): "ok" | "warning" | "mute
   if (status === "online") return "ok";
   if (status === "disabled") return "muted";
   return "warning";
-}
-
-function agentUpdateStatusLabel(status: AgentUpdate["status"]) {
-  return status.charAt(0).toUpperCase() + status.slice(1);
-}
-
-function agentUpdateStatusTone(status: AgentUpdate["status"]): "ok" | "warning" | "error" | "muted" {
-  if (status === "succeeded") return "ok";
-  if (status === "failed") return "error";
-  if (status === "pending") return "warning";
-  return "muted";
 }
 
 function agentUpdateUnavailable(node: Node): string | undefined {

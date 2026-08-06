@@ -16,6 +16,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/Relayward/relayward/internal/agentrelease"
 	"github.com/Relayward/relayward/internal/auth"
 	"github.com/Relayward/relayward/internal/buildinfo"
 	"github.com/Relayward/relayward/internal/eventprocessor"
@@ -192,7 +193,15 @@ func serve(args []string, logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	if err := manager.ConfigurePluginLifecycle(githubrelease.NewClient(nil), artifacts, pluginSupervisor); err != nil {
+	releaseClient := githubrelease.NewClient(nil)
+	if err := manager.ConfigurePluginLifecycle(releaseClient, artifacts, pluginSupervisor); err != nil {
+		return err
+	}
+	agentReleases, err := agentrelease.New(releaseClient)
+	if err != nil {
+		return err
+	}
+	if err := manager.ConfigureAgentReleases(agentReleases); err != nil {
 		return err
 	}
 

@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Relayward/relayward-sdk/manifest"
 )
@@ -116,6 +117,59 @@ func TestResolveAssetURLRejectsInvalidTokenBeforeRequest(t *testing.T) {
 	_, err := client.ResolveAssetURL(context.Background(), Repository{Owner: "Relayward", Name: "plugin"}, 1, "bad\ntoken")
 	if err == nil || !strings.Contains(err.Error(), "token is invalid") {
 		t.Fatalf("ResolveAssetURL() error = %v", err)
+	}
+}
+
+func TestClientReadsLatestStableReleaseMetadata(t *testing.T) {
+	publishedAt := time.Date(2026, time.August, 5, 10, 0, 0, 0, time.UTC)
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/repos/Relayward/relayward-agent/releases/latest" {
+			http.NotFound(writer, request)
+			return
+		}
+		_ = json.NewEncoder(writer).Encode(map[string]any{
+			"id": 42, "tag_name": "v1.2.3", "draft": false, "prerelease": false, "published_at": publishedAt,
+			"assets": []map[string]any{{"id": 7, "name": "relayward-agent-manifest.json", "size": 512}},
+		})
+	}))
+	defer server.Close()
+	base, _ := url.Parse(server.URL)
+	client := newClient(server.Client(), base, func(*url.URL) error { return nil })
+
+	release, err := client.LatestStable(context.Background(), "https://github.com/Relayward/relayward-agent", "")
+	if err != nil {
+		t.Fatalf("LatestStable() error = %v", err)
+	}
+	if release.ID != 42 || release.Version != "1.2.3" || release.Tag != "v1.2.3" ||
+		!release.PublishedAt.Equal(publishedAt) || release.Assets["relayward-agent-manifest.json"].ID != 7 {
+		t.Fatalf("LatestStable() = %+v", release)
+	}
+}
+
+func TestClientRejectsInvalidLatestStableRelease(t *testing.T) {
+	tests := []struct {
+		name string
+		body map[string]any
+	}{
+		{name: "prerelease tag", body: map[string]any{"id": 1, "tag_name": "v1.2.3-rc.1", "published_at": time.Now().UTC()}},
+		{name: "missing publication time", body: map[string]any{"id": 1, "tag_name": "v1.2.3"}},
+		{name: "duplicate asset", body: map[string]any{
+			"id": 1, "tag_name": "v1.2.3", "published_at": time.Now().UTC(),
+			"assets": []map[string]any{{"id": 1, "name": "binary", "size": 1}, {"id": 2, "name": "binary", "size": 1}},
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+				_ = json.NewEncoder(writer).Encode(test.body)
+			}))
+			defer server.Close()
+			base, _ := url.Parse(server.URL)
+			client := newClient(server.Client(), base, func(*url.URL) error { return nil })
+			if _, err := client.LatestStable(context.Background(), "https://github.com/Relayward/relayward-agent", ""); err == nil {
+				t.Fatal("LatestStable() accepted invalid release")
+			}
+		})
 	}
 }
 

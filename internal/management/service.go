@@ -23,6 +23,7 @@ type Service struct {
 	store             *store.Store
 	secrets           *secretbox.Manager
 	now               func() time.Time
+	agentReleases     agentReleaseProvider
 	pluginMu          sync.Mutex
 	pluginReleases    pluginReleaseClient
 	pluginArtifacts   pluginArtifactStore

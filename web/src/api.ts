@@ -92,6 +92,19 @@ export interface AgentUpdate {
   updated_at: string;
 }
 
+export interface AgentRelease {
+  version: string;
+  tag: string;
+  published_at: string;
+  checked_at: string;
+}
+
+export interface AgentUpdateAvailability {
+  current_version: string;
+  latest_release: AgentRelease;
+  relation: "available" | "current" | "ahead" | "unknown";
+}
+
 export interface NodeCommand {
   id: string;
   node_id: string;
@@ -485,6 +498,10 @@ export async function listNodes(): Promise<Node[]> {
   return response.items;
 }
 
+export async function getNode(id: string): Promise<Node> {
+  return request(`/api/v1/nodes/${encodeURIComponent(id)}`);
+}
+
 export async function createNode(input: NodeInput): Promise<Node> {
   return request("/api/v1/nodes", { method: "POST", body: JSON.stringify(input) });
 }
@@ -519,6 +536,14 @@ export async function getLatestAgentUpdate(id: string): Promise<AgentUpdate | nu
     if (cause instanceof APIError && cause.status === 404) return null;
     throw cause;
   }
+}
+
+export async function getAgentUpdateAvailability(id: string): Promise<AgentUpdateAvailability> {
+  return request(`/api/v1/nodes/${encodeURIComponent(id)}/agent-updates/availability`);
+}
+
+export async function requestLatestAgentUpdate(id: string): Promise<AgentUpdate> {
+  return request(`/api/v1/nodes/${encodeURIComponent(id)}/agent-updates/latest`, { method: "POST" });
 }
 
 export async function listNodeCommands(id: string, limit = 50): Promise<NodeCommand[]> {

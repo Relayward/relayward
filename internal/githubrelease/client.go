@@ -59,6 +59,15 @@ type Release struct {
 	Assets     map[manifest.ArtifactRole]Asset
 }
 
+type StableRelease struct {
+	ID          int64
+	Repository  Repository
+	Tag         string
+	Version     string
+	PublishedAt time.Time
+	Assets      map[string]Asset
+}
+
 type Client struct {
 	httpClient          *http.Client
 	apiBase             *url.URL
@@ -174,6 +183,43 @@ func (client *Client) Inspect(ctx context.Context, rawRepository, version, token
 		artifacts[declared.Role] = asset
 	}
 	return Release{ID: response.ID, Repository: repository, Tag: response.TagName, Manifest: pluginManifest, Assets: artifacts}, nil
+}
+
+func (client *Client) LatestStable(ctx context.Context, rawRepository, token string) (StableRelease, error) {
+	ctx, cancel := context.WithTimeout(ctx, defaultRequestTimeout)
+	defer cancel()
+	repository, err := ParseRepository(rawRepository)
+	if err != nil {
+		return StableRelease{}, err
+	}
+	if err := validateToken(token); err != nil {
+		return StableRelease{}, err
+	}
+	var response releaseResponse
+	if err := client.getJSON(ctx, client.repositoryEndpoint(repository)+"/releases/latest", token, &response); err != nil {
+		return StableRelease{}, err
+	}
+	if response.ID < 1 || response.Draft || response.Prerelease || response.PublishedAt.IsZero() || !strings.HasPrefix(response.TagName, "v") {
+		return StableRelease{}, errors.New("GitHub release is not a published stable release")
+	}
+	version := strings.TrimPrefix(response.TagName, "v")
+	if err := contract.ValidateSemanticVersion(version); err != nil || strings.Contains(strings.SplitN(version, "+", 2)[0], "-") {
+		return StableRelease{}, errors.New("GitHub release tag is not a stable semantic version")
+	}
+	assets := make(map[string]Asset, len(response.Assets))
+	for _, candidate := range response.Assets {
+		if candidate.ID < 1 || candidate.Name == "" || candidate.Size < 0 {
+			return StableRelease{}, errors.New("GitHub release contains invalid asset metadata")
+		}
+		if _, exists := assets[candidate.Name]; exists {
+			return StableRelease{}, fmt.Errorf("GitHub release contains duplicate asset %q", candidate.Name)
+		}
+		assets[candidate.Name] = Asset{ID: candidate.ID, Name: candidate.Name, Size: candidate.Size}
+	}
+	return StableRelease{
+		ID: response.ID, Repository: repository, Tag: response.TagName, Version: version,
+		PublishedAt: response.PublishedAt.UTC(), Assets: assets,
+	}, nil
 }
 
 func (client *Client) DownloadAsset(ctx context.Context, repository Repository, asset Asset, token, expectedSHA256 string, destination io.Writer) error {
@@ -375,11 +421,12 @@ func githubStatusError(statusCode int) error {
 }
 
 type releaseResponse struct {
-	ID         int64  `json:"id"`
-	TagName    string `json:"tag_name"`
-	Draft      bool   `json:"draft"`
-	Prerelease bool   `json:"prerelease"`
-	Assets     []struct {
+	ID          int64     `json:"id"`
+	TagName     string    `json:"tag_name"`
+	Draft       bool      `json:"draft"`
+	Prerelease  bool      `json:"prerelease"`
+	PublishedAt time.Time `json:"published_at"`
+	Assets      []struct {
 		ID   int64  `json:"id"`
 		Name string `json:"name"`
 		Size int64  `json:"size"`

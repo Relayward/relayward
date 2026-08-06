@@ -3,12 +3,15 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   APIError,
   createPluginUISession,
+  getAgentUpdateAvailability,
   getSystemSettings,
   getLatestAgentUpdate,
+  getNode,
   listAdministratorSessions,
   listNodeCommands,
   reconcileNodePlugin,
   requestAgentUpdate,
+  requestLatestAgentUpdate,
   revokeAdministratorSession,
   revokeNodeCredential,
   updateAdministratorUsername,
@@ -71,6 +74,44 @@ describe("Agent update API", () => {
     }, 404)));
 
     await expect(getLatestAgentUpdate("node-id")).resolves.toBeNull();
+  });
+
+  it("loads an encoded node and its official update availability", async () => {
+    const node = { id: "node/id", agent_version: "0.1.0" };
+    const availability = {
+      current_version: "0.1.0",
+      latest_release: {
+        version: "0.2.0",
+        tag: "v0.2.0",
+        published_at: "2026-08-06T08:00:00Z",
+        checked_at: "2026-08-06T08:01:00Z",
+      },
+      relation: "available",
+    };
+    const fetchMock = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(jsonResponse(node))
+      .mockResolvedValueOnce(jsonResponse(availability));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(getNode("node/id")).resolves.toEqual(node);
+    await expect(getAgentUpdateAvailability("node/id")).resolves.toEqual(availability);
+    expect(fetchMock.mock.calls[0][0]).toBe("/api/v1/nodes/node%2Fid");
+    expect(fetchMock.mock.calls[1][0]).toBe("/api/v1/nodes/node%2Fid/agent-updates/availability");
+  });
+
+  it("queues the latest official version with the CSRF token", async () => {
+    const value = agentUpdate();
+    const fetchMock = vi.fn<typeof fetch>(async () => jsonResponse(value, 202));
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("document", { cookie: "relayward_csrf=csrf-token" });
+
+    await expect(requestLatestAgentUpdate("node/id")).resolves.toEqual(value);
+    const [path, init] = fetchMock.mock.calls[0];
+    const headers = new Headers(init?.headers);
+    expect(path).toBe("/api/v1/nodes/node%2Fid/agent-updates/latest");
+    expect(init?.method).toBe("POST");
+    expect(init?.body).toBeUndefined();
+    expect(headers.get("X-CSRF-Token")).toBe("csrf-token");
   });
 });
 

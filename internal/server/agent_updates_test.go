@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"testing"
 	"time"
@@ -11,7 +12,9 @@ import (
 	"github.com/Relayward/relayward-sdk/protocol"
 	"github.com/google/uuid"
 
+	"github.com/Relayward/relayward/internal/agentrelease"
 	"github.com/Relayward/relayward/internal/auth"
+	"github.com/Relayward/relayward/internal/management"
 )
 
 func TestAgentUpdateManagementAPI(t *testing.T) {
@@ -139,6 +142,154 @@ func TestAgentUpdateManagementAPI(t *testing.T) {
 	if unknownLatest.Code != http.StatusNotFound {
 		t.Fatalf("unknown node latest update status = %d, body = %s", unknownLatest.Code, unknownLatest.Body.String())
 	}
+}
+
+func TestLatestAgentReleaseManagementAPI(t *testing.T) {
+	publishedAt := time.Date(2026, time.August, 6, 8, 0, 0, 0, time.UTC)
+	checkedAt := publishedAt.Add(time.Minute)
+	provider := &serverAgentReleaseStub{release: agentrelease.Release{
+		Version: "0.2.0", Tag: "v0.2.0", PublishedAt: publishedAt, CheckedAt: checkedAt,
+	}}
+	handler, _, _ := newTestHandlerConfigured(t, nil, func(service *management.Service) {
+		if err := service.ConfigureAgentReleases(provider); err != nil {
+			t.Fatalf("ConfigureAgentReleases() error = %v", err)
+		}
+	})
+	sessionCookie, csrfCookie := setupCookies(t, handler)
+	csrfHeaders := map[string]string{"X-CSRF-Token": csrfCookie.Value}
+	node := createNodeForAgentUpdate(t, handler, sessionCookie, csrfCookie, "Latest release")
+	availabilityPath := "/api/v1/nodes/" + node.ID + "/agent-updates/availability"
+	requestPath := "/api/v1/nodes/" + node.ID + "/agent-updates/latest"
+
+	if response := performRequest(handler, http.MethodGet, availabilityPath, nil, nil); response.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated availability status = %d", response.Code)
+	}
+	if response := performRequest(handler, http.MethodPost, requestPath, nil, nil); response.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated latest request status = %d", response.Code)
+	}
+	if response := performRequest(handler, http.MethodPost, requestPath, nil, nil, sessionCookie); response.Code != http.StatusForbidden {
+		t.Fatalf("latest request without CSRF status = %d", response.Code)
+	}
+	if response := performRequest(handler, http.MethodPost, requestPath, nil, csrfHeaders, sessionCookie); response.Code != http.StatusBadRequest {
+		t.Fatalf("latest request before registration status = %d, body = %s", response.Code, response.Body.String())
+	}
+
+	registerUpdatableAgent(t, handler, node.ID, sessionCookie, csrfCookie)
+	availability := performRequest(handler, http.MethodGet, availabilityPath, nil, nil, sessionCookie)
+	if availability.Code != http.StatusOK {
+		t.Fatalf("availability status = %d, body = %s", availability.Code, availability.Body.String())
+	}
+	var available agentUpdateAvailabilityResponse
+	decodeResponse(t, availability, &available)
+	if available.CurrentVersion != "0.1.0" || available.Relation != management.AgentVersionAvailable ||
+		available.LatestRelease.Version != "0.2.0" || available.LatestRelease.Tag != "v0.2.0" ||
+		!available.LatestRelease.PublishedAt.Equal(publishedAt) || !available.LatestRelease.CheckedAt.Equal(checkedAt) {
+		t.Fatalf("availability = %+v", available)
+	}
+	queued := performRequest(handler, http.MethodPost, requestPath, nil, csrfHeaders, sessionCookie)
+	if queued.Code != http.StatusAccepted {
+		t.Fatalf("latest request status = %d, body = %s", queued.Code, queued.Body.String())
+	}
+	var update agentUpdateResponse
+	decodeResponse(t, queued, &update)
+	if update.NodeID != node.ID || update.Version != "0.2.0" || update.Status != "pending" || update.Attempts != 0 {
+		t.Fatalf("latest requested update = %+v", update)
+	}
+}
+
+func TestLatestAgentReleaseAPIRejectsUnsafeVersions(t *testing.T) {
+	for _, test := range []struct {
+		name           string
+		releaseVersion string
+		currentVersion string
+		expectedField  string
+	}{
+		{name: "current", releaseVersion: "0.1.0", currentVersion: "0.1.0", expectedField: "version"},
+		{name: "downgrade", releaseVersion: "0.0.9", currentVersion: "0.1.0", expectedField: "version"},
+		{name: "development version", releaseVersion: "0.2.0", currentVersion: "dev", expectedField: "node_id"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			provider := &serverAgentReleaseStub{release: agentrelease.Release{Version: test.releaseVersion, Tag: "v" + test.releaseVersion}}
+			handler, database, _ := newTestHandlerConfigured(t, nil, func(service *management.Service) {
+				if err := service.ConfigureAgentReleases(provider); err != nil {
+					t.Fatalf("ConfigureAgentReleases() error = %v", err)
+				}
+			})
+			sessionCookie, csrfCookie := setupCookies(t, handler)
+			node := createNodeForAgentUpdate(t, handler, sessionCookie, csrfCookie, test.name)
+			credential := registerUpdatableAgent(t, handler, node.ID, sessionCookie, csrfCookie)
+			if test.currentVersion != "0.1.0" {
+				if err := database.RecordAgentHeartbeat(context.Background(), node.ID, credential, test.currentVersion, time.Now().UTC()); err != nil {
+					t.Fatalf("RecordAgentHeartbeat() error = %v", err)
+				}
+			}
+			response := performRequest(handler, http.MethodPost, "/api/v1/nodes/"+node.ID+"/agent-updates/latest", nil,
+				map[string]string{"X-CSRF-Token": csrfCookie.Value}, sessionCookie)
+			if response.Code != http.StatusBadRequest {
+				t.Fatalf("unsafe latest request status = %d, body = %s", response.Code, response.Body.String())
+			}
+			var problem protocol.Problem
+			decodeResponse(t, response, &problem)
+			if len(problem.Violations) != 1 || problem.Violations[0].Field != test.expectedField {
+				t.Fatalf("unsafe latest request problem = %+v", problem)
+			}
+		})
+	}
+}
+
+func TestAgentReleaseUnavailableAPI(t *testing.T) {
+	handler, _, _ := newTestHandlerConfigured(t, nil, func(service *management.Service) {
+		if err := service.ConfigureAgentReleases(&serverAgentReleaseStub{err: errors.New("GitHub unavailable")}); err != nil {
+			t.Fatalf("ConfigureAgentReleases() error = %v", err)
+		}
+	})
+	sessionCookie, csrfCookie := setupCookies(t, handler)
+	node := createNodeForAgentUpdate(t, handler, sessionCookie, csrfCookie, "Unavailable release")
+	registerUpdatableAgent(t, handler, node.ID, sessionCookie, csrfCookie)
+
+	for _, request := range []struct {
+		method  string
+		path    string
+		headers map[string]string
+	}{
+		{method: http.MethodGet, path: "/api/v1/nodes/" + node.ID + "/agent-updates/availability"},
+		{method: http.MethodPost, path: "/api/v1/nodes/" + node.ID + "/agent-updates/latest", headers: map[string]string{"X-CSRF-Token": csrfCookie.Value}},
+	} {
+		response := performRequest(handler, request.method, request.path, nil, request.headers, sessionCookie)
+		if response.Code != http.StatusServiceUnavailable {
+			t.Fatalf("%s %s status = %d, body = %s", request.method, request.path, response.Code, response.Body.String())
+		}
+		var problem protocol.Problem
+		decodeResponse(t, response, &problem)
+		if problem.Code != protocol.ErrorUnavailable || !problem.Retryable {
+			t.Fatalf("unavailable release problem = %+v", problem)
+		}
+	}
+}
+
+type serverAgentReleaseStub struct {
+	release agentrelease.Release
+	err     error
+}
+
+func (stub *serverAgentReleaseStub) Latest(context.Context) (agentrelease.Release, error) {
+	return stub.release, stub.err
+}
+
+func createNodeForAgentUpdate(t *testing.T, handler http.Handler, sessionCookie, csrfCookie *http.Cookie, name string) nodeResponse {
+	t.Helper()
+	body, err := json.Marshal(map[string]string{"name": name})
+	if err != nil {
+		t.Fatalf("marshal node request: %v", err)
+	}
+	response := performRequest(handler, http.MethodPost, "/api/v1/nodes", body,
+		map[string]string{"Content-Type": "application/json", "X-CSRF-Token": csrfCookie.Value}, sessionCookie)
+	if response.Code != http.StatusCreated {
+		t.Fatalf("create node status = %d, body = %s", response.Code, response.Body.String())
+	}
+	var node nodeResponse
+	decodeResponse(t, response, &node)
+	return node
 }
 
 func registerUpdatableAgent(t *testing.T, handler http.Handler, nodeID string, sessionCookie, csrfCookie *http.Cookie) []byte {

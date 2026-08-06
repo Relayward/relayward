@@ -44,6 +44,9 @@ func TestRequestAgentUpdateValidationAndLifecycle(t *testing.T) {
 	if _, err := service.RequestAgentUpdate(ctx, node.ID, node.AgentVersion); fieldName(err) != "version" {
 		t.Fatalf("RequestAgentUpdate() active version error = %v", err)
 	}
+	if _, err := service.RequestAgentUpdate(ctx, node.ID, "0.0.9"); fieldName(err) != "version" {
+		t.Fatalf("RequestAgentUpdate() downgrade error = %v", err)
+	}
 	created, err := service.RequestAgentUpdate(ctx, node.ID, "0.2.0")
 	if err != nil {
 		t.Fatalf("RequestAgentUpdate() error = %v", err)

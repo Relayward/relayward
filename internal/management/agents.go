@@ -12,6 +12,7 @@ import (
 	"github.com/Relayward/relayward-sdk/contract"
 	"github.com/google/uuid"
 
+	"github.com/Relayward/relayward/internal/agentrelease"
 	"github.com/Relayward/relayward/internal/auth"
 	"github.com/Relayward/relayward/internal/secretbox"
 	"github.com/Relayward/relayward/internal/store"
@@ -110,34 +111,54 @@ func (service *Service) CompleteAgentCommand(ctx context.Context, nodeID string,
 }
 
 func (service *Service) RequestAgentUpdate(ctx context.Context, nodeID, version string) (store.AgentCommand, error) {
-	if err := validateID("node_id", nodeID); err != nil {
-		return store.AgentCommand{}, err
-	}
 	if err := contract.ValidateSemanticVersion(version); err != nil {
 		return store.AgentCommand{}, invalid("version", err.Error())
 	}
-	node, err := service.store.NodeByID(ctx, nodeID)
+	node, err := service.agentUpdateNode(ctx, nodeID)
 	if err != nil {
 		return store.AgentCommand{}, err
 	}
-	switch {
-	case !node.Enabled:
-		return store.AgentCommand{}, invalid("node_id", "must be enabled before updating its Agent")
-	case node.RegisteredAt == nil:
-		return store.AgentCommand{}, invalid("node_id", "must have a registered Agent")
-	case !containsCapability(node.Capabilities, agentv1.CapabilityControlCommands):
-		return store.AgentCommand{}, invalid("node_id", "Agent does not support durable commands")
-	case !containsCapability(node.Capabilities, agentv1.CapabilityAgentSelfUpdate):
-		return store.AgentCommand{}, invalid("node_id", "Agent does not support self-update")
-	case node.AgentVersion == version:
+	compared, err := agentrelease.Compare(node.AgentVersion, version)
+	if err != nil {
+		return store.AgentCommand{}, invalid("version", "cannot be compared with the Agent's current version")
+	}
+	if compared == 0 {
 		return store.AgentCommand{}, invalid("version", "is already active on this node")
 	}
+	if compared > 0 {
+		return store.AgentCommand{}, invalid("version", "must be newer than the Agent's current version")
+	}
+	return service.queueAgentUpdate(ctx, node, version)
+}
+
+func (service *Service) agentUpdateNode(ctx context.Context, nodeID string) (store.Node, error) {
+	if err := validateID("node_id", nodeID); err != nil {
+		return store.Node{}, err
+	}
+	node, err := service.store.NodeByID(ctx, nodeID)
+	if err != nil {
+		return store.Node{}, err
+	}
+	switch {
+	case !node.Enabled:
+		return store.Node{}, invalid("node_id", "must be enabled before updating its Agent")
+	case node.RegisteredAt == nil:
+		return store.Node{}, invalid("node_id", "must have a registered Agent")
+	case !containsCapability(node.Capabilities, agentv1.CapabilityControlCommands):
+		return store.Node{}, invalid("node_id", "Agent does not support durable commands")
+	case !containsCapability(node.Capabilities, agentv1.CapabilityAgentSelfUpdate):
+		return store.Node{}, invalid("node_id", "Agent does not support self-update")
+	}
+	return node, nil
+}
+
+func (service *Service) queueAgentUpdate(ctx context.Context, node store.Node, version string) (store.AgentCommand, error) {
 	now := service.currentTime()
 	command, err := agentv1.NewAgentUpdateCommand(version, now, now.Add(agentUpdateCommandLifetime))
 	if err != nil {
 		return store.AgentCommand{}, fmt.Errorf("create Agent update command: %w", err)
 	}
-	return service.store.CreateAgentCommand(ctx, uuid.NewString(), nodeID, command, now)
+	return service.store.CreateAgentCommand(ctx, uuid.NewString(), node.ID, command, now)
 }
 
 func (service *Service) LatestAgentUpdate(ctx context.Context, nodeID string) (store.AgentCommand, error) {

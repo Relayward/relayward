@@ -112,6 +112,8 @@ func New(options Options) http.Handler {
 	mux.HandleFunc("POST /api/v1/nodes/{node_id}/registration-tokens", server.withAuthentication(server.withCSRF(server.createNodeRegistrationToken)))
 	mux.HandleFunc("POST /api/v1/nodes/{node_id}/agent-updates", server.withAuthentication(server.withCSRF(server.requestAgentUpdate)))
 	mux.HandleFunc("GET /api/v1/nodes/{node_id}/agent-updates/latest", server.withAuthentication(server.latestAgentUpdate))
+	mux.HandleFunc("GET /api/v1/nodes/{node_id}/agent-updates/availability", server.withAuthentication(server.agentUpdateAvailability))
+	mux.HandleFunc("POST /api/v1/nodes/{node_id}/agent-updates/latest", server.withAuthentication(server.withCSRF(server.requestLatestAgentUpdate)))
 	mux.HandleFunc("GET /api/v1/nodes/{node_id}/commands", server.withAuthentication(server.listAgentCommands))
 	mux.HandleFunc("GET /api/v1/node-plugin-instances", server.withAuthentication(server.listNodePluginInstances))
 	mux.HandleFunc("GET /api/v1/nodes/{node_id}/plugins/{plugin_id}", server.withAuthentication(server.getNodePluginInstance))

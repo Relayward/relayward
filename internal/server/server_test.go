@@ -1017,6 +1017,10 @@ func newTestHandlerWithWebAssets(t *testing.T, assets fs.FS) http.Handler {
 }
 
 func newTestHandlerWithOptions(t *testing.T, assets fs.FS) (http.Handler, *store.Store, *eventstore.Store) {
+	return newTestHandlerConfigured(t, assets, nil)
+}
+
+func newTestHandlerConfigured(t *testing.T, assets fs.FS, configure func(*management.Service)) (http.Handler, *store.Store, *eventstore.Store) {
 	t.Helper()
 	directory := t.TempDir()
 	database, err := store.Open(context.Background(), filepath.Join(directory, "relayward.db"))
@@ -1037,10 +1041,14 @@ func newTestHandlerWithOptions(t *testing.T, assets fs.FS) (http.Handler, *store
 	if err != nil {
 		t.Fatalf("auth.NewService() error = %v", err)
 	}
+	manager := management.NewService(database, secrets)
+	if configure != nil {
+		configure(manager)
+	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	return New(Options{
 		Version: "test", Store: database, EventStore: events, Auth: authentication,
-		Management: management.NewService(database, secrets), Secrets: secrets, Logger: logger, WebAssets: assets,
+		Management: manager, Secrets: secrets, Logger: logger, WebAssets: assets,
 	}), database, events
 }
 
