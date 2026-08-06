@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -52,7 +53,7 @@ func TestSupervisorRunsRealPluginHostUIAndRestoresPreviousVersion(t *testing.T) 
 		t.Fatal(err)
 	}
 	events := openEventStore(t, root)
-	supervisor, err := New(database, artifacts, events, nil)
+	supervisor, err := New(database, artifacts, events, &nodePluginManagerStub{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -128,7 +129,7 @@ func TestSupervisorRetriesPreviousVersionAfterImmediateRestoreFailure(t *testing
 		t.Fatal(err)
 	}
 	events := openEventStore(t, root)
-	supervisor, err := New(database, artifacts, events, nil)
+	supervisor, err := New(database, artifacts, events, &nodePluginManagerStub{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -189,7 +190,7 @@ func TestHostRequiresDeclaredPermission(t *testing.T) {
 	root := shortRuntimeRoot(t)
 	database, _ := store.Open(t.Context(), filepath.Join(root, "relayward.db"))
 	defer database.Close()
-	host := newHostService(database, nil, "io.relayward.test", nil)
+	host := newHostService(database, nil, nil, "io.relayward.test", "1.2.3", nil)
 	if _, err := host.ListNodes(t.Context(), &centerpluginv1.ListNodesRequest{}); status.Code(err) != codes.PermissionDenied {
 		t.Fatalf("ListNodes() permission error = %v", err)
 	}
@@ -241,6 +242,35 @@ type hostDatabaseStub struct {
 	installations []store.PluginInstallation
 }
 
+type nodePluginManagerStub struct {
+	instance           store.NodePluginInstance
+	configuration      json.RawMessage
+	err                error
+	nodeID             string
+	pluginID           string
+	version            string
+	expectedGeneration uint64
+}
+
+func (manager *nodePluginManagerStub) NodePluginConfiguration(_ context.Context, nodeID, pluginID string) (
+	store.NodePluginInstance, json.RawMessage, error,
+) {
+	manager.nodeID = nodeID
+	manager.pluginID = pluginID
+	return manager.instance, append(json.RawMessage(nil), manager.configuration...), manager.err
+}
+
+func (manager *nodePluginManagerStub) ConfigureNodePlugin(_ context.Context, nodeID, pluginID, version string,
+	expectedGeneration uint64, configuration json.RawMessage,
+) (store.NodePluginInstance, error) {
+	manager.nodeID = nodeID
+	manager.pluginID = pluginID
+	manager.version = version
+	manager.expectedGeneration = expectedGeneration
+	manager.configuration = append(json.RawMessage(nil), configuration...)
+	return manager.instance, manager.err
+}
+
 func (database *hostDatabaseStub) ListPluginInstallations(context.Context) ([]store.PluginInstallation, error) {
 	return append([]store.PluginInstallation(nil), database.installations...), nil
 }
@@ -270,7 +300,7 @@ func (*hostDatabaseStub) RecordPluginRuntimeStatus(context.Context, string, stri
 
 func TestHostBindsPluginIdentityWhenReplacingServices(t *testing.T) {
 	database := &hostDatabaseStub{}
-	host := newHostService(database, nil, "io.relayward.expected", []string{centerpluginv1.PermissionServicesWrite})
+	host := newHostService(database, nil, nil, "io.relayward.expected", "1.2.3", []string{centerpluginv1.PermissionServicesWrite})
 	request := &centerpluginv1.ReplaceServicesRequest{
 		NodeId: "10000000-0000-4000-8000-000000000001",
 		Services: []*centerpluginv1.PluginService{{
@@ -288,6 +318,49 @@ func TestHostBindsPluginIdentityWhenReplacingServices(t *testing.T) {
 	}
 }
 
+func TestHostBindsPluginIdentityAndVersionWhenConfiguringNode(t *testing.T) {
+	configuration := json.RawMessage(`{"xray_version":"26.3.27","xray_config":{}}`)
+	digest, err := agentv1.PluginConfigurationDigest(configuration)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager := &nodePluginManagerStub{instance: store.NodePluginInstance{
+		Generation: 4, DesiredVersion: "1.2.3", DesiredConfigurationSHA256: digest,
+	}}
+	host := newHostService(nil, nil, manager, "io.relayward.xray", "1.2.3", []string{centerpluginv1.PermissionNodeConfigure})
+	request := &centerpluginv1.ConfigureNodePluginRequest{
+		NodeId: "10000000-0000-4000-8000-000000000001", ExpectedGeneration: 3, Json: configuration,
+	}
+	response, err := host.ConfigureNodePlugin(t.Context(), request)
+	if err != nil || response.Generation != 4 || response.Sha256 != digest {
+		t.Fatalf("ConfigureNodePlugin() = %+v, %v", response, err)
+	}
+	if manager.nodeID != request.NodeId || manager.pluginID != "io.relayward.xray" || manager.version != "1.2.3" ||
+		manager.expectedGeneration != 3 || string(manager.configuration) != string(configuration) {
+		t.Fatalf("captured node plugin configuration = %+v", manager)
+	}
+
+	read, err := host.GetNodePluginConfiguration(t.Context(), &centerpluginv1.GetNodePluginConfigurationRequest{NodeId: request.NodeId})
+	if err != nil || read.Generation != 4 || read.Version != "1.2.3" || string(read.Json) != string(configuration) {
+		t.Fatalf("GetNodePluginConfiguration() = %+v, %v", read, err)
+	}
+}
+
+func TestHostMapsNodePluginConfigurationErrors(t *testing.T) {
+	manager := &nodePluginManagerStub{err: store.ErrGenerationConflict}
+	host := newHostService(nil, nil, manager, "io.relayward.xray", "1.2.3", []string{centerpluginv1.PermissionNodeConfigure})
+	request := &centerpluginv1.ConfigureNodePluginRequest{
+		NodeId: "10000000-0000-4000-8000-000000000001", Json: []byte(`{}`),
+	}
+	if _, err := host.ConfigureNodePlugin(t.Context(), request); status.Code(err) != codes.Aborted {
+		t.Fatalf("ConfigureNodePlugin() generation error = %v", err)
+	}
+	manager.err = store.ErrNotFound
+	if _, err := host.GetNodePluginConfiguration(t.Context(), &centerpluginv1.GetNodePluginConfigurationRequest{NodeId: request.NodeId}); status.Code(err) != codes.NotFound {
+		t.Fatalf("GetNodePluginConfiguration() missing error = %v", err)
+	}
+}
+
 func TestHostPublishesPermissionBoundEvents(t *testing.T) {
 	root := shortRuntimeRoot(t)
 	database, err := store.Open(t.Context(), filepath.Join(root, "relayward.db"))
@@ -300,7 +373,7 @@ func TestHostPublishesPermissionBoundEvents(t *testing.T) {
 		t.Fatal(err)
 	}
 	events := openEventStore(t, root)
-	host := newHostService(database, events, "io.relayward.risk", []string{centerpluginv1.PermissionEventsWrite})
+	host := newHostService(database, events, nil, "io.relayward.risk", "1.2.3", []string{centerpluginv1.PermissionEventsWrite})
 	request := &centerpluginv1.PublishEventsRequest{Events: []*centerpluginv1.PublishedEvent{{
 		SourceEventId: "risk-1", NodeId: nodeID, Kind: centerpluginv1.EventNotificationRequest,
 		ObservedAtUnixNano: time.Now().UTC().UnixNano(), Json: []byte(`{"severity":"warning","subject":"Risk","body":"Review required."}`),

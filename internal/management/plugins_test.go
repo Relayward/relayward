@@ -140,6 +140,56 @@ func TestNodePluginReconcileValidationAndSecretsGate(t *testing.T) {
 	service.secrets = availableSecrets
 }
 
+func TestPluginOwnedNodeConfigurationUsesGenerationAndPluginAudit(t *testing.T) {
+	service := newTestService(t)
+	ctx := context.Background()
+	now := time.Date(2026, time.August, 3, 10, 0, 0, 0, time.UTC)
+	service.now = func() time.Time { return now }
+	node := registerManagedAgent(t, service, "Plugin-managed node", []string{
+		agentv1.CapabilityControlCommands, agentv1.CapabilityPluginSupervision,
+	})
+	pluginManifest := managedRuntimeManifest()
+	if err := service.store.CreatePluginInstallation(ctx, store.PluginInstallation{
+		PluginID: pluginManifest.ID, Repository: "https://github.com/Relayward/test-plugin",
+		Kind: string(pluginManifest.Kind), DesiredVersion: pluginManifest.Version,
+		ActiveVersion: pluginManifest.Version, Manifest: pluginManifest, State: "active",
+	}, now); err != nil {
+		t.Fatal(err)
+	}
+	configuration := json.RawMessage(`{"xray_version":"26.3.27","xray_config":{}}`)
+	created, err := service.ConfigureNodePlugin(ctx, node.ID, pluginManifest.ID, pluginManifest.Version, 0, configuration)
+	if err != nil || created.Generation != 1 || created.DesiredState != agentv1.PluginStateRunning {
+		t.Fatalf("ConfigureNodePlugin() = %+v, %v", created, err)
+	}
+	instance, stored, err := service.NodePluginConfiguration(ctx, node.ID, pluginManifest.ID)
+	if err != nil || instance.Generation != 1 || string(stored) != string(configuration) {
+		t.Fatalf("NodePluginConfiguration() = %+v, %s, %v", instance, stored, err)
+	}
+	if _, err := service.ConfigureNodePlugin(ctx, node.ID, pluginManifest.ID, pluginManifest.Version, 0, configuration); !errors.Is(err, store.ErrGenerationConflict) {
+		t.Fatalf("ConfigureNodePlugin() stale generation error = %v", err)
+	}
+	unchanged, err := service.NodePluginInstance(ctx, node.ID, pluginManifest.ID)
+	if err != nil || unchanged.Generation != 1 {
+		t.Fatalf("node plugin after stale write = %+v, %v", unchanged, err)
+	}
+	audit, err := service.store.ListAudit(ctx, 0, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, entry := range audit {
+		if entry.Action == "node.plugin_reconcile.request" {
+			found = true
+			if entry.ActorType != "plugin" || entry.ActorID != pluginManifest.ID {
+				t.Fatalf("plugin reconciliation audit = %+v", entry)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("plugin reconciliation audit was not recorded")
+	}
+}
+
 func TestNodePluginReconcileResolvesPrivateReleaseAsset(t *testing.T) {
 	service := newTestService(t)
 	ctx := context.Background()

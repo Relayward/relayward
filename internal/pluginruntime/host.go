@@ -2,6 +2,7 @@ package pluginruntime
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"time"
 
@@ -11,6 +12,7 @@ import (
 	agentv1 "github.com/Relayward/relayward-sdk/agent/v1"
 	centerpluginv1 "github.com/Relayward/relayward-sdk/centerplugin/v1"
 	"github.com/Relayward/relayward/internal/eventstore"
+	"github.com/Relayward/relayward/internal/secretbox"
 	"github.com/Relayward/relayward/internal/store"
 )
 
@@ -18,17 +20,73 @@ type hostService struct {
 	centerpluginv1.UnimplementedPluginHostServer
 	database    database
 	events      eventPublisher
+	nodePlugins nodePluginManager
 	pluginID    string
+	version     string
 	permissions map[string]struct{}
 	now         func() time.Time
 }
 
-func newHostService(database database, events eventPublisher, pluginID string, permissions []string) *hostService {
+func newHostService(database database, events eventPublisher, nodePlugins nodePluginManager, pluginID, version string, permissions []string) *hostService {
 	approved := make(map[string]struct{}, len(permissions))
 	for _, permission := range permissions {
 		approved[permission] = struct{}{}
 	}
-	return &hostService{database: database, events: events, pluginID: pluginID, permissions: approved, now: func() time.Time { return time.Now().UTC() }}
+	return &hostService{
+		database: database, events: events, nodePlugins: nodePlugins, pluginID: pluginID, version: version,
+		permissions: approved, now: func() time.Time { return time.Now().UTC() },
+	}
+}
+
+func (service *hostService) GetNodePluginConfiguration(ctx context.Context,
+	request *centerpluginv1.GetNodePluginConfigurationRequest,
+) (*centerpluginv1.NodePluginConfiguration, error) {
+	if _, approved := service.permissions[centerpluginv1.PermissionNodeConfigure]; !approved {
+		return nil, status.Error(codes.PermissionDenied, "core.node_plugins.configure permission is required")
+	}
+	if err := centerpluginv1.ValidateGetNodePluginConfigurationRequest(request); err != nil {
+		return nil, status.Error(codes.InvalidArgument, "invalid node plugin configuration request")
+	}
+	instance, configuration, err := service.nodePlugins.NodePluginConfiguration(ctx, request.NodeId, service.pluginID)
+	if err != nil {
+		return nil, nodePluginConfigurationError(err, true)
+	}
+	response := &centerpluginv1.NodePluginConfiguration{
+		Generation: instance.Generation,
+		Version:    instance.DesiredVersion,
+		Sha256:     instance.DesiredConfigurationSHA256,
+		Json:       append([]byte(nil), configuration...),
+	}
+	if err := centerpluginv1.ValidateNodePluginConfiguration(request, response); err != nil {
+		return nil, status.Error(codes.Internal, "stored node plugin configuration is invalid")
+	}
+	return response, nil
+}
+
+func (service *hostService) ConfigureNodePlugin(ctx context.Context,
+	request *centerpluginv1.ConfigureNodePluginRequest,
+) (*centerpluginv1.NodePluginConfigured, error) {
+	if _, approved := service.permissions[centerpluginv1.PermissionNodeConfigure]; !approved {
+		return nil, status.Error(codes.PermissionDenied, "core.node_plugins.configure permission is required")
+	}
+	if err := centerpluginv1.ValidateConfigureNodePluginRequest(request); err != nil {
+		return nil, status.Error(codes.InvalidArgument, "invalid node plugin configuration")
+	}
+	instance, err := service.nodePlugins.ConfigureNodePlugin(
+		ctx, request.NodeId, service.pluginID, service.version, request.ExpectedGeneration,
+		append(json.RawMessage(nil), request.Json...),
+	)
+	if err != nil {
+		return nil, nodePluginConfigurationError(err, false)
+	}
+	response := &centerpluginv1.NodePluginConfigured{
+		Generation: instance.Generation,
+		Sha256:     instance.DesiredConfigurationSHA256,
+	}
+	if err := centerpluginv1.ValidateNodePluginConfigured(request, response); err != nil {
+		return nil, status.Error(codes.Internal, "configured node plugin state is invalid")
+	}
+	return response, nil
 }
 
 func (service *hostService) PublishEvents(ctx context.Context, request *centerpluginv1.PublishEventsRequest) (*centerpluginv1.EventsPublished, error) {
@@ -114,4 +172,19 @@ func (service *hostService) ListNodes(ctx context.Context, _ *centerpluginv1.Lis
 
 func permissionDenied(err error) bool {
 	return errors.Is(err, status.Error(codes.PermissionDenied, "")) || status.Code(err) == codes.PermissionDenied
+}
+
+func nodePluginConfigurationError(err error, reading bool) error {
+	switch {
+	case errors.Is(err, secretbox.ErrUnavailable):
+		return status.Error(codes.Unavailable, "encrypted node plugin configuration is unavailable")
+	case errors.Is(err, store.ErrGenerationConflict):
+		return status.Error(codes.Aborted, "node plugin configuration generation changed")
+	case errors.Is(err, store.ErrNotFound) && reading:
+		return status.Error(codes.NotFound, "node plugin configuration does not exist")
+	case errors.Is(err, store.ErrNotFound), errors.Is(err, store.ErrConflict), errors.Is(err, store.ErrStateConflict):
+		return status.Error(codes.FailedPrecondition, "node plugin cannot be configured in its current state")
+	default:
+		return status.Error(codes.Internal, "node plugin configuration is unavailable")
+	}
 }

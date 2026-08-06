@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/url"
 	"regexp"
 	"strings"
@@ -63,6 +64,68 @@ func (service *Service) ReconcileNodePlugin(ctx context.Context, nodeID, pluginI
 	}
 	service.pluginMu.Lock()
 	defer service.pluginMu.Unlock()
+	return service.reconcileNodePluginLocked(ctx, nodeID, pluginID, input, nil, false)
+}
+
+func (service *Service) NodePluginConfiguration(ctx context.Context, nodeID, pluginID string) (store.NodePluginInstance, json.RawMessage, error) {
+	if err := validateID("node_id", nodeID); err != nil {
+		return store.NodePluginInstance{}, nil, err
+	}
+	if err := contract.ValidatePluginID(pluginID); err != nil {
+		return store.NodePluginInstance{}, nil, invalid("plugin_id", err.Error())
+	}
+	service.pluginMu.Lock()
+	defer service.pluginMu.Unlock()
+	instance, err := service.store.NodePluginInstanceByID(ctx, nodeID, pluginID)
+	if err != nil {
+		return store.NodePluginInstance{}, nil, err
+	}
+	if instance.DesiredState == agentv1.PluginStateAbsent || instance.DesiredConfigurationSHA256 == "" {
+		return store.NodePluginInstance{}, nil, store.ErrNotFound
+	}
+	configuration, err := service.decryptNodePluginConfiguration(ctx, nodeID, pluginID)
+	if err != nil {
+		return store.NodePluginInstance{}, nil, err
+	}
+	digest, err := agentv1.PluginConfigurationDigest(configuration)
+	if err != nil {
+		return store.NodePluginInstance{}, nil, fmt.Errorf("validate stored plugin configuration: %w", err)
+	}
+	if digest != instance.DesiredConfigurationSHA256 {
+		return store.NodePluginInstance{}, nil, errors.New("stored plugin configuration does not match its desired digest")
+	}
+	return instance, configuration, nil
+}
+
+func (service *Service) ConfigureNodePlugin(ctx context.Context, nodeID, pluginID, version string,
+	expectedGeneration uint64, configuration json.RawMessage,
+) (store.NodePluginInstance, error) {
+	if expectedGeneration >= math.MaxInt64 {
+		return store.NodePluginInstance{}, invalid("expected_generation", "must be less than the maximum signed 64-bit integer")
+	}
+	if err := validateID("node_id", nodeID); err != nil {
+		return store.NodePluginInstance{}, err
+	}
+	if err := contract.ValidatePluginID(pluginID); err != nil {
+		return store.NodePluginInstance{}, invalid("plugin_id", err.Error())
+	}
+	service.pluginMu.Lock()
+	defer service.pluginMu.Unlock()
+	result, err := service.reconcileNodePluginLocked(ctx, nodeID, pluginID, NodePluginInput{
+		DesiredState:  agentv1.PluginStateRunning,
+		Version:       version,
+		Configuration: append(json.RawMessage(nil), configuration...),
+	}, &expectedGeneration, true)
+	var fieldError *FieldError
+	if errors.As(err, &fieldError) {
+		return store.NodePluginInstance{}, fmt.Errorf("%w: %v", store.ErrStateConflict, err)
+	}
+	return result, err
+}
+
+func (service *Service) reconcileNodePluginLocked(ctx context.Context, nodeID, pluginID string, input NodePluginInput,
+	expectedGeneration *uint64, pluginActor bool,
+) (store.NodePluginInstance, error) {
 
 	node, err := service.store.NodeByID(ctx, nodeID)
 	if err != nil {
@@ -99,12 +162,21 @@ func (service *Service) ReconcileNodePlugin(ctx context.Context, nodeID, pluginI
 	var current *store.NodePluginInstance
 	if value, err := service.store.NodePluginInstanceByID(ctx, nodeID, pluginID); err == nil {
 		current = &value
-		reconcile.Generation = current.Generation + 1
 	} else if errors.Is(err, store.ErrNotFound) {
-		reconcile.Generation = 1
 	} else {
 		return store.NodePluginInstance{}, err
 	}
+	currentGeneration := uint64(0)
+	if current != nil {
+		currentGeneration = current.Generation
+	}
+	if expectedGeneration != nil && *expectedGeneration != currentGeneration {
+		return store.NodePluginInstance{}, store.ErrGenerationConflict
+	}
+	if currentGeneration >= math.MaxInt64 {
+		return store.NodePluginInstance{}, store.ErrGenerationConflict
+	}
+	reconcile.Generation = currentGeneration + 1
 	if input.DesiredState != agentv1.PluginStateAbsent {
 		if reconcile.Version != installation.ActiveVersion {
 			return store.NodePluginInstance{}, invalid("version", "must match the installed active plugin version")
@@ -182,9 +254,12 @@ func (service *Service) ReconcileNodePlugin(ctx context.Context, nodeID, pluginI
 		desired.ArtifactSize = reconcile.Artifact.Size
 		desired.ArtifactSHA256 = reconcile.Artifact.SHA256
 	}
-	return service.store.ApplyNodePluginDesired(
-		ctx, desired, configurationCiphertext, commandID, command, commandCiphertext, now,
-	)
+	if pluginActor {
+		return service.store.ApplyNodePluginDesiredByPlugin(
+			ctx, desired, configurationCiphertext, commandID, command, commandCiphertext, now,
+		)
+	}
+	return service.store.ApplyNodePluginDesired(ctx, desired, configurationCiphertext, commandID, command, commandCiphertext, now)
 }
 
 func (service *Service) nodePluginArtifactURL(ctx context.Context, installation store.PluginInstallation, artifact manifest.Artifact) (string, error) {

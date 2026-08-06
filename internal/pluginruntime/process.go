@@ -89,7 +89,9 @@ func (supervisor *Supervisor) startProcess(ctx context.Context, version store.Pl
 		return nil, fmt.Errorf("validate center plugin permissions: %w", err)
 	}
 	hostServer := grpc.NewServer(grpc.MaxRecvMsgSize(maximumGRPCMessage), grpc.MaxSendMsgSize(maximumGRPCMessage))
-	centerpluginv1.RegisterPluginHostServer(hostServer, newHostService(supervisor.database, supervisor.events, version.PluginID, permissions))
+	centerpluginv1.RegisterPluginHostServer(hostServer, newHostService(
+		supervisor.database, supervisor.events, supervisor.nodePlugins, version.PluginID, version.Version, permissions,
+	))
 	go func() { _ = hostServer.Serve(hostListener) }()
 
 	launcher, err := os.Executable()

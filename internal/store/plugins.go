@@ -335,6 +335,22 @@ WHERE node_id = ? AND plugin_id = ?`, nodeID, pluginID).Scan(&state, &health, &r
 func (store *Store) ApplyNodePluginDesired(ctx context.Context, desired NodePluginDesired, configurationCiphertext []byte,
 	commandID string, command agentv1.Command, commandCiphertext []byte, now time.Time,
 ) (NodePluginInstance, error) {
+	return store.applyNodePluginDesired(
+		ctx, desired, configurationCiphertext, commandID, command, commandCiphertext, now, "administrator", "1",
+	)
+}
+
+func (store *Store) ApplyNodePluginDesiredByPlugin(ctx context.Context, desired NodePluginDesired, configurationCiphertext []byte,
+	commandID string, command agentv1.Command, commandCiphertext []byte, now time.Time,
+) (NodePluginInstance, error) {
+	return store.applyNodePluginDesired(
+		ctx, desired, configurationCiphertext, commandID, command, commandCiphertext, now, "plugin", desired.PluginID,
+	)
+}
+
+func (store *Store) applyNodePluginDesired(ctx context.Context, desired NodePluginDesired, configurationCiphertext []byte,
+	commandID string, command agentv1.Command, commandCiphertext []byte, now time.Time, actorType, actorID string,
+) (NodePluginInstance, error) {
 	if err := protocol.ValidateIdempotencyKey(commandID); err != nil {
 		return NodePluginInstance{}, fmt.Errorf("validate plugin reconcile command ID: %w", err)
 	}
@@ -492,7 +508,7 @@ VALUES (?, ?, ?, ?, ?)`, AgentCommandSecretOwnerType, commandID, AgentCommandReq
 		return NodePluginInstance{}, fmt.Errorf("store encrypted plugin reconcile command: %w", err)
 	}
 	if err := appendAuditTx(ctx, tx, AuditEntry{
-		OccurredAt: now, ActorType: "administrator", ActorID: "1", Action: "node.plugin_reconcile.request",
+		OccurredAt: now, ActorType: actorType, ActorID: actorID, Action: "node.plugin_reconcile.request",
 		TargetType: "node_plugin_instance", TargetID: ownerID, Outcome: "success",
 		Metadata: map[string]any{
 			"command_id": commandID, "node_id": desired.NodeID, "plugin_id": desired.PluginID,

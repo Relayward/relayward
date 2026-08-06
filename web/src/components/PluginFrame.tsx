@@ -17,7 +17,7 @@ interface PluginFrameProps {
 }
 
 export function PluginFrame({ plugin, onClose, onNavigate }: PluginFrameProps) {
-  const { t } = useI18n();
+  const { locale, t } = useI18n();
   const frame = useRef<HTMLIFrameElement>(null);
   const [loading, setLoading] = useState(true);
   const [failed, setFailed] = useState(false);
@@ -37,7 +37,7 @@ export function PluginFrame({ plugin, onClose, onNavigate }: PluginFrameProps) {
       }
     });
     return () => { active = false; };
-  }, [plugin.plugin_id]);
+  }, [locale, plugin.plugin_id]);
 
   useEffect(() => {
     async function receive(event: MessageEvent<unknown>) {
@@ -52,6 +52,7 @@ export function PluginFrame({ plugin, onClose, onNavigate }: PluginFrameProps) {
             result = {
               plugin_id: plugin.plugin_id,
               theme: document.documentElement.classList.contains("dark") ? "dark" : "light",
+              locale,
             };
             break;
           case "rpc": {
@@ -85,7 +86,7 @@ export function PluginFrame({ plugin, onClose, onNavigate }: PluginFrameProps) {
     }
     window.addEventListener("message", receive);
     return () => window.removeEventListener("message", receive);
-  }, [onNavigate, plugin.plugin_id]);
+  }, [locale, onNavigate, plugin.plugin_id]);
 
   return (
     <section aria-labelledby="plugin-frame-title">

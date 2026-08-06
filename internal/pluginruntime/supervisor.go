@@ -2,6 +2,7 @@ package pluginruntime
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -43,11 +44,17 @@ type eventPublisher interface {
 	PublishPluginEvents(context.Context, string, *centerpluginv1.PublishEventsRequest, time.Time) error
 }
 
+type nodePluginManager interface {
+	NodePluginConfiguration(context.Context, string, string) (store.NodePluginInstance, json.RawMessage, error)
+	ConfigureNodePlugin(context.Context, string, string, string, uint64, json.RawMessage) (store.NodePluginInstance, error)
+}
+
 type Supervisor struct {
-	database  database
-	artifacts artifactStore
-	events    eventPublisher
-	logger    *slog.Logger
+	database    database
+	artifacts   artifactStore
+	events      eventPublisher
+	nodePlugins nodePluginManager
+	logger      *slog.Logger
 
 	mu             sync.Mutex
 	actors         map[string]*pluginActor
@@ -66,15 +73,15 @@ type pluginActor struct {
 	crashStreak  uint
 }
 
-func New(database database, artifacts artifactStore, events eventPublisher, logger *slog.Logger) (*Supervisor, error) {
-	if database == nil || artifacts == nil || events == nil {
-		return nil, errors.New("plugin runtime database, artifact store, and event store are required")
+func New(database database, artifacts artifactStore, events eventPublisher, nodePlugins nodePluginManager, logger *slog.Logger) (*Supervisor, error) {
+	if database == nil || artifacts == nil || events == nil || nodePlugins == nil {
+		return nil, errors.New("plugin runtime database, artifact store, event store, and node plugin manager are required")
 	}
 	if logger == nil {
 		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
 	return &Supervisor{
-		database: database, artifacts: artifacts, events: events, logger: logger,
+		database: database, artifacts: artifacts, events: events, nodePlugins: nodePlugins, logger: logger,
 		actors: make(map[string]*pluginActor), healthInterval: defaultHealthInterval,
 	}, nil
 }

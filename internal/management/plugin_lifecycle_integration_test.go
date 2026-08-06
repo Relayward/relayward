@@ -65,7 +65,7 @@ func TestPluginLifecycleRunsRealReleaseAndRestoresAfterBadUpgrade(t *testing.T) 
 		t.Fatal(err)
 	}
 	defer events.Close()
-	runtime, err := pluginruntime.New(service.store, artifacts, events, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	runtime, err := pluginruntime.New(service.store, artifacts, events, service, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatal(err)
 	}

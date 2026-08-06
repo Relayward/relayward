@@ -178,7 +178,7 @@ func serve(args []string, logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	pluginSupervisor, err := pluginruntime.New(database, artifacts, events, logger)
+	pluginSupervisor, err := pluginruntime.New(database, artifacts, events, manager, logger)
 	if err != nil {
 		return err
 	}
