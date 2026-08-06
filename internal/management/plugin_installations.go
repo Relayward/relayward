@@ -331,7 +331,8 @@ func (service *Service) inspectPluginRelease(ctx context.Context, input PluginRe
 	}
 	for _, permission := range release.Manifest.Permissions {
 		if permission.Name != centerpluginv1.PermissionEventsRead && permission.Name != centerpluginv1.PermissionEventsWrite &&
-			permission.Name != centerpluginv1.PermissionNodesRead && permission.Name != centerpluginv1.PermissionServicesWrite {
+			permission.Name != centerpluginv1.PermissionNodeConfigure && permission.Name != centerpluginv1.PermissionNodesRead &&
+			permission.Name != centerpluginv1.PermissionServicesWrite {
 			return githubrelease.Release{}, "", nil, invalid("repository", "release requests an unsupported permission: "+permission.Name)
 		}
 		if permission.Name == centerpluginv1.PermissionEventsRead && release.Manifest.Kind != manifest.KindFeature {

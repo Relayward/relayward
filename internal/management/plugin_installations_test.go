@@ -314,6 +314,27 @@ func TestPluginInspectRejectsUnsupportedPermissions(t *testing.T) {
 	}
 }
 
+func TestPluginInspectAcceptsNodeConfigurationPermission(t *testing.T) {
+	service := newTestService(t)
+	pluginManifest := managedRuntimeManifest()
+	pluginManifest.Permissions = []manifest.Permission{
+		{Name: centerpluginv1.PermissionNodeConfigure, Reason: "Configure the runtime on managed nodes."},
+		{Name: centerpluginv1.PermissionNodesRead, Reason: "Read managed nodes."},
+		{Name: centerpluginv1.PermissionServicesWrite, Reason: "Publish runtime services."},
+	}
+	if err := service.ConfigurePluginLifecycle(
+		&releaseClientStub{release: managedRelease(pluginManifest)}, &artifactStoreStub{}, &pluginRuntimeStub{},
+	); err != nil {
+		t.Fatal(err)
+	}
+	inspected, err := service.InspectPluginRelease(t.Context(), PluginReleaseInput{
+		Repository: "https://github.com/Relayward/test-plugin", Version: pluginManifest.Version,
+	})
+	if err != nil || len(inspected.Manifest.Permissions) != len(pluginManifest.Permissions) {
+		t.Fatalf("InspectPluginRelease() = %+v, %v", inspected, err)
+	}
+}
+
 func TestPluginInspectAcceptsFeatureEventPermissions(t *testing.T) {
 	service := newTestService(t)
 	pluginManifest := managedRuntimeManifest()
