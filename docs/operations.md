@@ -5,7 +5,7 @@ This document covers the supported first-release deployment: one Linux AMD64 con
 ## Install
 
 1. Copy `compose.yaml` and `.env.example` to a deployment directory.
-2. Rename `.env.example` to `.env` and pin `RELAYWARD_VERSION` to an explicit release such as `0.1.0`. Keep the default loopback bind unless the reverse proxy reaches Relayward over a private Docker network.
+2. Rename `.env.example` to `.env` and pin `RELAYWARD_VERSION` to an explicit release such as `0.2.2`. Keep the default loopback bind unless the reverse proxy reaches Relayward over a private Docker network.
 3. Validate and start the deployment:
 
    ```bash
