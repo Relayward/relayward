@@ -93,6 +93,8 @@ relayward.example.com {
 }
 ```
 
+`compose.yaml` 还提供了默认注释的 Cloudflare Tunnel 服务。使用时，在 Cloudflare 创建 Tunnel 和公开主机名，将源站服务设为 `http://relayward:8080`，把 Tunnel Token 写入 `.env` 的 `CLOUDFLARE_TUNNEL_TOKEN`，然后取消 `cloudflared` 服务整段注释。Token 属于秘密，不能提交到 Git。
+
 使用 Nginx 或主机管理面板时，需要保留原始 `Host` 请求头、传递 `X-Forwarded-Proto` 并启用 HTTP/1.1 WebSocket 转发。Relayward 会根据请求协议自动设置会话 Cookie；HTTPS 请求使用 `Secure` Cookie，HTTP 请求使用普通 Cookie。
 
 ### 3. 初始化管理员

@@ -93,6 +93,8 @@ relayward.example.com {
 }
 ```
 
+`compose.yaml` also includes a commented Cloudflare Tunnel service. To use it, create a Tunnel and public hostname in Cloudflare, set its origin service to `http://relayward:8080`, add the Tunnel token to `.env` as `CLOUDFLARE_TUNNEL_TOKEN`, and uncomment the complete `cloudflared` service. The token is a secret and must not be committed.
+
 For Nginx or a hosting panel, preserve the original `Host` header, pass `X-Forwarded-Proto`, and enable HTTP/1.1 WebSocket forwarding. Relayward selects cookie attributes from the request protocol: HTTPS requests receive `Secure` cookies, while HTTP requests receive regular cookies.
 
 ### 3. Initialize The Administrator

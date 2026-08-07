@@ -41,3 +41,16 @@ services:
     #   options:
     #     max-size: 10m
     #     max-file: "3"
+
+  # Optional HTTPS with Cloudflare Tunnel. Configure the tunnel origin as
+  # http://relayward:8080, set CLOUDFLARE_TUNNEL_TOKEN in .env, then
+  # uncomment this service.
+  # cloudflared:
+  #   image: cloudflare/cloudflared:latest
+  #   command:
+  #     - tunnel
+  #     - --no-autoupdate
+  #     - run
+  #   environment:
+  #     TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN}
+  #   restart: unless-stopped
