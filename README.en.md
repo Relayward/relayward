@@ -8,7 +8,7 @@
 
 Relayward is a single-administrator control plane for managing lightweight proxy nodes through a native Agent and installable runtime plugins. The center owns users, authorizations, quotas, subscriptions, audit history, and plugin lifecycle; proxy cores remain isolated on their nodes.
 
-Relayward is under active development. Current releases target self-hosted Linux AMD64 deployments and do not import 3x-ui or retired xui-stack data.
+Relayward is under active development. Current releases target self-hosted Linux AMD64 deployments.
 
 ## Features
 
