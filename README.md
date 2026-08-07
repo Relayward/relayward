@@ -65,12 +65,9 @@ curl -fsSL \
 curl -fsSL \
   https://raw.githubusercontent.com/Relayward/relayward/main/.env.example \
   -o .env
-mkdir -p .data
-chown 10001:10001 .data
-chmod 700 .data
 ```
 
-Relayward 容器使用 UID `10001` 运行，因此 `.data` 必须归该 UID 所有。启动前检查 `.env`。`RELAYWARD_VERSION` 必须是 [Relayward Releases](https://github.com/Relayward/relayward/releases) 中已经存在的镜像标签；生产环境应使用明确的版本号，不要使用 `latest`。
+启动前检查 `.env`。`RELAYWARD_VERSION` 必须是 [Relayward Releases](https://github.com/Relayward/relayward/releases) 中已经存在的镜像标签；生产环境应使用明确的版本号，不要使用 `latest`。容器首次启动时会自动创建 `.data` 并准备目录权限，Relayward 主进程仍以非 root 用户运行。
 
 ```bash
 docker compose config --quiet

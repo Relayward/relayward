@@ -65,12 +65,9 @@ curl -fsSL \
 curl -fsSL \
   https://raw.githubusercontent.com/Relayward/relayward/main/.env.example \
   -o .env
-mkdir -p .data
-chown 10001:10001 .data
-chmod 700 .data
 ```
 
-The Relayward container runs as UID `10001`, so `.data` must be owned by that UID. Review `.env` before starting. `RELAYWARD_VERSION` must be an existing image tag from [Relayward Releases](https://github.com/Relayward/relayward/releases); production deployments should use an explicit version instead of `latest`.
+Review `.env` before starting. `RELAYWARD_VERSION` must be an existing image tag from [Relayward Releases](https://github.com/Relayward/relayward/releases); production deployments should use an explicit version instead of `latest`. On first start, the container creates `.data` and prepares its permissions automatically while the Relayward process continues to run as a non-root user.
 
 ```bash
 docker compose config --quiet

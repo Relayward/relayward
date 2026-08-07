@@ -2,54 +2,18 @@ services:
   relayward:
     image: ghcr.io/relayward/relayward:${RELAYWARD_VERSION:-latest}
     ports:
-      - ${RELAYWARD_BIND_ADDRESS:-127.0.0.1}:${RELAYWARD_PORT:-8080}:8080
+      - "${RELAYWARD_BIND_ADDRESS:-127.0.0.1}:${RELAYWARD_PORT:-8080}:8080"
     volumes:
       - ./.data:/var/lib/relayward
     restart: unless-stopped
 
-    # Optional: always check the registry for the configured image tag.
-    # pull_policy: always
-
-    # Optional: override the image defaults to customize event retention.
-    # command:
-    #   - serve
-    #   - -listen
-    #   - 0.0.0.0:8080
-    #   - -data
-    #   - /var/lib/relayward
-    #   - -web
-    #   - /usr/share/relayward/web
-    #   - -event-hot-retention
-    #   - ${RELAYWARD_EVENT_HOT_RETENTION:-24h}
-    #   - -event-archive-retention
-    #   - ${RELAYWARD_EVENT_ARCHIVE_RETENTION:-2160h}
-
-    # Optional: container hardening. Enable the whole block together.
-    # init: true
-    # read_only: true
-    # tmpfs:
-    #   - /tmp:size=64m,mode=1777
-    # cap_drop:
-    #   - ALL
-    # security_opt:
-    #   - no-new-privileges:true
-
-    # Optional: operational limits and Docker log rotation.
-    # pids_limit: 256
-    # stop_grace_period: 20s
-    # logging:
-    #   options:
-    #     max-size: 10m
-    #     max-file: "3"
-
-  # Optional HTTPS with Cloudflare Tunnel. Configure the tunnel origin as
-  # http://relayward:8080, set CLOUDFLARE_TUNNEL_TOKEN in .env, then
-  # uncomment this service.
+  # 可选 HTTPS 方案：在 Cloudflare 中将 Tunnel 源站配置为
+  # http://relayward:8080，在 .env 中填写 CLOUDFLARE_TUNNEL_TOKEN，
+  # 然后取消此服务的整段注释。
   # cloudflared:
   #   image: cloudflare/cloudflared:latest
   #   command:
   #     - tunnel
-  #     - --no-autoupdate
   #     - run
   #   environment:
   #     TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN}

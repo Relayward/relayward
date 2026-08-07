@@ -28,17 +28,17 @@ LABEL org.opencontainers.image.source="https://github.com/Relayward/relayward" \
       org.opencontainers.image.description="Relayward control plane" \
       org.opencontainers.image.version="${VERSION}"
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends ca-certificates && \
+    apt-get install -y --no-install-recommends ca-certificates gosu && \
     rm -rf /var/lib/apt/lists/* && \
     groupadd --gid 10001 relayward && \
     useradd --uid 10001 --gid relayward --home-dir /var/lib/relayward --shell /usr/sbin/nologin relayward && \
     install -d -o relayward -g relayward -m 0700 /var/lib/relayward && \
     install -d -o root -g root -m 0755 /usr/share/relayward/web
 COPY --from=backend --chmod=0755 /out/relayward /usr/local/bin/relayward
+COPY --chmod=0755 docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 COPY --from=web /src/web/dist/ /usr/share/relayward/web/
-USER 10001:10001
 EXPOSE 8080
 VOLUME ["/var/lib/relayward"]
-ENTRYPOINT ["/usr/local/bin/relayward"]
-CMD ["serve", "-listen", "0.0.0.0:8080", "-data", "/var/lib/relayward", "-web", "/usr/share/relayward/web"]
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 CMD ["/usr/local/bin/relayward", "healthcheck"]
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
+CMD ["relayward", "serve", "-listen", "0.0.0.0:8080", "-data", "/var/lib/relayward", "-web", "/usr/share/relayward/web"]
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 CMD ["gosu", "relayward:relayward", "relayward", "healthcheck"]

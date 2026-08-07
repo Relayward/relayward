@@ -71,14 +71,25 @@ jobs:
           cache-to: type=gha,mode=max
       - name: Smoke test image
         run: |
+          data_dir="$(mktemp -d)"
           trap 'docker rm -fv relayward-ci >/dev/null 2>&1 || true' EXIT
-          docker run -d --name relayward-ci --read-only --tmpfs /tmp:size=64m relayward:ci
+          docker run -d --name relayward-ci --read-only --tmpfs /tmp:size=64m \
+            --mount "type=bind,source=$data_dir,target=/var/lib/relayward" \
+            relayward:ci
+          healthy=false
           for attempt in $(seq 1 30); do
             if docker exec relayward-ci relayward healthcheck; then
-              exit 0
+              healthy=true
+              break
             fi
             echo "waiting for Relayward healthcheck ($attempt/30)"
             sleep 1
           done
-          docker logs relayward-ci
-          exit 1
+          if [ "$healthy" != true ]; then
+            docker logs relayward-ci
+            exit 1
+          fi
+          docker exec relayward-ci sh -c \
+            'grep -q "^Uid:[[:space:]]*10001[[:space:]]" /proc/1/status'
+          test "$(stat -c %u "$data_dir")" = "10001"
+          docker exec --user 10001 relayward-ci test -f /var/lib/relayward/relayward.db

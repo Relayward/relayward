@@ -13,12 +13,9 @@ This document covers the supported first-release deployment: one Linux AMD64 con
    curl -fsSL \
      https://raw.githubusercontent.com/Relayward/relayward/main/.env.example \
      -o .env
-   mkdir -p .data
-   chown 10001:10001 .data
-   chmod 700 .data
    ```
 
-2. The Relayward container runs as UID `10001`, so `.data` must be owned by that UID. Review `.env` and keep `RELAYWARD_VERSION` pinned to an explicit release such as `0.2.2`. Keep the default loopback bind when using a host reverse proxy. For direct HTTP access, set `RELAYWARD_BIND_ADDRESS` to a host address reachable by administrators and Agents.
+2. Review `.env` and keep `RELAYWARD_VERSION` pinned to an explicit release such as `0.2.2`. Keep the default loopback bind when using a host reverse proxy. For direct HTTP access, set `RELAYWARD_BIND_ADDRESS` to a host address reachable by administrators and Agents. On first start, the container creates `.data` and prepares its permissions automatically while the Relayward process continues to run as a non-root user.
 3. Validate, pull, and start the deployment:
 
    ```bash
@@ -31,7 +28,7 @@ This document covers the supported first-release deployment: one Linux AMD64 con
 4. Choose the access method. Direct HTTP is supported, but administrator credentials, sessions, subscription tokens, Agent registration credentials, commands, and telemetry are not encrypted in transit. An HTTPS reverse proxy is strongly recommended for untrusted networks and public deployments. When using a proxy, forward every path including WebSocket upgrades, preserve `Host`, and pass `X-Forwarded-Proto`.
 5. Open the selected HTTP or HTTPS administration URL and create the single administrator. TOTP is optional but strongly recommended on public or untrusted networks. If enabled, store its generated recovery codes outside the Relayward `.data` directory.
 
-The center image is Linux AMD64 only and runs without root privileges. The Compose example includes commented optional container-hardening and resource-limit settings. Plugins are administrator-approved native executables and share the Relayward account; container restrictions reduce accidental resource exhaustion but are not a hostile-code sandbox.
+The center image is Linux AMD64 only. Its entrypoint uses root only to prepare the mounted data directory, then Relayward and its plugins run as UID `10001`. Plugins are administrator-approved native executables and share the Relayward account; plugin process isolation is not a hostile-code sandbox.
 
 ## State And Backup
 
@@ -48,7 +45,7 @@ docker compose exec relayward relayward healthcheck
 
 A storage snapshot may be taken without a long stop only when it preserves a crash-consistent view of the entire volume. Keep at least one tested backup outside the host.
 
-Restore the complete `.data` directory into an empty deployment, preserve ownership by UID `10001`, pin the center image to the version that created the backup, start Relayward, and run the health check before changing versions. Do not merge files from different backup points.
+Restore the complete `.data` directory into an empty deployment, pin the center image to the version that created the backup, start Relayward, and run the health check before changing versions. Do not merge files from different backup points.
 
 ## Upgrade
 
