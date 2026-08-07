@@ -13,9 +13,10 @@ This document covers the supported first-release deployment: one Linux AMD64 con
    curl -fsSL \
      https://raw.githubusercontent.com/Relayward/relayward/main/.env.example \
      -o .env
+   chmod 600 .env
    ```
 
-2. Review `.env` and keep `RELAYWARD_VERSION` pinned to an explicit release such as `0.2.2`. Keep the default loopback bind when using a host reverse proxy. For direct HTTP access, set `RELAYWARD_BIND_ADDRESS` to a host address reachable by administrators and Agents. On first start, the container creates `.data` and prepares its permissions automatically while the Relayward process continues to run as a non-root user.
+2. Review `.env` and keep its permissions at `0600` because optional settings may contain secrets. Keep `RELAYWARD_VERSION` pinned to an explicit release such as `0.2.3`. Keep the default loopback bind when using a host reverse proxy. For direct HTTP access, set `RELAYWARD_BIND_ADDRESS` to a host address reachable by administrators and Agents. On first start, the container creates `.data` and prepares its permissions automatically while the Relayward process continues to run as a non-root user.
 3. Validate, pull, and start the deployment:
 
    ```bash

@@ -65,9 +65,10 @@ curl -fsSL \
 curl -fsSL \
   https://raw.githubusercontent.com/Relayward/relayward/main/.env.example \
   -o .env
+chmod 600 .env
 ```
 
-Review `.env` before starting. `RELAYWARD_VERSION` must be an existing image tag from [Relayward Releases](https://github.com/Relayward/relayward/releases); production deployments should use an explicit version instead of `latest`. On first start, the container creates `.data` and prepares its permissions automatically while the Relayward process continues to run as a non-root user.
+Review `.env` before starting and keep its permissions at `0600` because optional settings may contain secrets. `RELAYWARD_VERSION` must be an existing image tag from [Relayward Releases](https://github.com/Relayward/relayward/releases); production deployments should use an explicit version instead of `latest`. On first start, the container creates `.data` and prepares its permissions automatically while the Relayward process continues to run as a non-root user.
 
 ```bash
 docker compose config --quiet
