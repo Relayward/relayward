@@ -6,18 +6,18 @@
 [![Release](https://img.shields.io/github/v/release/Relayward/relayward)](https://github.com/Relayward/relayward/releases)
 [![License](https://img.shields.io/github/license/Relayward/relayward)](LICENSE)
 
-Relayward is a single-administrator control plane for managing lightweight proxy nodes through a native Agent and installable runtime plugins. The center owns users, authorizations, quotas, subscriptions, audit history, and plugin lifecycle; proxy cores remain isolated on their nodes.
+Relayward is a single-administrator node control plane for administrator authentication, node enrollment, users, authorizations, quotas, subscription entry points, audit history, and plugin lifecycle. Nodes connect through a compatible Agent, while independent plugins provide runtime-specific capabilities.
 
 Relayward is under active development. Current releases target self-hosted Linux AMD64 deployments.
 
 ## Features
 
-- Native Debian/systemd and Alpine/OpenRC Agent with outbound-only control connectivity
-- Reliable commands, event delivery, Agent updates, plugin supervision, and automatic rollback
-- Per-user, per-node authorization with quota, expiry, reset periods, and soft source-IP limits
-- Installable runtime plugins with explicit permissions, sandboxed administration pages, and node-local proxy cores
-- VLESS + REALITY support through the official [Relayward Xray plugin](https://github.com/Relayward/relayward-plugin-xray)
-- VLESS URI, Mihomo, and sing-box subscription output
+- Single-administrator password authentication, TOTP, recovery codes, session management, and local administrator recovery
+- Node records, one-time Agent enrollment, outbound-only control connections, and online-state management
+- Reliable command and event delivery, policy reconciliation, Agent updates, and rollback coordination
+- Per-user, per-node policy configuration and delivery for quotas, expiry, reset periods, and soft source-IP limits
+- Plugin service catalogs, authorization service bindings, and a unified subscription entry point
+- Plugin release inspection, permission approval, artifact verification, process supervision, upgrade rollback, and sandboxed administration pages
 - Simplified Chinese and English administration interface with light and dark themes
 - SQLite state, encrypted secrets, audit history, hot events, and compressed event archives
 
@@ -36,10 +36,10 @@ Relayward Agent (native service)
    |
    | supervised local plugin process
    |
-Xray runtime plugin -> official Xray process
+Runtime or feature plugin (independent project)
 ```
 
-The center does not run or package Xray. Agents do not expose a management port; they initiate the control connection to the center. Only proxy service ports configured through a runtime plugin need to be reachable by clients.
+The center manages only generic node, policy, service, and plugin state. It does not interpret runtime-specific configuration or run and package a proxy core. Agents do not expose a management port; they initiate the control connection to the center.
 
 ## Requirements
 
@@ -118,31 +118,23 @@ tail -n 100 /var/log/messages
 
 The Agent needs no inbound firewall rule. It connects to the center over HTTPS.
 
-### 5. Install The Xray Plugin
+### 5. Select And Install A Plugin
 
-Open **Plugins**, select **Install plugin**, and enter:
+Relayward itself does not provide proxy protocols or a proxy core. Select a compatible runtime plugin and use that plugin repository's README as the authority for installation, node configuration, network exposure, and verification.
 
-```text
-GitHub repository: https://github.com/Relayward/relayward-plugin-xray
-Version:          0.4.1
-GitHub token:     leave empty for this public repository
-```
+To install a plugin, open **Plugins**, select **Install plugin**, and enter its GitHub repository, an explicit release version, and an optional token when the repository is private. Select **Check release**, review the manifest and artifacts, approve every requested permission, and install it.
 
-Select **Check release**, review and approve every requested permission, then install it. Open the installed Xray plugin, select the node, review the listener, public port, REALITY target, routing, and DNS settings, then save the configuration.
-
-Saving the first node configuration installs the node-side plugin, downloads the official Xray release, and publishes the configured services to Relayward. Wait until **Plugins > Node instances** reports the desired generation as applied and the runtime as running.
-
-Open the configured TCP and/or UDP proxy ports in the node firewall, provider firewall, and any NAT port mapping. Relayward does not modify host firewall rules.
+Current official runtime plugins are listed under [Related Projects](#related-projects). Protocols, configuration fields, service ports, subscription formats, and acceptance criteria belong to each plugin and are documented in its repository.
 
 ### 6. Create Access
 
 1. Open **Users** and create a user.
 2. Open **Authorizations** and add an authorization for that user and node.
 3. Configure quota, reset period, expiry, timezone, and optional soft IP limit.
-4. Use **Manage services** to bind the authorization to one or more services published by the runtime plugin.
-5. Copy the subscription link and verify it from a client.
+4. After an installed plugin publishes services, use **Manage services** to bind the authorization to one or more of them.
+5. Copy the subscription link generated for the authorization.
 
-The subscription endpoint can render the VLESS URI, Mihomo, and sing-box formats contributed by installed plugins.
+Relayward owns authorization state, traffic metadata, and the unified subscription entry point. Installed plugins provide the concrete connection content and output formats.
 
 ## Verification
 
@@ -151,10 +143,10 @@ After deployment, verify all of the following:
 - `docker compose exec relayward relayward healthcheck` succeeds.
 - The administration page is available only through HTTPS.
 - The node reports online and shows its Agent version.
-- The Xray node instance reports the configured generation as applied and running.
+- Installed center plugins report an active and healthy state.
 - The authorization reports active after policy delivery.
-- The subscription contains the expected service and public endpoint.
-- A real client can connect through the configured proxy port.
+
+Continue with the selected plugin's README to verify runtime services, node-plugin instances, subscription content, and client connectivity.
 
 ## Operations
 
