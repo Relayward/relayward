@@ -1,38 +1,43 @@
 services:
   relayward:
     image: ghcr.io/relayward/relayward:${RELAYWARD_VERSION:-latest}
-    pull_policy: always
-    command:
-      - serve
-      - -listen
-      - 0.0.0.0:8080
-      - -data
-      - /var/lib/relayward
-      - -web
-      - /usr/share/relayward/web
-      - -event-hot-retention
-      - ${RELAYWARD_EVENT_HOT_RETENTION:-24h}
-      - -event-archive-retention
-      - ${RELAYWARD_EVENT_ARCHIVE_RETENTION:-2160h}
     ports:
       - ${RELAYWARD_BIND_ADDRESS:-127.0.0.1}:${RELAYWARD_PORT:-8080}:8080
     volumes:
-      - relayward-data:/var/lib/relayward
-    init: true
-    read_only: true
-    tmpfs:
-      - /tmp:size=64m,mode=1777
-    cap_drop:
-      - ALL
-    security_opt:
-      - no-new-privileges:true
-    pids_limit: 256
+      - ./.data:/var/lib/relayward
     restart: unless-stopped
-    stop_grace_period: 20s
-    logging:
-      options:
-        max-size: 10m
-        max-file: "3"
 
-volumes:
-  relayward-data:
+    # Optional: always check the registry for the configured image tag.
+    # pull_policy: always
+
+    # Optional: override the image defaults to customize event retention.
+    # command:
+    #   - serve
+    #   - -listen
+    #   - 0.0.0.0:8080
+    #   - -data
+    #   - /var/lib/relayward
+    #   - -web
+    #   - /usr/share/relayward/web
+    #   - -event-hot-retention
+    #   - ${RELAYWARD_EVENT_HOT_RETENTION:-24h}
+    #   - -event-archive-retention
+    #   - ${RELAYWARD_EVENT_ARCHIVE_RETENTION:-2160h}
+
+    # Optional: container hardening. Enable the whole block together.
+    # init: true
+    # read_only: true
+    # tmpfs:
+    #   - /tmp:size=64m,mode=1777
+    # cap_drop:
+    #   - ALL
+    # security_opt:
+    #   - no-new-privileges:true
+
+    # Optional: operational limits and Docker log rotation.
+    # pids_limit: 256
+    # stop_grace_period: 20s
+    # logging:
+    #   options:
+    #     max-size: 10m
+    #     max-file: "3"

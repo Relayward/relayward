@@ -65,9 +65,12 @@ curl -fsSL \
 curl -fsSL \
   https://raw.githubusercontent.com/Relayward/relayward/main/.env.example \
   -o .env
+mkdir -p .data
+chown 10001:10001 .data
+chmod 700 .data
 ```
 
-启动前检查 `.env`。`RELAYWARD_VERSION` 必须是 [Relayward Releases](https://github.com/Relayward/relayward/releases) 中已经存在的镜像标签；生产环境应使用明确的版本号，不要使用 `latest`。
+Relayward 容器使用 UID `10001` 运行，因此 `.data` 必须归该 UID 所有。启动前检查 `.env`。`RELAYWARD_VERSION` 必须是 [Relayward Releases](https://github.com/Relayward/relayward/releases) 中已经存在的镜像标签；生产环境应使用明确的版本号，不要使用 `latest`。
 
 ```bash
 docker compose config --quiet
@@ -76,7 +79,7 @@ docker compose exec relayward relayward healthcheck
 docker compose logs --tail=100 relayward
 ```
 
-确认健康检查成功后再继续。所有持久化状态都保存在 `relayward-data` Docker 数据卷中。
+确认健康检查成功后再继续。所有持久化状态都保存在当前部署目录的 `.data` 中。
 
 ### 2. 配置访问方式
 
@@ -100,7 +103,7 @@ relayward.example.com {
 
 1. 打开**设置**，确认自动填入的**中心公开 URL**；它来自当前浏览器访问地址，也可以改为其他 HTTP 或 HTTPS 源地址。不要包含路径、查询参数、凭据或应用路由。
 2. 设置部署所在时区。
-3. 可选：打开**安全**并启用 TOTP。公网或不受信任网络中的部署强烈建议启用；启用后请将生成的恢复代码保存在 Relayward 数据卷之外。
+3. 可选：打开**安全**并启用 TOTP。公网或不受信任网络中的部署强烈建议启用；启用后请将生成的恢复代码保存在 Relayward `.data` 目录之外。
 
 ### 4. 注册节点
 
@@ -154,9 +157,9 @@ Relayward 负责授权状态、流量信息和统一订阅入口；订阅中的�
 
 ## 运维
 
-`relayward-data` 数据卷包含主数据库、热事件数据库、实例加密密钥、插件制品、插件状态和事件归档。备份和恢复时必须将其作为一个整体处理。
+`.data` 目录包含主数据库、热事件数据库、实例加密密钥、插件制品、插件状态和事件归档。备份和恢复时必须将整个目录作为一个整体处理。
 
-有关备份、升级、回滚、管理员恢复、实例密钥恢复和节点凭据恢复流程，请参阅[运维文档](docs/operations.md)。数据库迁移只支持向前执行，升级正式版本前必须创建完整的数据卷快照。
+有关备份、升级、回滚、管理员恢复、实例密钥恢复和节点凭据恢复流程，请参阅[运维文档](docs/operations.md)。数据库迁移只支持向前执行，升级正式版本前必须完整备份 `.data`。
 
 ## 开发
 
@@ -197,7 +200,7 @@ Vite 开发服务器会将 API 请求代理到 `127.0.0.1:8080`。Relayward 会�
 
 ## 安全
 
-插件是受信任的原生可执行程序，只能从可信仓库安装。HTTP 可以完整使用，但不会提供传输加密；对不受信任的网络和公网部署应使用 HTTPS。不要在 Issue 中公开注册令牌、订阅链接、恢复代码、GitHub 令牌、私有配置或 Relayward 数据卷。
+插件是受信任的原生可执行程序，只能从可信仓库安装。HTTP 可以完整使用，但不会提供传输加密；对不受信任的网络和公网部署应使用 HTTPS。不要在 Issue 中公开注册令牌、订阅链接、恢复代码、GitHub 令牌、私有配置或 Relayward `.data` 目录。
 
 请通过仓库的 [GitHub Security Advisories](https://github.com/Relayward/relayward/security/advisories/new) 私下报告安全问题。
 

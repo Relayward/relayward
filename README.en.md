@@ -65,9 +65,12 @@ curl -fsSL \
 curl -fsSL \
   https://raw.githubusercontent.com/Relayward/relayward/main/.env.example \
   -o .env
+mkdir -p .data
+chown 10001:10001 .data
+chmod 700 .data
 ```
 
-Review `.env` before starting. `RELAYWARD_VERSION` must be an existing image tag from [Relayward Releases](https://github.com/Relayward/relayward/releases); production deployments should use an explicit version instead of `latest`.
+The Relayward container runs as UID `10001`, so `.data` must be owned by that UID. Review `.env` before starting. `RELAYWARD_VERSION` must be an existing image tag from [Relayward Releases](https://github.com/Relayward/relayward/releases); production deployments should use an explicit version instead of `latest`.
 
 ```bash
 docker compose config --quiet
@@ -76,7 +79,7 @@ docker compose exec relayward relayward healthcheck
 docker compose logs --tail=100 relayward
 ```
 
-The health check must report success before continuing. All persistent state is stored in the `relayward-data` Docker volume.
+The health check must report success before continuing. All persistent state is stored in `.data` under the current deployment directory.
 
 ### 2. Choose The Access Method
 
@@ -100,7 +103,7 @@ After signing in:
 
 1. Open **Settings** and review the automatically populated **Public URL**. It starts with the current browser origin and may be changed to another HTTP or HTTPS origin. Do not include a path, query, credentials, or trailing application route.
 2. Set the deployment timezone.
-3. Optional: open **Security** and enable TOTP. It is strongly recommended for deployments on public or untrusted networks. If enabled, store the generated recovery codes outside the Relayward data volume.
+3. Optional: open **Security** and enable TOTP. It is strongly recommended for deployments on public or untrusted networks. If enabled, store the generated recovery codes outside the Relayward `.data` directory.
 
 ### 4. Register A Node
 
@@ -154,9 +157,9 @@ Continue with the selected plugin's README to verify runtime services, node-plug
 
 ## Operations
 
-The `relayward-data` volume contains the primary database, hot-event database, instance encryption key, plugin artifacts, plugin state, and event archives. Back up and restore it as one unit.
+The `.data` directory contains the primary database, hot-event database, instance encryption key, plugin artifacts, plugin state, and event archives. Back up and restore the complete directory as one unit.
 
-See [Operations](docs/operations.md) for supported backup, upgrade, rollback, administrator recovery, instance-key recovery, and node credential recovery procedures. Database migrations are forward-only; take a complete volume snapshot before upgrading released versions.
+See [Operations](docs/operations.md) for supported backup, upgrade, rollback, administrator recovery, instance-key recovery, and node credential recovery procedures. Database migrations are forward-only; back up the complete `.data` directory before upgrading released versions.
 
 ## Development
 
@@ -197,7 +200,7 @@ The Vite server proxies API requests to `127.0.0.1:8080`. Relayward selects sess
 
 ## Security
 
-Treat plugins as trusted native executables and install them only from repositories you trust. HTTP is fully functional but provides no transport encryption; use HTTPS for untrusted networks and public deployments. Do not publish registration tokens, subscription links, recovery codes, GitHub tokens, private configuration, or Relayward data volumes in issue reports.
+Treat plugins as trusted native executables and install them only from repositories you trust. HTTP is fully functional but provides no transport encryption; use HTTPS for untrusted networks and public deployments. Do not publish registration tokens, subscription links, recovery codes, GitHub tokens, private configuration, or Relayward `.data` contents in issue reports.
 
 Report security issues privately through the repository's [GitHub Security Advisories](https://github.com/Relayward/relayward/security/advisories/new).
 

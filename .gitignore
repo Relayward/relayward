@@ -1,5 +1,6 @@
 /relayward
 /data/
+/.data/
 /web/dist/
 /web/node_modules/
 *.db
