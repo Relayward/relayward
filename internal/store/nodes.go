@@ -12,7 +12,6 @@ import (
 type Node struct {
 	ID             string
 	Name           string
-	PublicAddress  string
 	Enabled        bool
 	CredentialHash []byte
 	RegisteredAt   *time.Time
@@ -29,7 +28,7 @@ type Node struct {
 
 func (store *Store) ListNodes(ctx context.Context) ([]Node, error) {
 	rows, err := store.db.QueryContext(ctx, `
-SELECT id, name, public_address, enabled, credential_hash, registered_at, last_seen_at,
+SELECT id, name, enabled, credential_hash, registered_at, last_seen_at,
 	       hostname, agent_version, agent_os, agent_arch, agent_capabilities_json, agent_started_at_ns,
 	       created_at, updated_at
 FROM nodes ORDER BY name COLLATE NOCASE, id`)
@@ -54,7 +53,7 @@ FROM nodes ORDER BY name COLLATE NOCASE, id`)
 
 func (store *Store) NodeByID(ctx context.Context, id string) (Node, error) {
 	return scanNode(store.db.QueryRowContext(ctx, `
-SELECT id, name, public_address, enabled, credential_hash, registered_at, last_seen_at,
+SELECT id, name, enabled, credential_hash, registered_at, last_seen_at,
 	       hostname, agent_version, agent_os, agent_arch, agent_capabilities_json, agent_started_at_ns,
 	       created_at, updated_at
 FROM nodes WHERE id = ?`, id))
@@ -68,9 +67,9 @@ func (store *Store) CreateNode(ctx context.Context, value Node, now time.Time) e
 	defer tx.Rollback()
 
 	result, err := tx.ExecContext(ctx, `
-INSERT INTO nodes(id, name, public_address, enabled, created_at, updated_at)
-VALUES (?, ?, ?, ?, ?, ?)
-ON CONFLICT DO NOTHING`, value.ID, value.Name, value.PublicAddress, boolInt(value.Enabled), unixTime(now), unixTime(now))
+INSERT INTO nodes(id, name, enabled, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?)
+ON CONFLICT DO NOTHING`, value.ID, value.Name, boolInt(value.Enabled), unixTime(now), unixTime(now))
 	if err != nil {
 		return fmt.Errorf("insert node: %w", err)
 	}
@@ -95,8 +94,8 @@ func (store *Store) UpdateNode(ctx context.Context, value Node, now time.Time) e
 	defer tx.Rollback()
 
 	result, err := tx.ExecContext(ctx, `
-UPDATE OR IGNORE nodes SET name = ?, public_address = ?, enabled = ?, updated_at = ? WHERE id = ?`,
-		value.Name, value.PublicAddress, boolInt(value.Enabled), unixTime(now), value.ID)
+UPDATE OR IGNORE nodes SET name = ?, enabled = ?, updated_at = ? WHERE id = ?`,
+		value.Name, boolInt(value.Enabled), unixTime(now), value.ID)
 	if err != nil {
 		return fmt.Errorf("update node: %w", err)
 	}
@@ -202,7 +201,7 @@ func scanNode(row rowScanner) (Node, error) {
 	var registeredAt, lastSeenAt, agentStartedAt sql.NullInt64
 	var capabilities []byte
 	var createdAt, updatedAt int64
-	if err := row.Scan(&value.ID, &value.Name, &value.PublicAddress, &enabled, &credentialHash,
+	if err := row.Scan(&value.ID, &value.Name, &enabled, &credentialHash,
 		&registeredAt, &lastSeenAt, &value.Hostname, &value.AgentVersion, &value.AgentOS, &value.AgentArch,
 		&capabilities, &agentStartedAt, &createdAt, &updatedAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {

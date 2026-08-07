@@ -80,7 +80,6 @@ export function NodeDetailsDialog({ node, onClose }: { node: Node; onClose: () =
                 <Detail label={t("Last seen")} value={formatOptional(node.last_seen_at, formatDateTime, t("Never"))} />
               </DetailGroup>
               <DetailGroup title={t("Node information")}>
-                <Detail label={t("Public address")} value={node.public_address || t("Not set")} />
                 <Detail label={t("Registration")} value={formatOptional(node.registered_at, formatDateTime, t("Not registered"))} />
                 <Detail label={t("Policy")}>
                   <StatusBadge tone={policyTone(node)}>{t(policyLabel(node))}</StatusBadge>

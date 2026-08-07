@@ -1,22 +1,31 @@
 # Relayward Operations
 
-This document covers the supported first-release deployment: one Linux AMD64 control-plane container behind an HTTPS reverse proxy, with persistent state in one Docker volume.
+This document covers the supported first-release deployment: one Linux AMD64 control-plane container with persistent state in one Docker volume. The center may be reached directly over HTTP or through an HTTPS reverse proxy.
 
 ## Install
 
-1. Copy `compose.yaml` and `.env.example` to a deployment directory.
-2. Rename `.env.example` to `.env` and pin `RELAYWARD_VERSION` to an explicit release such as `0.2.2`. Keep the default loopback bind unless the reverse proxy reaches Relayward over a private Docker network.
-3. Validate and start the deployment:
+1. Enter an empty deployment directory of your choice and download the repository's deployment examples:
+
+   ```bash
+   curl -fsSL \
+     https://raw.githubusercontent.com/Relayward/relayward/main/compose.yaml \
+     -o compose.yaml
+   curl -fsSL \
+     https://raw.githubusercontent.com/Relayward/relayward/main/.env.example \
+     -o .env
+   ```
+
+2. Review `.env` and keep `RELAYWARD_VERSION` pinned to an explicit release such as `0.2.2`. Keep the default loopback bind when using a host reverse proxy. For direct HTTP access, set `RELAYWARD_BIND_ADDRESS` to a host address reachable by administrators and Agents.
+3. Validate and start the deployment. The Compose pull policy retrieves the configured image during `up`:
 
    ```bash
    docker compose config --quiet
-   docker compose pull
    docker compose up -d
    docker compose exec relayward relayward healthcheck
    ```
 
-4. Configure the reverse proxy to terminate TLS and forward every path, including WebSocket upgrades, to Relayward. Do not expose the plain HTTP listener to the Internet.
-5. Open the HTTPS administration URL, create the single administrator, and store the generated recovery codes outside the Relayward data volume.
+4. Choose the access method. Direct HTTP is supported, but administrator credentials, sessions, subscription tokens, Agent registration credentials, commands, and telemetry are not encrypted in transit. An HTTPS reverse proxy is strongly recommended for untrusted networks and public deployments. When using a proxy, forward every path including WebSocket upgrades, preserve `Host`, and pass `X-Forwarded-Proto`.
+5. Open the selected HTTP or HTTPS administration URL and create the single administrator. TOTP is optional but strongly recommended on public or untrusted networks. If enabled, store its generated recovery codes outside the Relayward data volume.
 
 The center image is Linux AMD64 only. The container runs without root privileges, with a read-only root filesystem, dropped capabilities, `no-new-privileges`, and a PID limit. Plugins are administrator-approved native executables and share the Relayward account; the process and RPC limits reduce accidental resource exhaustion but are not a hostile-code sandbox.
 
@@ -85,7 +94,7 @@ Preferred recovery is to restore the complete data volume, including the origina
    ```
 
 3. Sign in with the administrator password. TOTP, recovery codes, sessions, saved private GitHub tokens, stored node-plugin configurations, and pending encrypted plugin commands have been discarded.
-4. Enable TOTP again, store the replacement recovery codes externally, replace private GitHub tokens from the key action in the Plugins view, and submit configuration again for every plugin instance marked failed. Nodes keep their last successfully applied runtime state until a replacement configuration is submitted.
+4. If TOTP was in use, enable it again and store the replacement recovery codes externally. Replace private GitHub tokens from the key action in the Plugins view, and submit configuration again for every plugin instance marked failed. Nodes keep their last successfully applied runtime state until a replacement configuration is submitted.
 5. Verify the system information reports encrypted secrets as available.
 
 Node, user, authorization, traffic, event, and audit data are not deleted by this reset. Tokens and credentials stored only as hashes do not depend on the instance key.
@@ -105,7 +114,7 @@ docker compose up -d
 docker compose exec relayward relayward healthcheck
 ```
 
-The reset revokes every administrator session. Sign in with the new password after the service starts. TOTP remains enabled and still requires the existing authenticator or a recovery code.
+The reset revokes every administrator session. Sign in with the new password after the service starts. If TOTP was enabled, it remains enabled and still requires the existing authenticator or a recovery code.
 
 ## Node Credential Recovery
 

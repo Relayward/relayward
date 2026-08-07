@@ -41,9 +41,8 @@ func NewService(database *store.Store, secrets *secretbox.Manager) *Service {
 }
 
 type NodeInput struct {
-	Name          string
-	PublicAddress string
-	Enabled       bool
+	Name    string
+	Enabled bool
 }
 
 type RegistrationToken struct {
@@ -183,11 +182,7 @@ func normalizeNode(id string, input NodeInput) (store.Node, error) {
 	if err != nil {
 		return store.Node{}, err
 	}
-	address, err := normalizedOptional("public_address", input.PublicAddress, 255)
-	if err != nil {
-		return store.Node{}, err
-	}
-	return store.Node{ID: id, Name: name, PublicAddress: address, Enabled: input.Enabled}, nil
+	return store.Node{ID: id, Name: name, Enabled: input.Enabled}, nil
 }
 
 func normalizeUser(id string, input UserInput) (store.User, error) {

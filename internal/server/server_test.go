@@ -172,6 +172,41 @@ func TestSetupSessionCSRFAndLogout(t *testing.T) {
 	}
 }
 
+func TestSessionCookiesFollowRequestTransport(t *testing.T) {
+	tests := []struct {
+		name    string
+		target  string
+		headers map[string]string
+		secure  bool
+	}{
+		{name: "plain HTTP", target: "http://panel.example.com/api/v1/setup", secure: false},
+		{name: "direct HTTPS", target: "https://panel.example.com/api/v1/setup", secure: true},
+		{name: "HTTPS reverse proxy", target: "http://relayward:8080/api/v1/setup", headers: map[string]string{"X-Forwarded-Proto": "https, http"}, secure: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			handler, _ := newTestHandler(t)
+			request := httptest.NewRequest(http.MethodPost, test.target,
+				strings.NewReader(`{"username":"admin","password":"correct horse battery staple"}`))
+			request.Header.Set("Content-Type", "application/json")
+			for name, value := range test.headers {
+				request.Header.Set(name, value)
+			}
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+			if response.Code != http.StatusCreated {
+				t.Fatalf("setup status = %d, body = %s", response.Code, response.Body.String())
+			}
+			for _, name := range []string{sessionCookieName, csrfCookieName} {
+				cookie := cookieByName(t, response.Result().Cookies(), name)
+				if cookie.Secure != test.secure {
+					t.Fatalf("%s Secure = %v, want %v", name, cookie.Secure, test.secure)
+				}
+			}
+		})
+	}
+}
+
 func TestLoginUsesStandardProblem(t *testing.T) {
 	handler, _ := newTestHandler(t)
 	setup := performRequest(handler, http.MethodPost, "/api/v1/setup",
@@ -209,7 +244,7 @@ func TestAdministratorSettingsCredentialsAndSessionsHTTPFlow(t *testing.T) {
 	settings := performRequest(handler, http.MethodPut, "/api/v1/settings", []byte(`{
       "session_lifetime_minutes":180,
       "timezone":"Asia/Shanghai",
-      "public_url":"https://panel.example.com",
+	      "public_url":"http://panel.example.com",
       "subscription_title":"Relayward Home",
       "support_url":"https://support.example.com",
       "profile_url":"https://example.com/account",
@@ -220,7 +255,7 @@ func TestAdministratorSettingsCredentialsAndSessionsHTTPFlow(t *testing.T) {
 	}
 	var settingsBody systemSettingsResponse
 	decodeResponse(t, settings, &settingsBody)
-	if settingsBody.Timezone != "Asia/Shanghai" || settingsBody.SessionLifetimeMinutes != 180 {
+	if settingsBody.Timezone != "Asia/Shanghai" || settingsBody.SessionLifetimeMinutes != 180 || settingsBody.PublicURL != "http://panel.example.com" {
 		t.Fatalf("settings body = %+v", settingsBody)
 	}
 
@@ -377,7 +412,7 @@ func TestNodeAndUserHTTPFlow(t *testing.T) {
 		t.Fatalf("node creation without CSRF status = %d", withoutCSRF.Code)
 	}
 	createNode := performRequest(handler, http.MethodPost, "/api/v1/nodes",
-		[]byte(`{"name":"Edge One","public_address":"edge.example.com"}`), jsonHeaders, sessionCookie)
+		[]byte(`{"name":"Edge One"}`), jsonHeaders, sessionCookie)
 	if createNode.Code != http.StatusCreated {
 		t.Fatalf("create node status = %d, body = %s", createNode.Code, createNode.Body.String())
 	}
@@ -402,7 +437,7 @@ func TestNodeAndUserHTTPFlow(t *testing.T) {
 		t.Fatalf("registration token response = %+v", tokenBody)
 	}
 	updateNode := performRequest(handler, http.MethodPut, "/api/v1/nodes/"+node.ID,
-		[]byte(`{"name":"Edge Renamed","public_address":"","enabled":false}`), jsonHeaders, sessionCookie)
+		[]byte(`{"name":"Edge Renamed","enabled":false}`), jsonHeaders, sessionCookie)
 	if updateNode.Code != http.StatusOK {
 		t.Fatalf("update node status = %d, body = %s", updateNode.Code, updateNode.Body.String())
 	}
@@ -742,7 +777,7 @@ func TestAgentRegistrationControlAndDuplicateSession(t *testing.T) {
 	if _, _, err := first.ReadMessage(); err == nil {
 		t.Fatal("superseded Agent session remained open")
 	}
-	disableBody := []byte(`{"name":"Edge","public_address":"","enabled":false}`)
+	disableBody := []byte(`{"name":"Edge","enabled":false}`)
 	disabled := performRequest(handler, http.MethodPut, "/api/v1/nodes/"+node.ID, disableBody, headers, sessionCookie)
 	if disabled.Code != http.StatusOK {
 		t.Fatalf("disable node status = %d, body = %s", disabled.Code, disabled.Body.String())
@@ -796,7 +831,7 @@ func TestAgentRegistrationControlAndDuplicateSession(t *testing.T) {
 		t.Fatalf("second credential revocation status = %d, body = %s", secondRevoke.Code, secondRevoke.Body.String())
 	}
 
-	enableBody := []byte(`{"name":"Edge","public_address":"","enabled":true}`)
+	enableBody := []byte(`{"name":"Edge","enabled":true}`)
 	enabled := performRequest(handler, http.MethodPut, "/api/v1/nodes/"+node.ID, enableBody, headers, sessionCookie)
 	if enabled.Code != http.StatusOK {
 		t.Fatalf("enable revoked node status = %d, body = %s", enabled.Code, enabled.Body.String())

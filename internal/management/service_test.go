@@ -20,17 +20,14 @@ func TestNodeLifecycleAndRegistrationToken(t *testing.T) {
 	fixed := time.Date(2026, time.August, 2, 8, 30, 0, 0, time.UTC)
 	service.now = func() time.Time { return fixed }
 
-	if _, err := service.CreateNode(ctx, NodeInput{Name: "edge", PublicAddress: "bad\naddress", Enabled: true}); fieldName(err) != "public_address" {
-		t.Fatalf("CreateNode() invalid address error = %v", err)
-	}
-	created, err := service.CreateNode(ctx, NodeInput{Name: " Edge One ", PublicAddress: " node.example.com ", Enabled: true})
+	created, err := service.CreateNode(ctx, NodeInput{Name: " Edge One ", Enabled: true})
 	if err != nil {
 		t.Fatalf("CreateNode() error = %v", err)
 	}
 	if _, err := uuid.Parse(created.ID); err != nil {
 		t.Fatalf("node ID = %q: %v", created.ID, err)
 	}
-	if created.Name != "Edge One" || created.PublicAddress != "node.example.com" || !created.Enabled {
+	if created.Name != "Edge One" || !created.Enabled {
 		t.Fatalf("created node = %+v", created)
 	}
 	if _, err := service.CreateNode(ctx, NodeInput{Name: "edge one", Enabled: true}); !errors.Is(err, store.ErrConflict) {

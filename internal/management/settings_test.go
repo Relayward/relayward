@@ -14,14 +14,14 @@ func TestUpdateSystemSettingsValidatesAndPersists(t *testing.T) {
 	ctx := context.Background()
 
 	value, err := service.UpdateSystemSettings(ctx, SystemSettingsInput{
-		SessionLifetimeMinutes: 180, Timezone: "Asia/Shanghai", PublicURL: "https://panel.example.com/",
-		SubscriptionTitle: "Relayward Home", SupportURL: "https://support.example.com/help",
-		ProfileURL: "https://example.com/account", SubscriptionRefreshHours: 24,
+		SessionLifetimeMinutes: 180, Timezone: "Asia/Shanghai", PublicURL: "http://panel.example.com/",
+		SubscriptionTitle: "Relayward Home", SupportURL: "http://support.example.com/help",
+		ProfileURL: "http://example.com/account", SubscriptionRefreshHours: 24,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if value.PublicURL != "https://panel.example.com" || value.Timezone != "Asia/Shanghai" ||
+	if value.PublicURL != "http://panel.example.com" || value.Timezone != "Asia/Shanghai" ||
 		value.SubscriptionTitle != "Relayward Home" || !value.UpdatedAt.Equal(fixed) {
 		t.Fatalf("settings = %+v", value)
 	}
@@ -33,7 +33,7 @@ func TestUpdateSystemSettingsValidatesAndPersists(t *testing.T) {
 	invalidInputs := []SystemSettingsInput{
 		{SessionLifetimeMinutes: 59, Timezone: "UTC", SubscriptionTitle: "Relayward"},
 		{SessionLifetimeMinutes: 60, Timezone: "Not/AZone", SubscriptionTitle: "Relayward"},
-		{SessionLifetimeMinutes: 60, Timezone: "UTC", PublicURL: "http://panel.example.com", SubscriptionTitle: "Relayward"},
+		{SessionLifetimeMinutes: 60, Timezone: "UTC", PublicURL: "ftp://panel.example.com", SubscriptionTitle: "Relayward"},
 		{SessionLifetimeMinutes: 60, Timezone: "UTC", PublicURL: "https://panel.example.com/path", SubscriptionTitle: "Relayward"},
 		{SessionLifetimeMinutes: 60, Timezone: "UTC", SubscriptionTitle: ""},
 	}

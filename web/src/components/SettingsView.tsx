@@ -1,5 +1,5 @@
 import { type FormEvent, type ReactNode, useEffect, useState } from "react";
-import { Globe2, Save, Settings2, WalletCards } from "lucide-react";
+import { AlertTriangle, Globe2, Save, Settings2, WalletCards } from "lucide-react";
 
 import { APIError, getSystemSettings, updateSystemSettings, type SystemSettings } from "../api";
 import { useI18n } from "../i18n";
@@ -28,7 +28,7 @@ export function SettingsView() {
     getSystemSettings().then((settings) => {
       if (!active) return;
       setValue(settings);
-      setDraft(editable(settings));
+      setDraft(editable(settings, window.location.origin));
     }, (cause) => {
       if (active) setError(errorMessage(cause));
     });
@@ -49,7 +49,7 @@ export function SettingsView() {
     try {
       const updated = await updateSystemSettings(draft);
       setValue(updated);
-      setDraft(editable(updated));
+      setDraft(editable(updated, window.location.origin));
       setSaved(true);
     } catch (cause) {
       const errorTab = settingsTabForError(cause);
@@ -102,11 +102,17 @@ export function SettingsView() {
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center gap-2"><Globe2 className="size-4" />{t("Public access")}</CardTitle>
-                <CardDescription>{t("Canonical HTTPS origin used when generating public links.")}</CardDescription>
+                <CardDescription>{t("Canonical HTTP or HTTPS origin used when generating public links.")}</CardDescription>
               </CardHeader>
               <CardContent>
-                <SettingField id="settings-public-url" label={t("Public URL")} description={t("Leave empty to use the address opened in the browser.")}>
+                <SettingField id="settings-public-url" label={t("Public URL")} description={t("Defaults to the address currently opened in the browser. You can change it.")}>
                   <Input id="settings-public-url" type="url" placeholder="https://panel.example.com" maxLength={2048} value={draft?.public_url ?? ""} onChange={(event) => update("public_url", event.target.value)} />
+                  {draft?.public_url.trim().toLowerCase().startsWith("http://") ? (
+                    <p className="m-0 flex items-start gap-2 text-sm text-warning-strong" role="status">
+                      <AlertTriangle className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+                      <span>{t("This Public URL uses HTTP. Public links and Agent connections will not be encrypted in transit.")}</span>
+                    </p>
+                  ) : null}
                 </SettingField>
               </CardContent>
             </Card>
@@ -161,9 +167,13 @@ function SettingField({ id, label, description, suffix, children }: {
   );
 }
 
-function editable(value: SystemSettings): EditableSettings {
+function editable(value: SystemSettings, currentOrigin: string): EditableSettings {
   const { updated_at: _, ...settings } = value;
-  return settings;
+  return { ...settings, public_url: defaultPublicURL(settings.public_url, currentOrigin) };
+}
+
+export function defaultPublicURL(configuredURL: string, currentOrigin: string): string {
+  return configuredURL || currentOrigin;
 }
 
 function errorMessage(cause: unknown): string {
@@ -171,10 +181,10 @@ function errorMessage(cause: unknown): string {
     switch (cause.violations[0]?.field) {
       case "session_lifetime_minutes": return "Session lifetime must be between 60 and 525600 minutes.";
       case "timezone": return "Enter a valid IANA time zone.";
-      case "public_url": return "Public URL must be an HTTPS origin without a path, query, fragment, or credentials.";
+      case "public_url": return "Public URL must be an HTTP or HTTPS origin without a path, query, fragment, or credentials.";
       case "subscription_title": return "Subscription title must contain 1 to 100 characters on one line.";
-      case "support_url": return "Support URL must be an absolute HTTPS URL without credentials, query, or fragment.";
-      case "profile_url": return "Profile URL must be an absolute HTTPS URL without credentials, query, or fragment.";
+      case "support_url": return "Support URL must be an absolute HTTP or HTTPS URL without credentials, query, or fragment.";
+      case "profile_url": return "Profile URL must be an absolute HTTP or HTTPS URL without credentials, query, or fragment.";
       case "subscription_refresh_hours": return "Refresh interval must be between 0 and 8760 hours.";
       default: return cause.message;
     }

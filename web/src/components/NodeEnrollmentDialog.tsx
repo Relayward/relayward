@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { CheckCircle2, Clipboard, LoaderCircle, RefreshCw, Server } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Clipboard, LoaderCircle, RefreshCw, Server } from "lucide-react";
 
 import {
   APIError,
@@ -124,7 +124,7 @@ export function NodeEnrollmentDialog({ node, mode, onClose, onNodeUpdated }: {
             <span className="flex size-9 shrink-0 items-center justify-center rounded-md bg-primary-soft text-primary"><Server /></span>
             <span className="grid min-w-0 gap-0.5">
               <strong className="truncate text-sm font-semibold">{node.name}</strong>
-              <small className="truncate text-xs text-muted-foreground">{currentNode.hostname || currentNode.public_address || t("Not registered")}</small>
+              <small className="truncate text-xs text-muted-foreground">{currentNode.hostname || t("Not registered")}</small>
             </span>
           </span>
           <StatusBadge tone={phase.tone}>{phase.busy ? <LoaderCircle className="mr-1 inline size-3 animate-spin" /> : null}{t(phase.label)}</StatusBadge>
@@ -151,6 +151,12 @@ export function NodeEnrollmentDialog({ node, mode, onClose, onNodeUpdated }: {
               <span className="text-xs text-muted-foreground">{bundle.install.serverURL}</span>
             </div>
             <pre className="m-0 max-w-full overflow-x-auto rounded-lg border bg-muted p-4 text-sm leading-6"><code>{bundle.install.command}</code></pre>
+            {bundle.install.insecure ? (
+              <p className="m-0 flex items-start gap-2 rounded-lg border border-warning/40 bg-warning/10 px-3 py-2.5 text-sm text-warning-strong" role="status">
+                <AlertTriangle className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+                <span>{t("This Agent will connect over unencrypted HTTP. Registration credentials, commands, and telemetry can be intercepted or changed in transit.")}</span>
+              </p>
+            ) : null}
             <dl className="grid gap-2 text-sm sm:grid-cols-2">
               <div className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2.5"><dt className="text-muted-foreground">{t("Token expires")}</dt><dd className="m-0 text-right">{formatDateTime(bundle.token.expires_at)}</dd></div>
               <div className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2.5"><dt className="text-muted-foreground">{t("Supported systems")}</dt><dd className="m-0 text-right">Debian / Alpine · AMD64</dd></div>

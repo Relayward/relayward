@@ -62,7 +62,17 @@ func TestAuditOutcomeNormalizationMigration(t *testing.T) {
 			t.Fatalf("AppendAudit(%q) error = %v", outcome, err)
 		}
 	}
-	if _, err := database.db.ExecContext(ctx, migrations[len(migrations)-1].sql); err != nil {
+	var normalizationSQL string
+	for _, item := range migrations {
+		if item.version == 12 {
+			normalizationSQL = item.sql
+			break
+		}
+	}
+	if normalizationSQL == "" {
+		t.Fatal("audit outcome normalization migration is missing")
+	}
+	if _, err := database.db.ExecContext(ctx, normalizationSQL); err != nil {
 		t.Fatalf("normalize audit outcomes: %v", err)
 	}
 	entries, err := database.ListAudit(ctx, 0, 10)

@@ -13,15 +13,13 @@ import (
 )
 
 type nodeRequest struct {
-	Name          string `json:"name"`
-	PublicAddress string `json:"public_address"`
-	Enabled       *bool  `json:"enabled,omitempty"`
+	Name    string `json:"name"`
+	Enabled *bool  `json:"enabled,omitempty"`
 }
 
 type nodeResponse struct {
 	ID             string              `json:"id"`
 	Name           string              `json:"name"`
-	PublicAddress  string              `json:"public_address"`
 	Enabled        bool                `json:"enabled"`
 	AgentStatus    string              `json:"agent_status"`
 	Hostname       string              `json:"hostname"`
@@ -84,7 +82,7 @@ func (server *Server) createNode(w http.ResponseWriter, request *http.Request, _
 	if input.Enabled != nil {
 		enabled = *input.Enabled
 	}
-	value, err := server.management.CreateNode(request.Context(), management.NodeInput{Name: input.Name, PublicAddress: input.PublicAddress, Enabled: enabled})
+	value, err := server.management.CreateNode(request.Context(), management.NodeInput{Name: input.Name, Enabled: enabled})
 	if err != nil {
 		server.resourceError(w, request, err, "Node")
 		return
@@ -104,7 +102,7 @@ func (server *Server) updateNode(w http.ResponseWriter, request *http.Request, _
 		return
 	}
 	value, err := server.management.UpdateNode(request.Context(), request.PathValue("node_id"), management.NodeInput{
-		Name: input.Name, PublicAddress: input.PublicAddress, Enabled: *input.Enabled,
+		Name: input.Name, Enabled: *input.Enabled,
 	})
 	if err != nil {
 		server.resourceError(w, request, err, "Node")
@@ -182,7 +180,7 @@ func (server *Server) nodeViewWithPolicy(value store.Node, policy store.NodePoli
 		}
 	}
 	return nodeResponse{
-		ID: value.ID, Name: value.Name, PublicAddress: value.PublicAddress, Enabled: value.Enabled,
+		ID: value.ID, Name: value.Name, Enabled: value.Enabled,
 		AgentStatus: status, Hostname: value.Hostname, AgentVersion: value.AgentVersion,
 		AgentOS: value.AgentOS, AgentArch: value.AgentArch, Capabilities: capabilities,
 		AgentStartedAt: value.AgentStartedAt, Policy: policyView,

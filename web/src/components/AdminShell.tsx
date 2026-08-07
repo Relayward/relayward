@@ -39,6 +39,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Input } from "@/components/ui/input"
+import { InsecureTransportWarning } from "@/components/InsecureTransportWarning"
 import { Separator } from "@/components/ui/separator"
 import {
   Sidebar,
@@ -128,6 +129,7 @@ export function AdminShell({ view, onViewChange, session, system, busy, onLogout
       />
       <SidebarInset>
         <AdminHeader view={view} onViewChange={onViewChange} version={system.version} />
+        <InsecureTransportWarning className="mx-4 mt-4 lg:mx-6" />
         <div className="flex flex-1 flex-col">
           <div className="@container/main flex flex-1 flex-col gap-2">
             <main className="flex flex-col gap-4 py-4 md:gap-6 md:py-6">

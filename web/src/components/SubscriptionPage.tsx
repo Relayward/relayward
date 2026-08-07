@@ -56,7 +56,6 @@ export function SubscriptionPage({ token }: { token: string }) {
           <div className="min-w-0">
             <p className="m-0 text-xs font-semibold text-muted-foreground">{subscription.user_name} · {subscription.node_name}</p>
             <h1 className="mt-1 mb-2 text-2xl leading-tight font-bold" id="subscription-title">{subscription.title}</h1>
-            {subscription.node_address ? <p className="m-0 break-all text-xs text-muted-foreground">{subscription.node_address}</p> : null}
           </div>
           <StatusBadge tone={statusTone(subscription.status)} className="shrink-0">{status}</StatusBadge>
         </section>

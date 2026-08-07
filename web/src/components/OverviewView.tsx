@@ -179,7 +179,7 @@ export function OverviewView({ system, session, onNavigate }: {
                     return (
                       <TableRow key={node.id} className="hover:bg-muted/30 transition-colors">
                         <TableCell className="font-medium py-5 px-6">
-                          <span className="grid gap-0.5"><strong className="font-semibold">{node.name}</strong><small className="text-xs text-muted-foreground">{node.hostname || node.public_address || t("Not reported")}</small></span>
+                          <span className="grid gap-0.5"><strong className="font-semibold">{node.name}</strong><small className="text-xs text-muted-foreground">{node.hostname || t("Not reported")}</small></span>
                         </TableCell>
                         <TableCell className="py-5 px-6"><AgentState node={node} now={now} t={t} /></TableCell>
                         <TableCell className="py-5 px-6"><RuntimeState instances={instances} t={t} /></TableCell>

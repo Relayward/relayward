@@ -11,6 +11,7 @@ import (
 	"mime"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/Relayward/relayward-sdk/protocol"
@@ -35,7 +36,6 @@ type Options struct {
 	Management        *management.Service
 	Secrets           *secretbox.Manager
 	Logger            *slog.Logger
-	SecureCookie      bool
 	WebAssets         fs.FS
 	PolicyCoordinator interface {
 		ReconcileNode(context.Context, string) (bool, error)
@@ -50,7 +50,6 @@ type Server struct {
 	management        *management.Service
 	secrets           *secretbox.Manager
 	logger            *slog.Logger
-	secureCookie      bool
 	webAssets         fs.FS
 	loginLimiter      *attemptLimiter
 	agentSessions     *agentSessionHub
@@ -74,7 +73,6 @@ func New(options Options) http.Handler {
 		management:        options.Management,
 		secrets:           options.Secrets,
 		logger:            options.Logger,
-		secureCookie:      options.SecureCookie,
 		webAssets:         options.WebAssets,
 		loginLimiter:      newAttemptLimiter(5, 5*time.Minute),
 		agentSessions:     newAgentSessionHub(),
@@ -224,7 +222,7 @@ func (server *Server) setup(w http.ResponseWriter, request *http.Request) {
 		server.internalError(w, request, err)
 		return
 	}
-	server.setCredentials(w, credentials)
+	server.setCredentials(w, request, credentials)
 	writeJSON(w, http.StatusCreated, sessionResponse(credentials.Admin.Username, credentials.Admin.TOTPEnabled, credentials.ExpiresAt, server.secrets.Available()))
 }
 
@@ -249,7 +247,7 @@ func (server *Server) login(w http.ResponseWriter, request *http.Request) {
 	switch {
 	case err == nil:
 		server.loginLimiter.Reset(limiterKey)
-		server.setCredentials(w, credentials)
+		server.setCredentials(w, request, credentials)
 		writeJSON(w, http.StatusOK, sessionResponse(credentials.Admin.Username, credentials.Admin.TOTPEnabled, credentials.ExpiresAt, server.secrets.Available()))
 	case errors.Is(err, auth.ErrSecondFactorRequired):
 		writeProblemWithViolations(w, http.StatusUnauthorized, protocol.ErrorUnauthenticated, "A TOTP or recovery code is required.", false,
@@ -272,7 +270,7 @@ func (server *Server) logout(w http.ResponseWriter, request *http.Request, authe
 		server.internalError(w, request, err)
 		return
 	}
-	server.clearCredentials(w)
+	server.clearCredentials(w, request)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -299,7 +297,7 @@ func (server *Server) updateUsername(w http.ResponseWriter, request *http.Reques
 		server.sensitiveActionError(w, request, err)
 		return
 	}
-	server.clearCredentials(w)
+	server.clearCredentials(w, request)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -321,7 +319,7 @@ func (server *Server) updatePassword(w http.ResponseWriter, request *http.Reques
 		server.sensitiveActionError(w, request, err)
 		return
 	}
-	server.clearCredentials(w)
+	server.clearCredentials(w, request)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -361,7 +359,7 @@ func (server *Server) revokeSession(w http.ResponseWriter, request *http.Request
 		return
 	}
 	if current {
-		server.clearCredentials(w)
+		server.clearCredentials(w, request)
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -435,7 +433,7 @@ func (server *Server) disableTOTP(w http.ResponseWriter, request *http.Request, 
 		server.sensitiveActionError(w, request, err)
 		return
 	}
-	server.clearCredentials(w)
+	server.clearCredentials(w, request)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -475,7 +473,7 @@ func (server *Server) withAuthentication(next authenticatedHandler) http.Handler
 		}
 		authenticated, err := server.auth.Authenticate(request.Context(), cookie.Value)
 		if errors.Is(err, auth.ErrInvalidCredentials) {
-			server.clearCredentials(w)
+			server.clearCredentials(w, request)
 			writeProblem(w, http.StatusUnauthorized, protocol.ErrorUnauthenticated, "Authentication required.", false)
 			return
 		}
@@ -497,23 +495,33 @@ func (server *Server) withCSRF(next authenticatedHandler) authenticatedHandler {
 	}
 }
 
-func (server *Server) setCredentials(w http.ResponseWriter, credentials auth.Credentials) {
+func (server *Server) setCredentials(w http.ResponseWriter, request *http.Request, credentials auth.Credentials) {
 	maxAge := int(time.Until(credentials.ExpiresAt).Seconds())
 	if maxAge < 1 {
 		maxAge = 1
 	}
+	secure := requestUsesHTTPS(request)
 	http.SetCookie(w, &http.Cookie{Name: sessionCookieName, Value: credentials.SessionToken, Path: "/", MaxAge: maxAge,
-		Expires: credentials.ExpiresAt, HttpOnly: true, Secure: server.secureCookie, SameSite: http.SameSiteStrictMode})
+		Expires: credentials.ExpiresAt, HttpOnly: true, Secure: secure, SameSite: http.SameSiteStrictMode})
 	http.SetCookie(w, &http.Cookie{Name: csrfCookieName, Value: credentials.CSRFToken, Path: "/", MaxAge: maxAge,
-		Expires: credentials.ExpiresAt, HttpOnly: false, Secure: server.secureCookie, SameSite: http.SameSiteStrictMode})
+		Expires: credentials.ExpiresAt, HttpOnly: false, Secure: secure, SameSite: http.SameSiteStrictMode})
 }
 
-func (server *Server) clearCredentials(w http.ResponseWriter) {
+func (server *Server) clearCredentials(w http.ResponseWriter, request *http.Request) {
 	expires := time.Unix(1, 0)
+	secure := requestUsesHTTPS(request)
 	http.SetCookie(w, &http.Cookie{Name: sessionCookieName, Path: "/", MaxAge: -1, Expires: expires,
-		HttpOnly: true, Secure: server.secureCookie, SameSite: http.SameSiteStrictMode})
+		HttpOnly: true, Secure: secure, SameSite: http.SameSiteStrictMode})
 	http.SetCookie(w, &http.Cookie{Name: csrfCookieName, Path: "/", MaxAge: -1, Expires: expires,
-		HttpOnly: false, Secure: server.secureCookie, SameSite: http.SameSiteStrictMode})
+		HttpOnly: false, Secure: secure, SameSite: http.SameSiteStrictMode})
+}
+
+func requestUsesHTTPS(request *http.Request) bool {
+	if request.TLS != nil {
+		return true
+	}
+	forwardedProto, _, _ := strings.Cut(request.Header.Get("X-Forwarded-Proto"), ",")
+	return strings.EqualFold(strings.TrimSpace(forwardedProto), "https")
 }
 
 func (server *Server) internalError(w http.ResponseWriter, request *http.Request, err error) {

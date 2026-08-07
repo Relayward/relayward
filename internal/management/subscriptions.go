@@ -129,7 +129,7 @@ func (service *Service) renderSubscriptionSnapshot(ctx context.Context, snapshot
 		pluginID := snapshot.Services[start].PluginID
 		request := &centerpluginv1.RenderSubscriptionRequest{
 			AuthorizationId: snapshot.Authorization.ID, NodeId: snapshot.Authorization.NodeID,
-			PublicAddress: snapshot.NodeAddress, Services: make([]*centerpluginv1.SubscriptionServiceBinding, end-start),
+			Services: make([]*centerpluginv1.SubscriptionServiceBinding, end-start),
 		}
 		for index, bound := range snapshot.Services[start:end] {
 			if bound.PluginState != "active" || bound.PluginHealth != "healthy" ||
@@ -176,11 +176,10 @@ func subscriptionInputDigest(snapshot store.SubscriptionSnapshot) (string, error
 		AuthorizationID        string         `json:"authorization_id"`
 		AuthorizationUpdatedAt time.Time      `json:"authorization_updated_at"`
 		NodeID                 string         `json:"node_id"`
-		NodeAddress            string         `json:"node_address"`
 		Services               []serviceInput `json:"services"`
 	}{
 		AuthorizationID: snapshot.Authorization.ID, AuthorizationUpdatedAt: snapshot.Authorization.UpdatedAt,
-		NodeID: snapshot.Authorization.NodeID, NodeAddress: snapshot.NodeAddress,
+		NodeID: snapshot.Authorization.NodeID,
 	}
 	input.Services = make([]serviceInput, len(snapshot.Services))
 	for index, value := range snapshot.Services {

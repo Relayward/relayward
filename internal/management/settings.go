@@ -48,15 +48,15 @@ func normalizeSystemSettings(input SystemSettingsInput) (store.SystemSettings, e
 	if _, err := time.LoadLocation(timezone); err != nil {
 		return store.SystemSettings{}, invalid("timezone", "must be a valid IANA time zone")
 	}
-	publicURL, err := normalizeHTTPSURL("public_url", input.PublicURL, true)
+	publicURL, err := normalizeWebURL("public_url", input.PublicURL, true)
 	if err != nil {
 		return store.SystemSettings{}, err
 	}
-	supportURL, err := normalizeHTTPSURL("support_url", input.SupportURL, false)
+	supportURL, err := normalizeWebURL("support_url", input.SupportURL, false)
 	if err != nil {
 		return store.SystemSettings{}, err
 	}
-	profileURL, err := normalizeHTTPSURL("profile_url", input.ProfileURL, false)
+	profileURL, err := normalizeWebURL("profile_url", input.ProfileURL, false)
 	if err != nil {
 		return store.SystemSettings{}, err
 	}
@@ -74,17 +74,17 @@ func normalizeSystemSettings(input SystemSettingsInput) (store.SystemSettings, e
 	}, nil
 }
 
-func normalizeHTTPSURL(field, raw string, originOnly bool) (string, error) {
+func normalizeWebURL(field, raw string, originOnly bool) (string, error) {
 	value := strings.TrimSpace(raw)
 	if value == "" {
 		return "", nil
 	}
 	if len(value) > 2048 || strings.ContainsAny(value, "\r\n") {
-		return "", invalid(field, "must be a valid HTTPS URL")
+		return "", invalid(field, "must be a valid HTTP or HTTPS URL")
 	}
 	parsed, err := url.Parse(value)
-	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil {
-		return "", invalid(field, "must be an absolute HTTPS URL without credentials")
+	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Hostname() == "" || parsed.User != nil {
+		return "", invalid(field, "must be an absolute HTTP or HTTPS URL without credentials")
 	}
 	if originOnly && parsed.Path != "" && parsed.Path != "/" {
 		return "", invalid(field, "must not contain a path")

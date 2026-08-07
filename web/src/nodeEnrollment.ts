@@ -29,18 +29,10 @@ function resolveAgentServerURL(value: string): Pick<AgentInstallCommand, "server
   if (parsed.username || parsed.password || parsed.pathname !== "/" || parsed.search || parsed.hash) {
     throw new Error("The Agent server URL must be an origin without credentials, path, query, or fragment.");
   }
-  if (parsed.protocol === "https:") {
-    return { serverURL: parsed.origin, insecure: false };
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new Error("The Agent server URL must use HTTP or HTTPS.");
   }
-  if (parsed.protocol === "http:" && isLoopback(parsed.hostname)) {
-    return { serverURL: parsed.origin, insecure: true };
-  }
-  throw new Error("Set an HTTPS Public URL before registering an Agent.");
-}
-
-function isLoopback(hostname: string): boolean {
-  const normalized = hostname.toLowerCase();
-  return normalized === "localhost" || normalized === "127.0.0.1" || normalized === "[::1]";
+  return { serverURL: parsed.origin, insecure: parsed.protocol === "http:" };
 }
 
 function shellQuote(value: string): string {

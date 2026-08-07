@@ -21,16 +21,16 @@ describe("Agent enrollment command", () => {
     expect(result.command).not.toContain("--allow-insecure");
   });
 
-  it("allows explicit insecure transport only for loopback development", () => {
-    const result = buildAgentInstallCommand("rwr_example", "", "http://127.0.0.1:18084");
+  it("adds explicit insecure transport permission for an HTTP center", () => {
+    const result = buildAgentInstallCommand("rwr_example", "http://192.0.2.10:8080", "https://ignored.example.com");
 
     expect(result.insecure).toBe(true);
-    expect(result.command).toContain("--server-url 'http://127.0.0.1:18084' --allow-insecure");
+    expect(result.command).toContain("--server-url 'http://192.0.2.10:8080' --allow-insecure");
   });
 
-  it("rejects a non-loopback HTTP center", () => {
-    expect(() => buildAgentInstallCommand("rwr_example", "", "http://192.0.2.10:8080"))
-      .toThrow("Set an HTTPS Public URL before registering an Agent.");
+  it("rejects unsupported URL schemes", () => {
+    expect(() => buildAgentInstallCommand("rwr_example", "ftp://panel.example.com", ""))
+      .toThrow("The Agent server URL must use HTTP or HTTPS.");
   });
 
   it("rejects a public URL with a path", () => {

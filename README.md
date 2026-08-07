@@ -45,30 +45,32 @@ Relayward Agent（原生系统服务）
 
 | 组件 | 支持的环境 |
 | --- | --- |
-| 中心 | Linux AMD64、Docker Engine、Docker Compose v2 |
-| 公网访问 | 域名以及支持 WebSocket 的 HTTPS 反向代理 |
+| 中心 | Linux AMD64、Docker Engine、Docker Compose v2、curl |
+| 中心访问 | 可达的 HTTP 地址，或域名以及支持 WebSocket 的 HTTPS 反向代理 |
 | 节点 | 运行 Debian/systemd 或 Alpine/OpenRC 的 Linux AMD64 |
-| 网络 | 节点需要通过 HTTPS 访问中心、GitHub Releases 和运行时发布源 |
+| 网络 | 节点需要通过 HTTP(S) 访问中心，并通过 HTTPS 访问 GitHub Releases 和运行时发布源 |
 
-示例部署将 Relayward 绑定到 `127.0.0.1:8080`，请勿将这个纯 HTTP 监听地址直接暴露到互联网。
+示例部署默认将 Relayward 绑定到 `127.0.0.1:8080`。直接使用 HTTP 时，需要在 `.env` 中将 `RELAYWARD_BIND_ADDRESS` 改为客户端可达的宿主机地址；HTTP 传输不会加密登录凭据、订阅令牌和 Agent 数据。
 
 ## 快速开始
 
 ### 1. 部署中心
 
-在中心服务器上克隆仓库并创建部署环境：
+进入你选定的空部署目录，直接下载仓库提供的 Compose 和环境变量示例：
 
 ```bash
-git clone --depth 1 https://github.com/Relayward/relayward.git
-cd relayward
-cp .env.example .env
+curl -fsSL \
+  https://raw.githubusercontent.com/Relayward/relayward/main/compose.yaml \
+  -o compose.yaml
+curl -fsSL \
+  https://raw.githubusercontent.com/Relayward/relayward/main/.env.example \
+  -o .env
 ```
 
 启动前检查 `.env`。`RELAYWARD_VERSION` 必须是 [Relayward Releases](https://github.com/Relayward/relayward/releases) 中已经存在的镜像标签；生产环境应使用明确的版本号，不要使用 `latest`。
 
 ```bash
 docker compose config --quiet
-docker compose pull
 docker compose up -d
 docker compose exec relayward relayward healthcheck
 docker compose logs --tail=100 relayward
@@ -76,9 +78,11 @@ docker compose logs --tail=100 relayward
 
 确认健康检查成功后再继续。所有持久化状态都保存在 `relayward-data` Docker 数据卷中。
 
-### 2. 配置 HTTPS
+### 2. 配置访问方式
 
-使用反向代理终止 TLS，并将所有路径（包括 WebSocket 升级请求）转发到 `127.0.0.1:8080`。最小 Caddy 配置如下：
+Relayward 支持直接使用 HTTP，HTTPS 不是启动和使用系统的前置条件。通过 HTTP 使用管理端和 Agent 时，登录凭据、会话数据、注册凭据、命令及遥测会以明文传输；界面会持续显示安全警告。只应在你接受该风险的网络中使用 HTTP。
+
+强烈建议使用反向代理终止 TLS，并将所有路径（包括 WebSocket 升级请求）转发到 `127.0.0.1:8080`。最小 Caddy 配置如下：
 
 ```caddyfile
 relayward.example.com {
@@ -86,21 +90,21 @@ relayward.example.com {
 }
 ```
 
-使用 Nginx 或主机管理面板时，需要保留原始 `Host` 请求头并启用 HTTP/1.1 WebSocket 转发。Relayward 的生产环境会话 Cookie 要求使用 HTTPS。
+使用 Nginx 或主机管理面板时，需要保留原始 `Host` 请求头、传递 `X-Forwarded-Proto` 并启用 HTTP/1.1 WebSocket 转发。Relayward 会根据请求协议自动设置会话 Cookie；HTTPS 请求使用 `Secure` Cookie，HTTP 请求使用普通 Cookie。
 
 ### 3. 初始化管理员
 
-在浏览器中打开 `https://relayward.example.com` 并创建唯一的管理员账号。密码至少需要 12 个字符。
+在浏览器中打开选定的 HTTP 或 HTTPS 地址并创建唯一的管理员账号。密码至少需要 12 个字符。
 
 登录后：
 
-1. 打开**设置**，将**中心公开 URL** 设置为 HTTPS 源地址，例如 `https://relayward.example.com`。不要包含路径、查询参数、凭据或应用路由。
+1. 打开**设置**，确认自动填入的**中心公开 URL**；它来自当前浏览器访问地址，也可以改为其他 HTTP 或 HTTPS 源地址。不要包含路径、查询参数、凭据或应用路由。
 2. 设置部署所在时区。
-3. 打开**安全**，启用 TOTP，并将生成的恢复代码保存在 Relayward 数据卷之外。
+3. 可选：打开**安全**并启用 TOTP。公网或不受信任网络中的部署强烈建议启用；启用后请将生成的恢复代码保存在 Relayward 数据卷之外。
 
 ### 4. 注册节点
 
-进入**节点**，选择**添加节点**，填写节点名称以及订阅中使用的公网域名或 IP，然后选择**注册 Agent**。Relayward 会生成一条短期有效且只能使用一次的 root 安装命令。
+进入**节点**，选择**添加节点**，填写节点名称，然后选择**注册 Agent**。Relayward 会生成一条短期有效且只能使用一次的 root 安装命令。
 
 在节点上运行生成的命令。安装程序会下载最新的官方 [Relayward Agent](https://github.com/Relayward/relayward-agent) 版本、校验文件摘要、安装对应的 systemd 或 OpenRC 服务、注册节点并启动 Agent。
 
@@ -116,7 +120,7 @@ rc-service relayward-agent status
 tail -n 100 /var/log/messages
 ```
 
-Agent 不需要入站防火墙规则，它会通过 HTTPS 主动连接中心。
+Agent 不需要入站防火墙规则，它会通过中心公开 URL 配置的 HTTP 或 HTTPS 地址主动连接中心。
 
 ### 5. 选择并安装插件
 
@@ -141,7 +145,7 @@ Relayward 负责授权状态、流量信息和统一订阅入口；订阅中的�
 部署完成后，逐项确认：
 
 - `docker compose exec relayward relayward healthcheck` 执行成功。
-- 管理页面只能通过 HTTPS 访问。
+- 管理页面可通过选定的 HTTP 或 HTTPS 地址访问；使用 HTTP 时页面会显示明文传输警告。
 - 节点显示在线，并能看到 Agent 版本。
 - 已安装的中心插件显示为有效且健康。
 - 策略下发后，授权显示为有效状态。
@@ -177,13 +181,13 @@ npm run build
 在本地运行后端和 Vite 开发服务器：
 
 ```bash
-go run ./cmd/relayward serve -listen 127.0.0.1:8080 -data ./data -insecure-cookie
+go run ./cmd/relayward serve -listen 127.0.0.1:8080 -data ./data
 
 cd web
 npm run dev
 ```
 
-`-insecure-cookie` 仅用于本地回环地址开发。Vite 开发服务器会将 API 请求代理到 `127.0.0.1:8080`。
+Vite 开发服务器会将 API 请求代理到 `127.0.0.1:8080`。Relayward 会根据浏览器请求的协议自动选择会话 Cookie 的安全属性。
 
 ## 相关项目
 
@@ -193,7 +197,7 @@ npm run dev
 
 ## 安全
 
-插件是受信任的原生可执行程序，只能从可信仓库安装。不要在 Issue 中公开注册令牌、订阅链接、恢复代码、GitHub 令牌、私有配置或 Relayward 数据卷。
+插件是受信任的原生可执行程序，只能从可信仓库安装。HTTP 可以完整使用，但不会提供传输加密；对不受信任的网络和公网部署应使用 HTTPS。不要在 Issue 中公开注册令牌、订阅链接、恢复代码、GitHub 令牌、私有配置或 Relayward 数据卷。
 
 请通过仓库的 [GitHub Security Advisories](https://github.com/Relayward/relayward/security/advisories/new) 私下报告安全问题。
 

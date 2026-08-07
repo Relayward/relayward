@@ -69,7 +69,6 @@ function node(overrides: Partial<Node> = {}): Node {
   return {
     id: "node-1",
     name: "Edge",
-    public_address: "edge.example.com",
     enabled: true,
     agent_status: "online",
     hostname: "edge",

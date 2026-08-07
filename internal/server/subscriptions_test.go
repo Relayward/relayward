@@ -47,7 +47,7 @@ func TestSubscriptionHTTPFormatsAnnouncementAndInactiveGate(t *testing.T) {
 		t.Fatal(err)
 	}
 	now := time.Now().UTC().Truncate(time.Second)
-	node, err := manager.CreateNode(t.Context(), management.NodeInput{Name: "Edge", PublicAddress: "edge.example.com", Enabled: true})
+	node, err := manager.CreateNode(t.Context(), management.NodeInput{Name: "Edge", Enabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}

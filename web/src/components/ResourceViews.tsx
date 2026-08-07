@@ -53,7 +53,7 @@ export function NodesView() {
   const updating = items.find((node) => node.id === updatingNodeID);
   const inspecting = items.find((node) => node.id === inspectingNodeID);
   const enrolling = items.find((node) => node.id === enrollment?.nodeID);
-  const visibleItems = items.filter((node) => [node.name, node.public_address, node.agent_os, node.agent_status]
+  const visibleItems = items.filter((node) => [node.name, node.hostname, node.agent_os, node.agent_status]
     .some((value) => value?.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase())));
   const updateListedNode = useCallback((node: Node) => {
     setItems((current) => current.map((item) => item.id === node.id ? node : item).sort(byName));
@@ -100,8 +100,8 @@ export function NodesView() {
         title={t("Node list")}
         description={t("{count} nodes", { count: visibleItems.length })}
         actions={<><Input className="max-w-sm" value={search} onChange={(event) => setSearch(event.target.value)} placeholder={t("Search nodes...")} /><Button className="shrink-0" onClick={() => setEditing("new")} type="button"><Plus />{t("Add node")}</Button></>}
-        tableClassName="min-w-[1040px]"
-        headers={["Node", "Address", "Agent", "Policy", "Update", "Last seen", "Actions"].map((value) => t(value))}
+        tableClassName="min-w-[920px]"
+        headers={["Node", "Agent", "Policy", "Update", "Last seen", "Actions"].map((value) => t(value))}
         loading={loading}
         empty={t("No nodes have been created.")}
         error={error}
@@ -109,7 +109,6 @@ export function NodesView() {
         {visibleItems.map((node) => (
           <TableRow key={node.id}>
             <TableCell><span className="flex min-w-[170px] items-center gap-3"><span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-primary-soft text-primary"><Server size={16} /></span><span className="grid min-w-0 gap-0.5"><strong className="truncate font-semibold">{node.name}</strong><small className="truncate text-xs text-muted-foreground">{[node.agent_os, node.agent_arch].filter(Boolean).join(" · ") || t("Not reported")}</small></span></span></TableCell>
-            <TableCell className="text-muted-foreground">{node.public_address || t("Not set")}</TableCell>
             <TableCell><span className="grid gap-1"><Status value={t(agentStatusLabel(node.agent_status))} tone={agentStatusTone(node.agent_status)} /><small className="text-xs text-muted-foreground">{node.agent_version || t("Not reported")}</small></span></TableCell>
             <TableCell><NodePolicyStatus node={node} /></TableCell>
             <TableCell><AgentUpdateStatus node={node} value={updates[node.id]} /></TableCell>
@@ -326,7 +325,6 @@ function NodeDialog({ value, onClose, onSaved }: { value?: Node; onClose: () => 
   const { t } = useI18n();
   const enabledID = useId();
   const [name, setName] = useState(value?.name ?? "");
-  const [address, setAddress] = useState(value?.public_address ?? "");
   const [enabled, setEnabled] = useState(value?.enabled ?? true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
@@ -335,7 +333,7 @@ function NodeDialog({ value, onClose, onSaved }: { value?: Node; onClose: () => 
     event.preventDefault();
     setBusy(true);
     setError(undefined);
-    const input: NodeInput = { name, public_address: address, enabled };
+    const input: NodeInput = { name, enabled };
     try {
       onSaved(value ? await updateNode(value.id, input) : await createNode(input));
     } catch (cause) {
@@ -349,7 +347,6 @@ function NodeDialog({ value, onClose, onSaved }: { value?: Node; onClose: () => 
       <form className="grid gap-5" onSubmit={submit}>
         <div className="grid gap-4">
           <Field label={t("Name")} value={name} onChange={setName} autoFocus />
-          <Field label={t("Public address")} value={address} onChange={setAddress} required={false} />
           <label className="flex min-h-8 cursor-pointer items-center gap-2 text-sm font-semibold text-foreground/80" htmlFor={enabledID}>
             <Checkbox id={enabledID} checked={enabled} onCheckedChange={(checked) => setEnabled(checked === true)} />
             <span>{t("Enabled")}</span>

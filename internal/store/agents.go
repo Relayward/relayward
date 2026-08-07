@@ -86,7 +86,7 @@ WHERE id = ? AND enabled = 1`, registration.CredentialHash, unixTime(now), regis
 
 func (store *Store) AuthenticateAgent(ctx context.Context, nodeID string, credentialHash []byte) (Node, error) {
 	return scanNode(store.db.QueryRowContext(ctx, `
-	SELECT id, name, public_address, enabled, credential_hash, registered_at, last_seen_at,
+	SELECT id, name, enabled, credential_hash, registered_at, last_seen_at,
 	       hostname, agent_version, agent_os, agent_arch, agent_capabilities_json, agent_started_at_ns,
 	       created_at, updated_at
 	FROM nodes WHERE id = ? AND credential_hash = ?`, nodeID, credentialHash))

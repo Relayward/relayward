@@ -109,7 +109,6 @@ func serve(args []string, logger *slog.Logger) error {
 	listen := flags.String("listen", "127.0.0.1:8080", "HTTP listen address")
 	dataDir := flags.String("data", "./data", "persistent data directory")
 	webDir := flags.String("web", "./web/dist", "built web asset directory")
-	insecureCookie := flags.Bool("insecure-cookie", false, "allow session cookies over plain HTTP for local development")
 	eventHotRetention := flags.Duration("event-hot-retention", 24*time.Hour, "hot event retention")
 	eventArchiveRetention := flags.Duration("event-archive-retention", 90*24*time.Hour, "access archive retention")
 	if err := flags.Parse(args); err != nil {
@@ -243,7 +242,6 @@ func serve(args []string, logger *slog.Logger) error {
 			Management:        manager,
 			Secrets:           secrets,
 			Logger:            logger,
-			SecureCookie:      !*insecureCookie,
 			WebAssets:         os.DirFS(absoluteWebDir),
 			PolicyCoordinator: policies,
 		}),

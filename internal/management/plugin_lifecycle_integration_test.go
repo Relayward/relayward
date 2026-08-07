@@ -82,12 +82,6 @@ func TestPluginLifecycleRunsRealReleaseAndRestoresAfterBadUpgrade(t *testing.T) 
 	node := registerManagedAgent(t, service, "Edge", []string{
 		agentv1.CapabilityControlCommands, agentv1.CapabilityPluginSupervision,
 	})
-	node, err = service.UpdateNode(t.Context(), node.ID, NodeInput{
-		Name: node.Name, PublicAddress: "edge.example.com", Enabled: true,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
 	executable, err := os.ReadFile(mustExecutable(t))
 	if err != nil {
 		t.Fatal(err)
@@ -175,7 +169,7 @@ func TestPluginLifecycleRunsRealReleaseAndRestoresAfterBadUpgrade(t *testing.T) 
 		t.Fatalf("RenderSubscription() error = %v", err)
 	}
 	decoded, err := base64.StdEncoding.DecodeString(strings.TrimSpace(string(rendered.Content)))
-	if err != nil || !strings.Contains(string(decoded), "relayward-test://") || !strings.Contains(string(decoded), node.PublicAddress) {
+	if err != nil || !strings.Contains(string(decoded), "relayward-test://") || !strings.Contains(string(decoded), "fixture.example.com") {
 		t.Fatalf("rendered subscription = %q, decode error = %v", decoded, err)
 	}
 

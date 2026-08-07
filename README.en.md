@@ -45,30 +45,32 @@ The center manages only generic node, policy, service, and plugin state. It does
 
 | Component | Supported environment |
 | --- | --- |
-| Center | Linux AMD64, Docker Engine, Docker Compose v2 |
-| Public access | A domain name and an HTTPS reverse proxy with WebSocket support |
+| Center | Linux AMD64, Docker Engine, Docker Compose v2, curl |
+| Center access | A reachable HTTP address, or a domain name and an HTTPS reverse proxy with WebSocket support |
 | Nodes | Linux AMD64 running Debian/systemd or Alpine/OpenRC |
-| Network | Nodes require outbound HTTPS access to the center, GitHub Releases, and runtime release hosts |
+| Network | Nodes require HTTP(S) access to the center and HTTPS access to GitHub Releases and runtime release hosts |
 
-The example deployment binds Relayward to `127.0.0.1:8080`. Do not expose this plain HTTP listener directly to the Internet.
+The example deployment binds Relayward to `127.0.0.1:8080` by default. For direct HTTP access, set `RELAYWARD_BIND_ADDRESS` in `.env` to a host address reachable by clients. HTTP does not encrypt login credentials, subscription tokens, or Agent data in transit.
 
 ## Quick Start
 
 ### 1. Deploy The Center
 
-Clone the repository on the center host and create the deployment environment:
+Enter an empty deployment directory of your choice and download the repository's Compose and environment examples directly:
 
 ```bash
-git clone --depth 1 https://github.com/Relayward/relayward.git
-cd relayward
-cp .env.example .env
+curl -fsSL \
+  https://raw.githubusercontent.com/Relayward/relayward/main/compose.yaml \
+  -o compose.yaml
+curl -fsSL \
+  https://raw.githubusercontent.com/Relayward/relayward/main/.env.example \
+  -o .env
 ```
 
 Review `.env` before starting. `RELAYWARD_VERSION` must be an existing image tag from [Relayward Releases](https://github.com/Relayward/relayward/releases); production deployments should use an explicit version instead of `latest`.
 
 ```bash
 docker compose config --quiet
-docker compose pull
 docker compose up -d
 docker compose exec relayward relayward healthcheck
 docker compose logs --tail=100 relayward
@@ -76,9 +78,11 @@ docker compose logs --tail=100 relayward
 
 The health check must report success before continuing. All persistent state is stored in the `relayward-data` Docker volume.
 
-### 2. Configure HTTPS
+### 2. Choose The Access Method
 
-Terminate TLS at a reverse proxy and forward every path, including WebSocket upgrades, to `127.0.0.1:8080`. A minimal Caddy site is:
+Relayward fully supports direct HTTP access; HTTPS is not required to start or use the system. With HTTP, administrator credentials, session data, registration credentials, commands, and telemetry travel without encryption, and the UI displays a persistent security warning. Use HTTP only on networks where you accept that risk.
+
+An HTTPS reverse proxy is strongly recommended. Terminate TLS at the proxy and forward every path, including WebSocket upgrades, to `127.0.0.1:8080`. A minimal Caddy site is:
 
 ```caddyfile
 relayward.example.com {
@@ -86,21 +90,21 @@ relayward.example.com {
 }
 ```
 
-For Nginx or a hosting panel, preserve the original `Host` header and enable HTTP/1.1 WebSocket forwarding. Relayward production session cookies require HTTPS.
+For Nginx or a hosting panel, preserve the original `Host` header, pass `X-Forwarded-Proto`, and enable HTTP/1.1 WebSocket forwarding. Relayward selects cookie attributes from the request protocol: HTTPS requests receive `Secure` cookies, while HTTP requests receive regular cookies.
 
 ### 3. Initialize The Administrator
 
-Open `https://relayward.example.com` in a browser and create the single administrator. Passwords must contain at least 12 characters.
+Open the selected HTTP or HTTPS address in a browser and create the single administrator. Passwords must contain at least 12 characters.
 
 After signing in:
 
-1. Open **Settings** and set **Public URL** to the HTTPS origin, for example `https://relayward.example.com`. Do not include a path, query, credentials, or trailing application route.
+1. Open **Settings** and review the automatically populated **Public URL**. It starts with the current browser origin and may be changed to another HTTP or HTTPS origin. Do not include a path, query, credentials, or trailing application route.
 2. Set the deployment timezone.
-3. Open **Security**, enable TOTP, and store the generated recovery codes outside the Relayward data volume.
+3. Optional: open **Security** and enable TOTP. It is strongly recommended for deployments on public or untrusted networks. If enabled, store the generated recovery codes outside the Relayward data volume.
 
 ### 4. Register A Node
 
-In **Nodes**, select **Add node**, enter a name and the public hostname or IP used by subscriptions, then select **Register Agent**. Relayward generates a short-lived, single-use root installation command.
+In **Nodes**, select **Add node**, enter a name, then select **Register Agent**. Relayward generates a short-lived, single-use root installation command.
 
 Run that generated command on the node. It downloads the latest official [Relayward Agent](https://github.com/Relayward/relayward-agent) release, verifies its checksums, installs the correct systemd or OpenRC service, enrolls the node, and starts the Agent.
 
@@ -116,7 +120,7 @@ rc-service relayward-agent status
 tail -n 100 /var/log/messages
 ```
 
-The Agent needs no inbound firewall rule. It connects to the center over HTTPS.
+The Agent needs no inbound firewall rule. It connects outbound to the HTTP or HTTPS address configured as the center Public URL.
 
 ### 5. Select And Install A Plugin
 
@@ -141,7 +145,7 @@ Relayward owns authorization state, traffic metadata, and the unified subscripti
 After deployment, verify all of the following:
 
 - `docker compose exec relayward relayward healthcheck` succeeds.
-- The administration page is available only through HTTPS.
+- The administration page is reachable at the selected HTTP or HTTPS address; HTTP access displays the unencrypted-transport warning.
 - The node reports online and shows its Agent version.
 - Installed center plugins report an active and healthy state.
 - The authorization reports active after policy delivery.
@@ -177,13 +181,13 @@ npm run build
 Run the backend and Vite development server locally:
 
 ```bash
-go run ./cmd/relayward serve -listen 127.0.0.1:8080 -data ./data -insecure-cookie
+go run ./cmd/relayward serve -listen 127.0.0.1:8080 -data ./data
 
 cd web
 npm run dev
 ```
 
-`-insecure-cookie` is for loopback development only. The Vite server proxies API requests to `127.0.0.1:8080`.
+The Vite server proxies API requests to `127.0.0.1:8080`. Relayward selects session-cookie security attributes from the browser request protocol.
 
 ## Related Projects
 
@@ -193,7 +197,7 @@ npm run dev
 
 ## Security
 
-Treat plugins as trusted native executables and install them only from repositories you trust. Do not publish registration tokens, subscription links, recovery codes, GitHub tokens, private configuration, or Relayward data volumes in issue reports.
+Treat plugins as trusted native executables and install them only from repositories you trust. HTTP is fully functional but provides no transport encryption; use HTTPS for untrusted networks and public deployments. Do not publish registration tokens, subscription links, recovery codes, GitHub tokens, private configuration, or Relayward data volumes in issue reports.
 
 Report security issues privately through the repository's [GitHub Security Advisories](https://github.com/Relayward/relayward/security/advisories/new).
 

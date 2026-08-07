@@ -2,6 +2,7 @@ import { type FormEvent, type ReactNode, useState } from "react";
 
 import { LanguageSwitcher, useI18n } from "../i18n";
 import { BrandMark } from "./PageLayout";
+import { InsecureTransportWarning } from "./InsecureTransportWarning";
 import { Button } from "./ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
 import { Input } from "./ui/input";
@@ -91,7 +92,8 @@ function AuthLayout({ title, children }: { title: string; children: ReactNode })
     <main className="relative flex min-h-svh flex-col items-center justify-center gap-6 bg-muted p-6 md:p-10">
       <LanguageSwitcher className="absolute top-5 right-5" />
       <BrandMark />
-      <div className="w-full max-w-sm">
+      <div className="grid w-full max-w-sm gap-4">
+        <InsecureTransportWarning />
         <Card>
           <CardHeader className="text-center">
             <CardTitle className="text-xl"><h1 id="auth-title">{title}</h1></CardTitle>

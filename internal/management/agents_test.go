@@ -78,7 +78,7 @@ func TestRequestAgentUpdateValidationAndLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Node() error = %v", err)
 	}
-	if _, err := service.UpdateNode(ctx, node.ID, NodeInput{Name: registered.Name, PublicAddress: registered.PublicAddress, Enabled: false}); err != nil {
+	if _, err := service.UpdateNode(ctx, node.ID, NodeInput{Name: registered.Name, Enabled: false}); err != nil {
 		t.Fatalf("UpdateNode() disable error = %v", err)
 	}
 	if _, err := service.RequestAgentUpdate(ctx, node.ID, "0.4.0"); fieldName(err) != "node_id" {

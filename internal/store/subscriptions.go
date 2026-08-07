@@ -39,7 +39,6 @@ type SubscriptionSnapshot struct {
 	Settings         SystemSettings
 	UserName         string
 	NodeName         string
-	NodeAddress      string
 	NodeEnabled      bool
 	TrafficUsedBytes *uint64
 	Announcement     *string
@@ -64,7 +63,7 @@ func (store *Store) SubscriptionByTokenHash(ctx context.Context, tokenHash []byt
 SELECT a.id, a.user_id, a.node_id, a.enabled, a.traffic_limit_bytes, a.reset_kind, a.reset_value, a.timezone,
        a.period_anchor, a.expires_at, a.soft_ip_limit, a.activity_window_seconds, a.block_duration_seconds,
        a.subscription_token_hash, a.created_at, a.updated_at,
-       u.display_name, n.name, n.public_address, n.enabled
+       u.display_name, n.name, n.enabled
 FROM authorizations a
 JOIN users u ON u.id = a.user_id
 JOIN nodes n ON n.id = a.node_id
@@ -78,7 +77,7 @@ WHERE a.subscription_token_hash = ?`, tokenHash)
 		&trafficLimit, &snapshot.Authorization.ResetKind, &resetValue, &snapshot.Authorization.Timezone,
 		&periodAnchor, &expiresAt, &softIPLimit, &snapshot.Authorization.ActivityWindowSeconds,
 		&snapshot.Authorization.BlockDurationSeconds, &snapshot.Authorization.SubscriptionTokenHash, &createdAt, &updatedAt,
-		&snapshot.UserName, &snapshot.NodeName, &snapshot.NodeAddress, &nodeEnabled,
+		&snapshot.UserName, &snapshot.NodeName, &nodeEnabled,
 	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return SubscriptionSnapshot{}, ErrNotFound

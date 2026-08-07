@@ -28,7 +28,6 @@ type subscriptionResponse struct {
 	Status            string                        `json:"status"`
 	UserName          string                        `json:"user_name"`
 	NodeName          string                        `json:"node_name"`
-	NodeAddress       string                        `json:"node_address"`
 	TrafficLimitBytes *int64                        `json:"traffic_limit_bytes"`
 	TrafficUsedBytes  *uint64                       `json:"traffic_used_bytes"`
 	Reset             resetRuleResponse             `json:"reset"`
@@ -67,7 +66,7 @@ func (server *Server) subscription(w http.ResponseWriter, request *http.Request)
 		Title: snapshot.Settings.SubscriptionTitle, SupportURL: snapshot.Settings.SupportURL,
 		ProfileURL: snapshot.Settings.ProfileURL, RefreshHours: snapshot.Settings.SubscriptionRefreshHours,
 		Status: management.SubscriptionStatus(snapshot, time.Now()), UserName: snapshot.UserName,
-		NodeName: snapshot.NodeName, NodeAddress: snapshot.NodeAddress,
+		NodeName:          snapshot.NodeName,
 		TrafficLimitBytes: snapshot.Authorization.TrafficLimitBytes, TrafficUsedBytes: snapshot.TrafficUsedBytes,
 		Reset: resetRuleResponse{
 			Kind: snapshot.Authorization.ResetKind, Value: snapshot.Authorization.ResetValue,

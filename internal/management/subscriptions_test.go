@@ -62,10 +62,6 @@ func TestSubscriptionRenderingCacheAndInputIsolation(t *testing.T) {
 	node := registerManagedAgent(t, service, "Edge", []string{
 		agentv1.CapabilityControlCommands, agentv1.CapabilityPluginSupervision,
 	})
-	node, err := service.UpdateNode(ctx, node.ID, NodeInput{Name: "Edge", PublicAddress: "edge.example.com", Enabled: true})
-	if err != nil {
-		t.Fatal(err)
-	}
 	user, err := service.CreateUser(ctx, UserInput{DisplayName: "Alice"})
 	if err != nil {
 		t.Fatal(err)

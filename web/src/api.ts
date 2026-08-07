@@ -43,7 +43,6 @@ export interface SystemSettings {
 export interface Node {
   id: string;
   name: string;
-  public_address: string;
   enabled: boolean;
   agent_status: "pending" | "online" | "offline" | "disabled";
   hostname: string;
@@ -69,7 +68,6 @@ export interface NodePolicyState {
 
 export interface NodeInput {
   name: string;
-  public_address: string;
   enabled: boolean;
 }
 
@@ -375,7 +373,6 @@ export interface SubscriptionInfo {
   status: "active" | "disabled" | "expired" | "node_disabled" | "quota_exceeded";
   user_name: string;
   node_name: string;
-  node_address: string;
   traffic_limit_bytes: number | null;
   traffic_used_bytes: number | null;
   reset: ResetRule;

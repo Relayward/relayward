@@ -55,7 +55,6 @@ CREATE TABLE secrets (
 CREATE TABLE nodes (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL UNIQUE COLLATE NOCASE,
-    public_address TEXT NOT NULL DEFAULT '',
     enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
     credential_hash BLOB CHECK (credential_hash IS NULL OR length(credential_hash) = 32),
     registered_at INTEGER,
