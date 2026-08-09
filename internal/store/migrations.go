@@ -401,6 +401,13 @@ UPDATE audit_log SET outcome = 'success' WHERE outcome = 'succeeded';
 UPDATE audit_log SET outcome = 'failure' WHERE outcome = 'failed';
 `,
 	},
+	{
+		version: 13,
+		sql: `
+ALTER TABLE traffic_periods ADD COLUMN source_stream_id TEXT NOT NULL DEFAULT '';
+ALTER TABLE traffic_periods ADD COLUMN source_sequence INTEGER NOT NULL DEFAULT 0 CHECK (source_sequence >= 0);
+`,
+	},
 }
 
 func migrate(ctx context.Context, db *sql.DB) error {

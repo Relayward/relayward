@@ -92,6 +92,62 @@ func TestProcessorConsumesTrafficAndPolicyIndependently(t *testing.T) {
 	}
 }
 
+func TestProcessorAcceptsRestartedTrafficLedgerInSamePeriod(t *testing.T) {
+	ctx := context.Background()
+	directory := t.TempDir()
+	business, err := store.Open(ctx, filepath.Join(directory, "relayward.db"))
+	if err != nil {
+		t.Fatalf("open business store: %v", err)
+	}
+	defer business.Close()
+	events, err := eventstore.Open(ctx, filepath.Join(directory, "events.db"))
+	if err != nil {
+		t.Fatalf("open event store: %v", err)
+	}
+	defer events.Close()
+	now := time.Date(2026, time.August, 2, 12, 0, 0, 0, time.UTC)
+	prepareProcessorAuthorization(t, business, now)
+	period, err := policyv1.CurrentPeriod(
+		policyv1.ResetRule{Kind: policyv1.ResetNever, Timezone: "UTC"}, now.Add(-time.Hour), now,
+	)
+	if err != nil {
+		t.Fatalf("CurrentPeriod() error = %v", err)
+	}
+	before := agentv1.TrafficSnapshotEvent{
+		AuthorizationID: processorAuthorizationID, Period: period, Revision: 10,
+		UploadBytes: 100, DownloadBytes: 200,
+	}
+	after := before
+	after.Revision = 1
+	after.UploadBytes = 10
+	after.DownloadBytes = 20
+	first, _ := agentv1.NewEvent(processorNodeID, processorStreamID, 1, agentv1.EventTrafficSnapshot, now, before)
+	second, _ := agentv1.NewEvent(processorNodeID, processorStreamID, 2, agentv1.EventTrafficSnapshot, now.Add(time.Second), after)
+	if _, err := events.Ingest(ctx, processorNodeID, agentv1.EventBatch{
+		APIVersion: agentv1.APIVersion, NodeID: processorNodeID, StreamID: processorStreamID,
+		FirstSequence: 1, LastSequence: 2, Events: []agentv1.Event{first, second},
+	}, now.Add(time.Minute)); err != nil {
+		t.Fatalf("Ingest() error = %v", err)
+	}
+	processor, err := New(events, business, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	processor.now = func() time.Time { return now.Add(2 * time.Minute) }
+	if err := processor.RunOnce(ctx); err != nil {
+		t.Fatalf("RunOnce() error = %v", err)
+	}
+	periods, err := business.TrafficPeriods(ctx, processorAuthorizationID, 10)
+	if err != nil || len(periods) != 1 || periods[0].Revision != 1 ||
+		periods[0].UploadBytes != 10 || periods[0].DownloadBytes != 20 {
+		t.Fatalf("traffic periods = %+v, %v", periods, err)
+	}
+	state, err := events.ConsumerState(ctx, TrafficConsumerID)
+	if err != nil || state.LastEventRowID != 2 || state.ConsecutiveFailures != 0 {
+		t.Fatalf("traffic consumer state = %+v, %v", state, err)
+	}
+}
+
 func TestProcessorRecordsConsumerFailureWithoutBlockingOtherCursors(t *testing.T) {
 	ctx := context.Background()
 	directory := t.TempDir()

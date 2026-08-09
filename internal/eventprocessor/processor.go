@@ -231,7 +231,10 @@ func (processor *Processor) processEvent(ctx context.Context, consumerID string,
 		if err != nil {
 			return err
 		}
-		return processor.business.ApplyTrafficSnapshot(ctx, source.NodeID, value, source.Event.ObservedAt, source.ReceivedAt)
+		return processor.business.ApplyTrafficSnapshot(ctx, store.TrafficSnapshotSource{
+			NodeID: source.NodeID, StreamID: source.StreamID, Sequence: source.Event.Sequence,
+			ObservedAt: source.Event.ObservedAt, ReceivedAt: source.ReceivedAt,
+		}, value)
 	case PolicyConsumerID:
 		if source.Event.Kind != agentv1.EventPolicyStatus {
 			return nil

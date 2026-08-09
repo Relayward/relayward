@@ -63,26 +63,48 @@ func TestPolicySnapshotReconcileAndTrafficLifecycle(t *testing.T) {
 		AuthorizationID: testPolicyAuthorizationID, Period: period, Revision: 2,
 		UploadBytes: 100, DownloadBytes: 200,
 	}
-	if err := database.ApplyTrafficSnapshot(ctx, testPolicyNodeID, traffic, now.Add(4*time.Minute), now.Add(4*time.Minute)); err != nil {
+	source := TrafficSnapshotSource{
+		NodeID: testPolicyNodeID, StreamID: "0123456789abcdef0123456789abcdef", Sequence: 10,
+		ObservedAt: now.Add(4 * time.Minute), ReceivedAt: now.Add(4 * time.Minute),
+	}
+	if err := database.ApplyTrafficSnapshot(ctx, source, traffic); err != nil {
 		t.Fatalf("ApplyTrafficSnapshot() error = %v", err)
 	}
-	if err := database.ApplyTrafficSnapshot(ctx, testPolicyNodeID, traffic, now.Add(5*time.Minute), now.Add(5*time.Minute)); err != nil {
+	if err := database.ApplyTrafficSnapshot(ctx, source, traffic); err != nil {
 		t.Fatalf("ApplyTrafficSnapshot() duplicate error = %v", err)
 	}
 	conflict := traffic
 	conflict.UploadBytes++
-	if err := database.ApplyTrafficSnapshot(ctx, testPolicyNodeID, conflict, now.Add(5*time.Minute), now.Add(5*time.Minute)); !errors.Is(err, ErrConflict) {
+	if err := database.ApplyTrafficSnapshot(ctx, source, conflict); !errors.Is(err, ErrConflict) {
 		t.Fatalf("ApplyTrafficSnapshot() conflict error = %v", err)
 	}
 	older := traffic
 	older.Revision = 1
 	older.UploadBytes = 1
-	if err := database.ApplyTrafficSnapshot(ctx, testPolicyNodeID, older, now.Add(6*time.Minute), now.Add(6*time.Minute)); err != nil {
+	olderSource := source
+	olderSource.Sequence--
+	olderSource.ObservedAt = now.Add(3 * time.Minute)
+	if err := database.ApplyTrafficSnapshot(ctx, olderSource, older); err != nil {
 		t.Fatalf("ApplyTrafficSnapshot() older revision error = %v", err)
 	}
 	periods, err := database.TrafficPeriods(ctx, testPolicyAuthorizationID, 10)
 	if err != nil || len(periods) != 1 || periods[0].Revision != 2 || periods[0].UploadBytes != 100 {
 		t.Fatalf("TrafficPeriods() = %+v, %v", periods, err)
+	}
+	restarted := traffic
+	restarted.Revision = 1
+	restarted.UploadBytes = 10
+	restarted.DownloadBytes = 20
+	restartedSource := source
+	restartedSource.Sequence++
+	restartedSource.ObservedAt = now.Add(6 * time.Minute)
+	restartedSource.ReceivedAt = now.Add(6 * time.Minute)
+	if err := database.ApplyTrafficSnapshot(ctx, restartedSource, restarted); err != nil {
+		t.Fatalf("ApplyTrafficSnapshot() restarted ledger error = %v", err)
+	}
+	periods, err = database.TrafficPeriods(ctx, testPolicyAuthorizationID, 10)
+	if err != nil || len(periods) != 1 || periods[0].Revision != 1 || periods[0].UploadBytes != 10 {
+		t.Fatalf("TrafficPeriods() after restarted ledger = %+v, %v", periods, err)
 	}
 
 	policyStatus := agentv1.PolicyStatusEvent{
@@ -99,10 +121,14 @@ func TestPolicySnapshotReconcileAndTrafficLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("next CurrentPeriod() error = %v", err)
 	}
-	if err := database.ApplyTrafficSnapshot(ctx, testPolicyNodeID, agentv1.TrafficSnapshotEvent{
+	nextSource := restartedSource
+	nextSource.Sequence++
+	nextSource.ObservedAt = now.Add(8 * time.Minute)
+	nextSource.ReceivedAt = now.Add(8 * time.Minute)
+	if err := database.ApplyTrafficSnapshot(ctx, nextSource, agentv1.TrafficSnapshotEvent{
 		AuthorizationID: testPolicyAuthorizationID, Period: nextPeriod, Revision: 1,
 		UploadBytes: 10, DownloadBytes: 20,
-	}, now.Add(8*time.Minute), now.Add(8*time.Minute)); err != nil {
+	}); err != nil {
 		t.Fatalf("ApplyTrafficSnapshot() next period error = %v", err)
 	}
 	latest, err := database.ListLatestTrafficPeriods(ctx)
@@ -114,11 +140,11 @@ func TestPolicySnapshotReconcileAndTrafficLifecycle(t *testing.T) {
 		t.Fatalf("RecordAuthorizationPolicyStatus() changed period error = %v", err)
 	}
 	current, err := database.ListCurrentTrafficPeriods(ctx)
-	if err != nil || len(current) != 1 || current[0].Period.ID != period.ID || current[0].Revision != 2 {
+	if err != nil || len(current) != 1 || current[0].Period.ID != period.ID || current[0].Revision != 1 {
 		t.Fatalf("ListCurrentTrafficPeriods() = %+v, %v", current, err)
 	}
 	currentByID, err := database.TrafficPeriodByID(ctx, testPolicyAuthorizationID, period.ID)
-	if err != nil || currentByID.Period.ID != period.ID || currentByID.Revision != 2 {
+	if err != nil || currentByID.Period.ID != period.ID || currentByID.Revision != 1 {
 		t.Fatalf("TrafficPeriodByID() = %+v, %v", currentByID, err)
 	}
 	statuses, err := database.ListAuthorizationPolicyStatuses(ctx)
@@ -167,6 +193,41 @@ func TestPolicySnapshotReconcileAndTrafficLifecycle(t *testing.T) {
 	storedQueued, err := database.AgentCommandByID(ctx, queued.ID)
 	if err != nil || storedQueued.Status != AgentCommandPending || storedQueued.Attempts != 0 {
 		t.Fatalf("queued disabled-node command = %+v, %v", storedQueued, err)
+	}
+}
+
+func TestApplyTrafficSnapshotReplacesLegacyRowByObservationOrder(t *testing.T) {
+	ctx := context.Background()
+	database, _, now := preparePolicyStore(t)
+	defer database.Close()
+	snapshot, err := database.BuildNodePolicySnapshot(ctx, testPolicyNodeID, now)
+	if err != nil {
+		t.Fatalf("BuildNodePolicySnapshot() error = %v", err)
+	}
+	period := snapshot.Authorizations[0].CurrentPeriod
+	if _, err := database.db.ExecContext(ctx, `
+INSERT INTO traffic_periods(
+    authorization_id, period_id, starts_at, ends_at, upload_bytes, download_bytes,
+    revision, observed_at_ns, updated_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, testPolicyAuthorizationID, period.ID,
+		unixTime(period.StartsAt), nullableUnix(period.EndsAt), 100, 200, 10, now.UnixNano(), unixTime(now)); err != nil {
+		t.Fatalf("insert legacy traffic period: %v", err)
+	}
+	incoming := agentv1.TrafficSnapshotEvent{
+		AuthorizationID: testPolicyAuthorizationID, Period: period, Revision: 10,
+		UploadBytes: 90, DownloadBytes: 300,
+	}
+	observedAt := now.Add(time.Second)
+	if err := database.ApplyTrafficSnapshot(ctx, TrafficSnapshotSource{
+		NodeID: testPolicyNodeID, StreamID: "0123456789abcdef0123456789abcdef", Sequence: 54,
+		ObservedAt: observedAt, ReceivedAt: observedAt,
+	}, incoming); err != nil {
+		t.Fatalf("ApplyTrafficSnapshot() legacy replacement error = %v", err)
+	}
+	periods, err := database.TrafficPeriods(ctx, testPolicyAuthorizationID, 10)
+	if err != nil || len(periods) != 1 || periods[0].Revision != 10 ||
+		periods[0].UploadBytes != 90 || periods[0].DownloadBytes != 300 {
+		t.Fatalf("traffic periods = %+v, %v", periods, err)
 	}
 }
 

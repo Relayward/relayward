@@ -510,10 +510,14 @@ func TestAuthorizationBindingAndAuditHTTPFlow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("compute authorization period: %v", err)
 	}
-	if err := database.ApplyTrafficSnapshot(t.Context(), node.ID, agentv1.TrafficSnapshotEvent{
+	now := time.Now().UTC()
+	if err := database.ApplyTrafficSnapshot(t.Context(), store.TrafficSnapshotSource{
+		NodeID: node.ID, StreamID: "0123456789abcdef0123456789abcdef", Sequence: 1,
+		ObservedAt: now, ReceivedAt: now,
+	}, agentv1.TrafficSnapshotEvent{
 		AuthorizationID: created.Authorization.ID, Period: period, Revision: 1,
 		UploadBytes: 1024, DownloadBytes: 2048,
-	}, time.Now().UTC(), time.Now().UTC()); err != nil {
+	}); err != nil {
 		t.Fatalf("apply authorization traffic: %v", err)
 	}
 	if err := database.RecordAuthorizationPolicyStatus(t.Context(), node.ID, agentv1.PolicyStatusEvent{

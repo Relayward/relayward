@@ -65,6 +65,14 @@ type TrafficPeriod struct {
 	UpdatedAt       time.Time
 }
 
+type TrafficSnapshotSource struct {
+	NodeID     string
+	StreamID   string
+	Sequence   uint64
+	ObservedAt time.Time
+	ReceivedAt time.Time
+}
+
 type policyCapabilityDigest struct {
 	PluginID     string   `json:"plugin_id"`
 	Capabilities []string `json:"capabilities"`
@@ -471,11 +479,16 @@ func scanNodePolicyState(row rowScanner) (NodePolicyState, error) {
 	return value, nil
 }
 
-func (store *Store) ApplyTrafficSnapshot(ctx context.Context, nodeID string, value agentv1.TrafficSnapshotEvent,
-	observedAt, receivedAt time.Time,
+func (store *Store) ApplyTrafficSnapshot(ctx context.Context, source TrafficSnapshotSource,
+	value agentv1.TrafficSnapshotEvent,
 ) error {
 	if err := agentv1.ValidateTrafficSnapshotEvent(value); err != nil {
 		return fmt.Errorf("validate traffic snapshot: %w", err)
+	}
+	if source.NodeID == "" || source.StreamID == "" || source.Sequence == 0 ||
+		source.Sequence > agentv1.MaximumEventSequence ||
+		source.ObservedAt.IsZero() || source.ReceivedAt.IsZero() {
+		return errors.New("traffic snapshot source is invalid")
 	}
 	tx, err := store.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -490,20 +503,32 @@ func (store *Store) ApplyTrafficSnapshot(ctx context.Context, nodeID string, val
 	if err != nil {
 		return fmt.Errorf("read traffic authorization: %w", err)
 	}
-	if expectedNodeID != nodeID {
+	if expectedNodeID != source.NodeID {
 		return ErrConflict
 	}
-	var revision, uploadBytes, downloadBytes int64
+	var revision, uploadBytes, downloadBytes, sourceSequence, observedAtNS int64
+	var sourceStreamID string
 	err = tx.QueryRowContext(ctx, `
-SELECT revision, upload_bytes, download_bytes FROM traffic_periods
+SELECT revision, upload_bytes, download_bytes, source_stream_id, source_sequence,
+       COALESCE(observed_at_ns, 0)
+FROM traffic_periods
 WHERE authorization_id = ? AND period_id = ?`, value.AuthorizationID, value.Period.ID).Scan(
-		&revision, &uploadBytes, &downloadBytes)
+		&revision, &uploadBytes, &downloadBytes, &sourceStreamID, &sourceSequence, &observedAtNS)
 	if err == nil {
+		sameSnapshot := uint64(revision) == value.Revision && uint64(uploadBytes) == value.UploadBytes &&
+			uint64(downloadBytes) == value.DownloadBytes
 		switch {
-		case uint64(revision) > value.Revision:
+		case sourceStreamID == source.StreamID && uint64(sourceSequence) > source.Sequence:
 			return tx.Commit()
-		case uint64(revision) == value.Revision:
-			if uint64(uploadBytes) != value.UploadBytes || uint64(downloadBytes) != value.DownloadBytes {
+		case sourceStreamID == source.StreamID && uint64(sourceSequence) == source.Sequence:
+			if !sameSnapshot {
+				return ErrConflict
+			}
+			return tx.Commit()
+		case sourceStreamID != source.StreamID && observedAtNS > source.ObservedAt.UTC().UnixNano():
+			return tx.Commit()
+		case sourceStreamID != source.StreamID && observedAtNS == source.ObservedAt.UTC().UnixNano():
+			if !sameSnapshot {
 				return ErrConflict
 			}
 			return tx.Commit()
@@ -514,15 +539,17 @@ WHERE authorization_id = ? AND period_id = ?`, value.AuthorizationID, value.Peri
 	_, err = tx.ExecContext(ctx, `
 INSERT INTO traffic_periods(
     authorization_id, period_id, starts_at, ends_at, upload_bytes, download_bytes,
-    revision, observed_at_ns, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    revision, observed_at_ns, source_stream_id, source_sequence, updated_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(authorization_id, period_id) DO UPDATE SET
     starts_at = excluded.starts_at, ends_at = excluded.ends_at,
     upload_bytes = excluded.upload_bytes, download_bytes = excluded.download_bytes,
-    revision = excluded.revision, observed_at_ns = excluded.observed_at_ns, updated_at = excluded.updated_at
-WHERE excluded.revision > traffic_periods.revision`, value.AuthorizationID, value.Period.ID,
+	revision = excluded.revision, observed_at_ns = excluded.observed_at_ns,
+	source_stream_id = excluded.source_stream_id, source_sequence = excluded.source_sequence,
+	updated_at = excluded.updated_at`, value.AuthorizationID, value.Period.ID,
 		unixTime(value.Period.StartsAt), nullableUnix(value.Period.EndsAt), int64(value.UploadBytes), int64(value.DownloadBytes),
-		int64(value.Revision), observedAt.UTC().UnixNano(), unixTime(receivedAt))
+		int64(value.Revision), source.ObservedAt.UTC().UnixNano(), source.StreamID, int64(source.Sequence),
+		unixTime(source.ReceivedAt))
 	if err != nil {
 		return fmt.Errorf("store traffic snapshot: %w", err)
 	}
