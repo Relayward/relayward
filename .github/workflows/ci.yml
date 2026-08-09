@@ -58,6 +58,9 @@ jobs:
   image:
     needs: [backend, frontend]
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
     steps:
       - uses: actions/checkout@v7
       - uses: docker/setup-buildx-action@v3
@@ -65,8 +68,8 @@ jobs:
         with:
           context: .
           load: true
-          tags: relayward:ci
-          build-args: VERSION=ci
+          tags: ghcr.io/relayward/relayward:dev
+          build-args: VERSION=dev
           cache-from: type=gha
           cache-to: type=gha,mode=max
       - name: Smoke test image
@@ -75,7 +78,7 @@ jobs:
           trap 'docker rm -fv relayward-ci >/dev/null 2>&1 || true' EXIT
           docker run -d --name relayward-ci --read-only --tmpfs /tmp:size=64m \
             --mount "type=bind,source=$data_dir,target=/var/lib/relayward" \
-            relayward:ci
+            ghcr.io/relayward/relayward:dev
           healthy=false
           for attempt in $(seq 1 30); do
             if docker exec relayward-ci relayward healthcheck; then
@@ -93,3 +96,13 @@ jobs:
             'grep -q "^Uid:[[:space:]]*10001[[:space:]]" /proc/1/status'
           test "$(stat -c %u "$data_dir")" = "10001"
           docker exec --user 10001 relayward-ci test -f /var/lib/relayward/relayward.db
+      - name: Log in to GHCR
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Push development image
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: docker push ghcr.io/relayward/relayward:dev

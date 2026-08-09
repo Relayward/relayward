@@ -68,7 +68,7 @@ curl -fsSL \
 chmod 600 .env
 ```
 
-启动前检查 `.env`，并保持其权限为 `0600`，因为可选配置可能包含秘密。`RELAYWARD_VERSION` 必须是 [Relayward Releases](https://github.com/Relayward/relayward/releases) 中已经存在的镜像标签；生产环境应使用明确的版本号，不要使用 `latest`。容器首次启动时会自动创建 `.data` 并准备目录权限，Relayward 主进程仍以非 root 用户运行。
+启动前检查 `.env`，并保持其权限为 `0600`，因为可选配置可能包含秘密。`RELAYWARD_VERSION` 必须是已发布的镜像标签；生产环境应使用 [Relayward Releases](https://github.com/Relayward/relayward/releases) 中的明确版本号，不要使用 `latest`。需要跟踪 `main` 最新开发代码时可以使用 `dev`，该标签只在非文档变更通过 CI 后更新，不提供稳定性或数据兼容保证。容器首次启动时会自动创建 `.data` 并准备目录权限，Relayward 主进程仍以非 root 用户运行。
 
 ```bash
 docker compose config --quiet
