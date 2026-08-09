@@ -278,6 +278,9 @@ func (server *Server) resourceError(w http.ResponseWriter, request *http.Request
 	var fieldError *management.FieldError
 	switch {
 	case errors.As(err, &fieldError):
+		if cause := fieldError.InternalCause(); cause != nil {
+			server.logger.Error("request operation failed", "method", request.Method, "route", request.Pattern, "error", cause)
+		}
 		writeProblemWithViolations(w, http.StatusBadRequest, protocol.ErrorInvalidArgument, "Invalid request.", false,
 			[]protocol.FieldViolation{{Field: fieldError.Field, Description: fieldError.Description}})
 	case errors.Is(err, store.ErrNotFound):

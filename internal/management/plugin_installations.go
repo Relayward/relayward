@@ -102,11 +102,15 @@ func (service *Service) InstallPluginRelease(ctx context.Context, input PluginRe
 	newRelease := true
 	if _, err := service.pluginArtifacts.Install(ctx, release, token, service.pluginReleases); err != nil {
 		if !errors.Is(err, pluginartifact.ErrReleaseExists) {
-			return store.PluginInstallation{}, invalid("release", "artifacts could not be installed or verified")
+			return store.PluginInstallation{}, invalidWithCause(
+				"release", "artifacts could not be installed or verified", fmt.Errorf("install plugin artifacts: %w", err),
+			)
 		}
 		newRelease = false
 		if _, verifyErr := service.pluginArtifacts.Verify(release.Manifest); verifyErr != nil {
-			return store.PluginInstallation{}, invalid("release", "the existing release artifacts failed verification")
+			return store.PluginInstallation{}, invalidWithCause(
+				"release", "the existing release artifacts failed verification", fmt.Errorf("verify plugin artifacts: %w", verifyErr),
+			)
 		}
 	}
 	version, err := pluginVersionFromRelease(release, approved)
@@ -165,7 +169,10 @@ func (service *Service) InstallPluginRelease(ctx context.Context, input PluginRe
 			cleanupErr = service.pluginArtifacts.RemoveRelease(version.PluginID, version.Version)
 		}
 		return store.PluginInstallation{}, errors.Join(
-			invalid("release", "center plugin activation or health checks failed"), rollbackErr, auditErr, cleanupErr,
+			invalidWithCause(
+				"release", "center plugin activation or health checks failed", fmt.Errorf("activate center plugin: %w", err),
+			),
+			rollbackErr, auditErr, cleanupErr,
 		)
 	}
 	installation := store.PluginInstallation{
@@ -486,6 +493,6 @@ func translateGitHubReleaseError(err error) error {
 	case errors.Is(err, githubrelease.ErrRateLimited):
 		return ErrUpstreamUnavailable
 	default:
-		return invalid("release", "could not be read or validated")
+		return invalidWithCause("release", "could not be read or validated", fmt.Errorf("inspect GitHub release: %w", err))
 	}
 }
