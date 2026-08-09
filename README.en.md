@@ -8,7 +8,7 @@
 
 Relayward is a single-administrator node control plane for administrator authentication, node enrollment, users, authorizations, quotas, subscription entry points, audit history, and plugin lifecycle. Nodes connect through a compatible Agent, while independent plugins provide runtime-specific capabilities.
 
-Relayward is under active development. Current releases target self-hosted Linux AMD64 deployments.
+Relayward is under active development. Current releases target self-hosted Linux AMD64 deployments. Every `v0.x` release is a public development artifact and carries no persistent-data compatibility guarantee. Replacing a `v0.x` version requires an empty `.data` directory and fresh initialization; do not run a new version against a previous version's data directory. The first compatibility release will be identified explicitly in its release notes.
 
 ## Features
 
@@ -161,7 +161,7 @@ Continue with the selected plugin's README to verify runtime services, node-plug
 
 The `.data` directory contains the primary database, hot-event database, instance encryption key, plugin artifacts, plugin state, and event archives. Back up and restore the complete directory as one unit.
 
-See [Operations](docs/operations.md) for supported backup, upgrade, rollback, administrator recovery, instance-key recovery, and node credential recovery procedures. Database migrations are forward-only; back up the complete `.data` directory before upgrading released versions.
+See [Operations](docs/operations.md) for backup, development-version replacement, rollback, administrator recovery, instance-key recovery, and node credential recovery procedures. A current `v0.x` data directory can be restored only with the exact image version that created it; it cannot be reused by another version.
 
 ## Development
 

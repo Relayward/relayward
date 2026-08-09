@@ -2,6 +2,7 @@ package eventstore
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"path/filepath"
 	"testing"
@@ -13,6 +14,45 @@ import (
 
 const testNodeID = "123e4567-e89b-42d3-a456-426614174000"
 const testStreamID = "0123456789abcdef0123456789abcdef"
+
+func TestOpenCreatesCurrentBaselineSchema(t *testing.T) {
+	ctx := context.Background()
+	if len(migrations) != 1 || migrations[0].version != 1 {
+		t.Fatalf("migrations = %+v, want one version 1 baseline", migrations)
+	}
+	store, err := Open(ctx, filepath.Join(t.TempDir(), "events.db"))
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	defer store.Close()
+
+	var count, minimum, maximum int
+	if err := store.db.QueryRowContext(ctx, `
+SELECT count(*), min(version), max(version) FROM schema_migrations`).Scan(&count, &minimum, &maximum); err != nil {
+		t.Fatalf("query migrations: %v", err)
+	}
+	if count != 1 || minimum != 1 || maximum != 1 {
+		t.Fatalf("migration summary = count %d, min %d, max %d; want only version 1", count, minimum, maximum)
+	}
+	assertSchemaObjects(t, store.db, "table", []string{
+		"event_streams", "events", "consumer_cursors", "normalized_access_events", "access_archive_days",
+	})
+	assertSchemaObjects(t, store.db, "index", []string{
+		"events_received_idx", "events_node_kind_idx", "normalized_access_recent_idx",
+		"normalized_access_node_recent_idx", "normalized_access_archive_idx",
+	})
+	assertTableColumns(t, store.db, "events", []string{
+		"ingest_id", "event_id", "node_id", "stream_id", "sequence", "kind",
+		"observed_at", "event_json", "received_at",
+	})
+	assertTableColumns(t, store.db, "consumer_cursors", []string{
+		"last_event_rowid", "consecutive_failures", "failed_event_rowid", "last_error", "retry_after",
+	})
+	assertTableColumns(t, store.db, "normalized_access_events", []string{
+		"source_stream_id", "source_event_id", "agent_event_id", "authorization_id",
+		"observed_at_ns", "observed_day", "payload_sha256",
+	})
+}
 
 func TestIngestPersistsAndIdempotentlyReplaysContiguousEvents(t *testing.T) {
 	ctx := context.Background()
@@ -216,5 +256,44 @@ func testBatch(t *testing.T, first, last uint64, observedAt time.Time) agentv1.E
 	return agentv1.EventBatch{
 		APIVersion: agentv1.APIVersion, NodeID: testNodeID, StreamID: testStreamID,
 		FirstSequence: first, LastSequence: last, Events: events,
+	}
+}
+
+func assertSchemaObjects(t *testing.T, database *sql.DB, objectType string, names []string) {
+	t.Helper()
+	for _, name := range names {
+		var count int
+		if err := database.QueryRow(`
+SELECT count(*) FROM sqlite_schema WHERE type = ? AND name = ?`, objectType, name).Scan(&count); err != nil {
+			t.Fatalf("query %s %q: %v", objectType, name, err)
+		}
+		if count != 1 {
+			t.Errorf("%s %q count = %d, want 1", objectType, name, count)
+		}
+	}
+}
+
+func assertTableColumns(t *testing.T, database *sql.DB, table string, expected []string) {
+	t.Helper()
+	rows, err := database.Query("SELECT name FROM pragma_table_info(?)", table)
+	if err != nil {
+		t.Fatalf("query columns for %q: %v", table, err)
+	}
+	defer rows.Close()
+	columns := make(map[string]struct{})
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			t.Fatalf("scan column for %q: %v", table, err)
+		}
+		columns[name] = struct{}{}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate columns for %q: %v", table, err)
+	}
+	for _, name := range expected {
+		if _, ok := columns[name]; !ok {
+			t.Errorf("table %q is missing column %q", table, name)
+		}
 	}
 }

@@ -1,6 +1,8 @@
 # Relayward Operations
 
-This document covers the supported first-release deployment: one Linux AMD64 control-plane container with persistent state in `.data` under the deployment directory. The center may be reached directly over HTTP or through an HTTPS reverse proxy.
+This document covers the current public development deployment: one Linux AMD64 control-plane container with persistent state in `.data` under the deployment directory. The center may be reached directly over HTTP or through an HTTPS reverse proxy.
+
+All current `v0.x` releases are development artifacts. They do not provide a persistent-data compatibility contract, so a data directory created by one version must not be opened by another version. The first compatibility release will state its upgrade contract explicitly.
 
 ## Install
 
@@ -48,14 +50,19 @@ A storage snapshot may be taken without a long stop only when it preserves a cra
 
 Restore the complete `.data` directory into an empty deployment, pin the center image to the version that created the backup, start Relayward, and run the health check before changing versions. Do not merge files from different backup points.
 
-## Upgrade
+## Replace A Development Version
 
-1. Read the release notes and retain the currently running image version.
-2. Create a point-in-time backup of `.data`. Database migrations are forward-only.
-3. Change `RELAYWARD_VERSION` to the exact target release.
-4. Pull and recreate the service:
+Current `v0.x` versions require a clean initialization instead of an in-place database upgrade:
+
+1. Read the release notes and record the currently running image version.
+2. Stop Relayward and retain the complete old `.data` directory if its state may still be needed. It can be restored only with that exact old image version.
+3. Move the old `.data` aside so the target release starts with an empty data path. Do not merge or copy database, key, plugin, or event files into the new directory.
+4. Change `RELAYWARD_VERSION` to the exact target release, then pull and recreate the service:
 
    ```bash
+   docker compose down
+   mv .data .data.previous
+   # Edit RELAYWARD_VERSION in .env before continuing.
    docker compose config --quiet
    docker compose pull
    docker compose up -d --wait
@@ -63,20 +70,21 @@ Restore the complete `.data` directory into an empty deployment, pin the center 
    docker compose logs --tail=100 relayward
    ```
 
-5. Confirm that the administration UI reports encrypted secrets as available and that expected Agents reconnect.
+5. Initialize the administrator again, reinstall plugins, recreate nodes, users, authorizations, and service bindings, then enroll the Agents again.
+6. Confirm that the administration UI reports encrypted secrets as available and that expected Agents reconnect.
 
 Plugin upgrades are separate administrator actions. Relayward verifies Release metadata and SHA-256 values, starts the candidate with its approved permissions, and commits it only after health checks pass. A failed candidate restores the previous center plugin. Failed upgrades and automatic rollback outcomes are recorded in the audit log.
 
 ## Rollback
 
-Changing only the image tag is safe only when no forward database migration ran. For a released upgrade, assume a migration may have run:
+Rollback during the current `v0.x` development period means restoring the complete data directory paired with the old image:
 
 1. Stop Relayward.
 2. Restore the complete pre-upgrade `.data` backup.
 3. Set `RELAYWARD_VERSION` to the matching previous release.
 4. Start Relayward and verify the health endpoint, secret availability, administrator login, and Agent reconnections.
 
-Do not run an older binary against a data directory already migrated by a newer release.
+Do not run any `v0.x` binary against a data directory created by a different version.
 
 ## Lost Or Damaged Instance Key
 

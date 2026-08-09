@@ -333,107 +333,74 @@ type migration struct {
 
 var migrations = []migration{
 	{version: 1, sql: `
-	CREATE TABLE event_streams (
-	    node_id TEXT NOT NULL,
-	    stream_id TEXT NOT NULL,
-	    highest_contiguous_sequence INTEGER NOT NULL DEFAULT 0 CHECK (highest_contiguous_sequence >= 0),
-	    updated_at INTEGER NOT NULL,
-	    PRIMARY KEY (node_id, stream_id)
-	);
+CREATE TABLE event_streams (
+    node_id TEXT NOT NULL,
+    stream_id TEXT NOT NULL,
+    highest_contiguous_sequence INTEGER NOT NULL DEFAULT 0 CHECK (highest_contiguous_sequence >= 0),
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (node_id, stream_id)
+);
 
-	CREATE TABLE events (
-	    event_id TEXT PRIMARY KEY CHECK (length(event_id) = 64),
-	    node_id TEXT NOT NULL,
-	    stream_id TEXT NOT NULL,
-	    sequence INTEGER NOT NULL CHECK (sequence > 0),
-	    kind TEXT NOT NULL,
-	    observed_at TEXT NOT NULL,
-	    event_json TEXT NOT NULL CHECK (json_valid(event_json)),
-	    received_at INTEGER NOT NULL,
-	    UNIQUE (node_id, stream_id, sequence)
-	);
-	CREATE INDEX events_received_idx ON events(received_at, event_id);
-	CREATE INDEX events_node_kind_idx ON events(node_id, kind, received_at);
-	`},
-	{version: 2, sql: `
-	CREATE TABLE consumer_cursors (
-	    consumer_id TEXT PRIMARY KEY,
-		    last_event_rowid INTEGER NOT NULL DEFAULT 0 CHECK (last_event_rowid >= 0),
-		    consecutive_failures INTEGER NOT NULL DEFAULT 0 CHECK (consecutive_failures >= 0),
-		    failed_event_rowid INTEGER,
-		    last_error TEXT NOT NULL DEFAULT '',
-	    retry_after INTEGER,
-	    updated_at INTEGER NOT NULL
-	);
+CREATE TABLE events (
+    ingest_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_id TEXT NOT NULL UNIQUE CHECK (length(event_id) = 64),
+    node_id TEXT NOT NULL,
+    stream_id TEXT NOT NULL,
+    sequence INTEGER NOT NULL CHECK (sequence > 0),
+    kind TEXT NOT NULL,
+    observed_at TEXT NOT NULL,
+    event_json TEXT NOT NULL CHECK (json_valid(event_json)),
+    received_at INTEGER NOT NULL,
+    UNIQUE (node_id, stream_id, sequence)
+);
+CREATE INDEX events_received_idx ON events(received_at, event_id);
+CREATE INDEX events_node_kind_idx ON events(node_id, kind, received_at);
 
-	CREATE TABLE normalized_access_events (
-	    id INTEGER PRIMARY KEY AUTOINCREMENT,
-	    node_id TEXT NOT NULL,
-	    plugin_id TEXT NOT NULL,
-	    source_stream_id TEXT NOT NULL,
-	    source_event_id TEXT NOT NULL,
-	    agent_event_id TEXT NOT NULL,
-	    service_id TEXT NOT NULL,
-	    authorization_id TEXT NOT NULL,
-	    source_ip TEXT NOT NULL DEFAULT '',
-	    destination TEXT NOT NULL DEFAULT '',
-	    destination_port INTEGER NOT NULL DEFAULT 0 CHECK (destination_port BETWEEN 0 AND 65535),
-	    network TEXT NOT NULL DEFAULT '',
-	    protocol TEXT NOT NULL DEFAULT '',
-	    action TEXT NOT NULL CHECK (action IN ('accepted', 'blocked')),
-	    observed_at_ns INTEGER NOT NULL,
-	    observed_day TEXT NOT NULL CHECK (length(observed_day) = 10),
-	    received_at INTEGER NOT NULL,
-	    payload_sha256 TEXT NOT NULL CHECK (length(payload_sha256) = 64),
-	    UNIQUE (node_id, plugin_id, source_stream_id, source_event_id)
-	);
-	CREATE INDEX normalized_access_recent_idx ON normalized_access_events(observed_at_ns DESC, id DESC);
-	CREATE INDEX normalized_access_node_recent_idx ON normalized_access_events(node_id, observed_at_ns DESC, id DESC);
-	CREATE INDEX normalized_access_archive_idx ON normalized_access_events(observed_day, id);
+CREATE TABLE consumer_cursors (
+    consumer_id TEXT PRIMARY KEY,
+    last_event_rowid INTEGER NOT NULL DEFAULT 0 CHECK (last_event_rowid >= 0),
+    consecutive_failures INTEGER NOT NULL DEFAULT 0 CHECK (consecutive_failures >= 0),
+    failed_event_rowid INTEGER,
+    last_error TEXT NOT NULL DEFAULT '',
+    retry_after INTEGER,
+    updated_at INTEGER NOT NULL
+);
 
-	CREATE TABLE access_archive_days (
-	    day TEXT PRIMARY KEY CHECK (length(day) = 10),
-	    relative_path TEXT NOT NULL,
-	    event_count INTEGER NOT NULL CHECK (event_count > 0),
-	    max_access_id INTEGER NOT NULL CHECK (max_access_id > 0),
-	    sha256 TEXT NOT NULL CHECK (length(sha256) = 64),
-	    completed_at INTEGER NOT NULL,
-	    updated_at INTEGER NOT NULL
-	);
-	`},
-	{version: 3, sql: `
-	CREATE TABLE events_v3 (
-	    ingest_id INTEGER PRIMARY KEY AUTOINCREMENT,
-	    event_id TEXT NOT NULL UNIQUE CHECK (length(event_id) = 64),
-	    node_id TEXT NOT NULL,
-	    stream_id TEXT NOT NULL,
-	    sequence INTEGER NOT NULL CHECK (sequence > 0),
-	    kind TEXT NOT NULL,
-	    observed_at TEXT NOT NULL,
-	    event_json TEXT NOT NULL CHECK (json_valid(event_json)),
-	    received_at INTEGER NOT NULL,
-	    UNIQUE (node_id, stream_id, sequence)
-	);
+CREATE TABLE normalized_access_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    node_id TEXT NOT NULL,
+    plugin_id TEXT NOT NULL,
+    source_stream_id TEXT NOT NULL,
+    source_event_id TEXT NOT NULL,
+    agent_event_id TEXT NOT NULL,
+    service_id TEXT NOT NULL,
+    authorization_id TEXT NOT NULL,
+    source_ip TEXT NOT NULL DEFAULT '',
+    destination TEXT NOT NULL DEFAULT '',
+    destination_port INTEGER NOT NULL DEFAULT 0 CHECK (destination_port BETWEEN 0 AND 65535),
+    network TEXT NOT NULL DEFAULT '',
+    protocol TEXT NOT NULL DEFAULT '',
+    action TEXT NOT NULL CHECK (action IN ('accepted', 'blocked')),
+    observed_at_ns INTEGER NOT NULL,
+    observed_day TEXT NOT NULL CHECK (length(observed_day) = 10),
+    received_at INTEGER NOT NULL,
+    payload_sha256 TEXT NOT NULL CHECK (length(payload_sha256) = 64),
+    UNIQUE (node_id, plugin_id, source_stream_id, source_event_id)
+);
+CREATE INDEX normalized_access_recent_idx ON normalized_access_events(observed_at_ns DESC, id DESC);
+CREATE INDEX normalized_access_node_recent_idx ON normalized_access_events(node_id, observed_at_ns DESC, id DESC);
+CREATE INDEX normalized_access_archive_idx ON normalized_access_events(observed_day, id);
 
-	INSERT INTO events_v3(
-	    ingest_id, event_id, node_id, stream_id, sequence, kind, observed_at, event_json, received_at
-	)
-	SELECT rowid, event_id, node_id, stream_id, sequence, kind, observed_at, event_json, received_at
-	FROM events ORDER BY rowid;
-
-	DELETE FROM sqlite_sequence WHERE name = 'events_v3';
-	INSERT INTO sqlite_sequence(name, seq)
-	SELECT 'events_v3', MAX(position) FROM (
-	    SELECT COALESCE(MAX(ingest_id), 0) AS position FROM events_v3
-	    UNION ALL
-	    SELECT COALESCE(MAX(last_event_rowid), 0) FROM consumer_cursors
-	);
-
-	DROP TABLE events;
-	ALTER TABLE events_v3 RENAME TO events;
-	CREATE INDEX events_received_idx ON events(received_at, event_id);
-	CREATE INDEX events_node_kind_idx ON events(node_id, kind, received_at);
-	`},
+CREATE TABLE access_archive_days (
+    day TEXT PRIMARY KEY CHECK (length(day) = 10),
+    relative_path TEXT NOT NULL,
+    event_count INTEGER NOT NULL CHECK (event_count > 0),
+    max_access_id INTEGER NOT NULL CHECK (max_access_id > 0),
+    sha256 TEXT NOT NULL CHECK (length(sha256) = 64),
+    completed_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+`},
 }
 
 func migrate(ctx context.Context, database *sql.DB) error {
