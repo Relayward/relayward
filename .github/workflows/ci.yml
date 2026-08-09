@@ -98,7 +98,7 @@ jobs:
           docker exec --user 10001 relayward-ci test -f /var/lib/relayward/relayward.db
       - name: Log in to GHCR
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
