@@ -315,13 +315,13 @@ func TestAdministratorSettingsCredentialsAndSessionsHTTPFlow(t *testing.T) {
 	operatorSession := cookieByName(t, operatorLogin.Result().Cookies(), sessionCookieName)
 	operatorCSRF := cookieByName(t, operatorLogin.Result().Cookies(), csrfCookieName)
 	password := performRequest(handler, http.MethodPut, "/api/v1/auth/password",
-		[]byte(`{"password":"correct horse battery staple","new_password":"replacement administrator password"}`),
+		[]byte(`{"password":"correct horse battery staple","new_password":"x"}`),
 		map[string]string{"Content-Type": "application/json", "X-CSRF-Token": operatorCSRF.Value}, operatorSession)
 	if password.Code != http.StatusNoContent {
 		t.Fatalf("password update status = %d, body = %s", password.Code, password.Body.String())
 	}
 	newLogin := performRequest(handler, http.MethodPost, "/api/v1/auth/login",
-		[]byte(`{"username":"operator","password":"replacement administrator password"}`),
+		[]byte(`{"username":"operator","password":"x"}`),
 		map[string]string{"Content-Type": "application/json"})
 	if newLogin.Code != http.StatusOK {
 		t.Fatalf("new password login status = %d, body = %s", newLogin.Code, newLogin.Body.String())

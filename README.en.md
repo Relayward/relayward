@@ -99,7 +99,7 @@ For Nginx or a hosting panel, preserve the original `Host` header, pass `X-Forwa
 
 ### 3. Initialize The Administrator
 
-Open the selected HTTP or HTTPS address in a browser and create the single administrator. Passwords must contain at least 12 characters.
+Open the selected HTTP or HTTPS address in a browser and create the single administrator.
 
 After signing in:
 

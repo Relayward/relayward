@@ -1,13 +1,16 @@
 package auth
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestPasswordRoundTrip(t *testing.T) {
-	encoded, err := HashPassword("correct horse battery staple")
+	encoded, err := HashPassword("x")
 	if err != nil {
 		t.Fatalf("HashPassword() error = %v", err)
 	}
-	valid, err := VerifyPassword(encoded, "correct horse battery staple")
+	valid, err := VerifyPassword(encoded, "x")
 	if err != nil {
 		t.Fatalf("VerifyPassword() error = %v", err)
 	}
@@ -24,8 +27,11 @@ func TestPasswordRoundTrip(t *testing.T) {
 }
 
 func TestPasswordValidation(t *testing.T) {
-	if _, err := HashPassword("too short"); err == nil {
-		t.Fatal("HashPassword() error = nil for short password")
+	if _, err := HashPassword(""); err == nil {
+		t.Fatal("HashPassword() error = nil for empty password")
+	}
+	if _, err := HashPassword(strings.Repeat("x", 1025)); err == nil {
+		t.Fatal("HashPassword() error = nil for oversized password")
 	}
 	if _, err := VerifyPassword("invalid", "password"); err == nil {
 		t.Fatal("VerifyPassword() error = nil for malformed hash")

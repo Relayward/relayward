@@ -82,7 +82,7 @@ func TestRunAdminResetPasswordFromStdin(t *testing.T) {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	if err := runAdmin([]string{"reset-password", "-data", directory, "-password-stdin"},
-		strings.NewReader("replacement administrator password\n"), &stdout, &stderr); err != nil {
+		strings.NewReader("x\n"), &stdout, &stderr); err != nil {
 		t.Fatalf("runAdmin(reset-password) error = %v, stderr = %q", err, stderr.String())
 	}
 	if !strings.Contains(stdout.String(), "sessions were revoked") {
@@ -98,7 +98,7 @@ func TestRunAdminResetPasswordFromStdin(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	valid, err := auth.VerifyPassword(administrator.PasswordHash, "replacement administrator password")
+	valid, err := auth.VerifyPassword(administrator.PasswordHash, "x")
 	if err != nil || !valid {
 		t.Fatalf("replacement password valid = %t, %v", valid, err)
 	}

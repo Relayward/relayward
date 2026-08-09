@@ -111,7 +111,7 @@ Node, user, authorization, traffic, event, and audit data are not deleted by thi
 
 ## Administrator Password Recovery
 
-If the administrator password is lost, reset it locally against the persistent `.data` directory. Stop the center first so no running process can continue using stale session state. The new password must contain at least 12 characters and is read from standard input so it does not appear in the process list or shell history.
+If the administrator password is lost, reset it locally against the persistent `.data` directory. Stop the center first so no running process can continue using stale session state. The new password is read from standard input so it does not appear in the process list or shell history.
 
 ```bash
 docker compose stop relayward

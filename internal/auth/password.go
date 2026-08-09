@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"unicode/utf8"
 
 	"golang.org/x/crypto/argon2"
 )
@@ -36,11 +35,11 @@ func HashPassword(password string) (string, error) {
 }
 
 func ValidatePassword(password string) error {
-	if utf8.RuneCountInString(password) < 12 {
-		return fmt.Errorf("%w: must contain at least 12 characters", ErrInvalidPassword)
+	if password == "" {
+		return fmt.Errorf("%w: must not be empty", ErrInvalidPassword)
 	}
 	if len(password) > 1024 {
-		return fmt.Errorf("%w: must contain at most 1024 characters", ErrInvalidPassword)
+		return fmt.Errorf("%w: must contain at most 1024 bytes", ErrInvalidPassword)
 	}
 	return nil
 }

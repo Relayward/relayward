@@ -313,7 +313,7 @@ func (server *Server) updatePassword(w http.ResponseWriter, request *http.Reques
 	if err := server.auth.ChangePassword(request.Context(), input.Password, input.NewPassword, input.SecondFactor); err != nil {
 		if errors.Is(err, auth.ErrInvalidPassword) {
 			writeProblemWithViolations(w, http.StatusBadRequest, protocol.ErrorInvalidArgument, err.Error(), false,
-				[]protocol.FieldViolation{{Field: "new_password", Description: "must contain 12 to 1024 characters"}})
+				[]protocol.FieldViolation{{Field: "new_password", Description: "must not be empty or exceed 1024 bytes"}})
 			return
 		}
 		server.sensitiveActionError(w, request, err)
