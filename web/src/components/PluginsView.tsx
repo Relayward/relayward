@@ -277,10 +277,10 @@ function PluginReleaseDialog({ existing, onClose, onSaved }: {
           <Input value={repository} onChange={(event) => changeSource(() => setRepository(event.target.value))} disabled={existing !== undefined} placeholder="https://github.com/owner/repository" required />
         </FieldLabel>
         <div className="grid grid-cols-2 gap-4 max-[700px]:grid-cols-1">
-          <FieldLabel label={t("Version")}>
+          <FieldLabel label={t("{field} (optional)", { field: t("Version") })}>
             <Input value={version} onChange={(event) => changeSource(() => setVersion(event.target.value))} placeholder={t("Latest stable release")} />
           </FieldLabel>
-          <FieldLabel label={t("GitHub token")}>
+          <FieldLabel label={t("{field} (optional)", { field: t("GitHub token") })}>
             <Input value={token} onChange={(event) => changeSource(() => setToken(event.target.value))} type="password" autoComplete="off" placeholder={existing === undefined ? t("Public repository") : t("Use saved token")} />
           </FieldLabel>
         </div>

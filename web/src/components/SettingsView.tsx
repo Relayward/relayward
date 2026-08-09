@@ -105,7 +105,7 @@ export function SettingsView() {
                 <CardDescription>{t("Canonical HTTP or HTTPS origin used when generating public links.")}</CardDescription>
               </CardHeader>
               <CardContent>
-                <SettingField id="settings-public-url" label={t("Public URL")} description={t("Defaults to the address currently opened in the browser. You can change it.")}>
+                <SettingField id="settings-public-url" label={t("{field} (optional)", { field: t("Public URL") })} description={t("Defaults to the address currently opened in the browser. You can change it.")}>
                   <Input id="settings-public-url" type="url" placeholder="https://panel.example.com" maxLength={2048} value={draft?.public_url ?? ""} onChange={(event) => update("public_url", event.target.value)} />
                   {draft?.public_url.trim().toLowerCase().startsWith("http://") ? (
                     <p className="m-0 flex items-start gap-2 text-sm text-warning-strong" role="status">
@@ -131,10 +131,10 @@ export function SettingsView() {
                 <SettingField id="settings-refresh-hours" label={t("Refresh interval")} description={t("Set to 0 to omit the client refresh hint.")} suffix={t("hours")}>
                   <Input id="settings-refresh-hours" type="number" min="0" max="8760" step="1" value={draft?.subscription_refresh_hours ?? ""} onChange={(event) => update("subscription_refresh_hours", Number(event.target.value))} required />
                 </SettingField>
-                <SettingField id="settings-support-url" label={t("Support URL")}>
+                <SettingField id="settings-support-url" label={t("{field} (optional)", { field: t("Support URL") })}>
                   <Input id="settings-support-url" type="url" placeholder="https://support.example.com" maxLength={2048} value={draft?.support_url ?? ""} onChange={(event) => update("support_url", event.target.value)} />
                 </SettingField>
-                <SettingField id="settings-profile-url" label={t("Profile URL")}>
+                <SettingField id="settings-profile-url" label={t("{field} (optional)", { field: t("Profile URL") })}>
                   <Input id="settings-profile-url" type="url" placeholder="https://example.com/account" maxLength={2048} value={draft?.profile_url ?? ""} onChange={(event) => update("profile_url", event.target.value)} />
                 </SettingField>
               </CardContent>

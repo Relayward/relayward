@@ -49,7 +49,7 @@ export function AnnouncementView() {
       <div className="grid grid-cols-[minmax(0,1.7fr)_minmax(280px,.8fr)] gap-5 max-[900px]:grid-cols-1">
         <Card>
           <CardHeader>
-            <CardTitle>{t("Content")}</CardTitle>
+            <CardTitle>{t("{field} (optional)", { field: t("Content") })}</CardTitle>
             <CardDescription>{t("Public subscription announcement")}</CardDescription>
           </CardHeader>
           <CardContent>

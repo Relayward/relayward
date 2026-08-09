@@ -279,7 +279,7 @@ function PluginConfigurationDialog({ value, onClose, onSaved }: {
           <FieldLabel label={t("Version")}>
             <Input value={version} onChange={(event) => setVersion(event.target.value)} disabled={state === "absent"} required={state !== "absent"} />
           </FieldLabel>
-          <FieldLabel label={t("Configuration override")}>
+          <FieldLabel label={t("{field} (optional)", { field: t("Configuration override") })}>
             <Textarea className="min-h-44 font-mono" value={configuration} onChange={(event) => setConfiguration(event.target.value)} disabled={state === "absent"} rows={8} spellCheck={false} />
           </FieldLabel>
         </div>

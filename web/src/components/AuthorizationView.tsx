@@ -373,7 +373,7 @@ function AuthorizationDialog({ value, nodes, users, defaultTimezone, onClose, on
         <div className="grid grid-cols-2 gap-x-4 gap-y-4 max-[700px]:grid-cols-1">
           <SelectField label={t("User")} value={userID} onChange={setUserID} disabled={value !== undefined} options={users.map((user) => ({ value: user.id, label: user.display_name }))} />
           <SelectField label={t("Node")} value={nodeID} onChange={setNodeID} disabled={value !== undefined} options={nodes.map((node) => ({ value: node.id, label: node.name }))} />
-          <NumberField label={t("Traffic quota (GiB)")} value={quotaGiB} onChange={setQuotaGiB} min="0" step="0.01" required={false} />
+          <NumberField label={t("{field} (optional)", { field: t("Traffic quota (GiB)") })} value={quotaGiB} onChange={setQuotaGiB} min="0" step="0.01" required={false} />
           <SelectField label={t("Reset")} value={resetKind} onChange={(next) => {
             const kind = next as ResetKind;
             setResetKind(kind);
@@ -387,8 +387,8 @@ function AuthorizationDialog({ value, nodes, users, defaultTimezone, onClose, on
           {resetKind === "interval_days" ? <NumberField label={t("Interval (days)")} value={resetValue} onChange={setResetValue} min="1" max="3650" step="1" /> : null}
           <FieldLabel label={t("Timezone")}><Input value={timezone} onChange={(event) => setTimezone(event.target.value)} list="relayward-timezones" required /></FieldLabel>
           {resetKind === "interval_days" ? <DateTimeField label={t("Period anchor")} value={periodAnchor} onChange={setPeriodAnchor} required /> : null}
-          <DateTimeField label={t("Expires")} value={expiresAt} onChange={setExpiresAt} />
-          <NumberField label={t("Soft IP limit")} value={softIPLimit} onChange={setSoftIPLimit} min="1" max="1024" step="1" required={false} />
+          <DateTimeField label={t("{field} (optional)", { field: t("Expires") })} value={expiresAt} onChange={setExpiresAt} />
+          <NumberField label={t("{field} (optional)", { field: t("Soft IP limit") })} value={softIPLimit} onChange={setSoftIPLimit} min="1" max="1024" step="1" required={false} />
           <NumberField label={t("Activity window (minutes)")} value={activityMinutes} onChange={setActivityMinutes} min="1" max="1440" step="1" />
           <NumberField label={t("Block duration (minutes)")} value={blockMinutes} onChange={setBlockMinutes} min="1" max="10080" step="1" />
         </div>

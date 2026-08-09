@@ -240,7 +240,7 @@ export function UsersView() {
         description={t("{count} users", { count: visibleItems.length })}
         actions={<><Input className="max-w-sm" value={search} onChange={(event) => setSearch(event.target.value)} placeholder={t("Search users...")} /><Button className="shrink-0" onClick={() => setEditing("new")} type="button"><Plus />{t("Add user")}</Button></>}
         tableClassName="min-w-[640px]"
-        headers={["Name", "Email", "Telegram", "Actions"].map((value) => t(value))}
+        headers={["User identifier", "Email", "Telegram", "Actions"].map((value) => t(value))}
         loading={loading}
         empty={t("No users have been created.")}
         error={error}
@@ -385,10 +385,10 @@ function UserDialog({ value, onClose, onSaved }: { value?: User; onClose: () => 
     <Modal title={value ? t("Edit user") : t("Add user")} onClose={onClose}>
       <form className="grid gap-5" onSubmit={submit}>
         <div className="grid gap-4">
-          <Field label={t("Display name")} value={displayName} onChange={setDisplayName} autoFocus />
-          <Field label={t("Email")} value={email} onChange={setEmail} type="email" required={false} />
-          <Field label={t("Telegram")} value={telegram} onChange={setTelegram} required={false} />
-          <label className="grid gap-1.5"><span className="text-sm font-semibold text-foreground/80">{t("Note")}</span><Textarea value={note} onChange={(event) => setNote(event.target.value)} rows={4} /></label>
+          <Field label={t("User identifier")} value={displayName} onChange={setDisplayName} autoFocus />
+          <Field label={t("{field} (optional)", { field: t("Email") })} value={email} onChange={setEmail} type="email" required={false} />
+          <Field label={t("{field} (optional)", { field: t("Telegram") })} value={telegram} onChange={setTelegram} required={false} />
+          <label className="grid gap-1.5"><span className="text-sm font-semibold text-foreground/80">{t("{field} (optional)", { field: t("Note") })}</span><Textarea value={note} onChange={(event) => setNote(event.target.value)} rows={4} /></label>
         </div>
         <FormError message={error !== undefined ? t(error) : undefined} />
         <DialogActions busy={busy} onClose={onClose} submitLabel={value ? t("Save") : t("Add user")} />
