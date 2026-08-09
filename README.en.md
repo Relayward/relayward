@@ -72,7 +72,7 @@ Review `.env` before starting and keep its permissions at `0600` because optiona
 
 ```bash
 docker compose config --quiet
-docker compose up -d
+docker compose up -d --wait
 docker compose exec relayward relayward healthcheck
 docker compose logs --tail=100 relayward
 ```
@@ -82,6 +82,8 @@ The health check must report success before continuing. All persistent state is 
 ### 2. Choose The Access Method
 
 Relayward fully supports direct HTTP access; HTTPS is not required to start or use the system. With HTTP, administrator credentials, session data, registration credentials, commands, and telemetry travel without encryption, and the UI displays a persistent security warning. Use HTTP only on networks where you accept that risk.
+
+Direct HTTP access also requires allowing the TCP port configured by `RELAYWARD_PORT` through both the cloud firewall and the host firewall. If the host uses UFW and keeps the default port, run `ufw allow 8080/tcp`; use the matching firewall tool and actual port in other environments.
 
 An HTTPS reverse proxy is strongly recommended. Terminate TLS at the proxy and forward every path, including WebSocket upgrades, to `127.0.0.1:8080`. A minimal Caddy site is:
 

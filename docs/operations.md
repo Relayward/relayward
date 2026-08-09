@@ -22,11 +22,11 @@ This document covers the supported first-release deployment: one Linux AMD64 con
    ```bash
    docker compose config --quiet
    docker compose pull
-   docker compose up -d
+   docker compose up -d --wait
    docker compose exec relayward relayward healthcheck
    ```
 
-4. Choose the access method. Direct HTTP is supported, but administrator credentials, sessions, subscription tokens, Agent registration credentials, commands, and telemetry are not encrypted in transit. An HTTPS reverse proxy is strongly recommended for untrusted networks and public deployments. When using a proxy, forward every path including WebSocket upgrades, preserve `Host`, and pass `X-Forwarded-Proto`.
+4. Choose the access method. Direct HTTP is supported, but administrator credentials, sessions, subscription tokens, Agent registration credentials, commands, and telemetry are not encrypted in transit. Direct HTTP also requires allowing the TCP port configured by `RELAYWARD_PORT` through the cloud firewall and host firewall. An HTTPS reverse proxy is strongly recommended for untrusted networks and public deployments. When using a proxy, forward every path including WebSocket upgrades, preserve `Host`, and pass `X-Forwarded-Proto`.
 5. Open the selected HTTP or HTTPS administration URL and create the single administrator. TOTP is optional but strongly recommended on public or untrusted networks. If enabled, store its generated recovery codes outside the Relayward `.data` directory.
 
 The center image is Linux AMD64 only. Its entrypoint uses root only to prepare the mounted data directory, then Relayward and its plugins run as UID `10001`. Plugins are administrator-approved native executables and share the Relayward account; plugin process isolation is not a hostile-code sandbox.
@@ -40,7 +40,7 @@ For a portable backup, stop the service and archive the complete `.data` directo
 ```bash
 docker compose stop relayward
 # Create a point-in-time archive or storage snapshot of .data.
-docker compose start relayward
+docker compose up -d --wait relayward
 docker compose exec relayward relayward healthcheck
 ```
 
@@ -58,7 +58,7 @@ Restore the complete `.data` directory into an empty deployment, pin the center 
    ```bash
    docker compose config --quiet
    docker compose pull
-   docker compose up -d
+   docker compose up -d --wait
    docker compose exec relayward relayward healthcheck
    docker compose logs --tail=100 relayward
    ```
@@ -92,7 +92,7 @@ Preferred recovery is to restore the complete `.data` directory, including the o
    docker compose run --rm --no-deps relayward \
      admin recover-secrets -data /var/lib/relayward \
      -confirm-discard-encrypted-secrets
-   docker compose up -d
+   docker compose up -d --wait
    ```
 
 3. Sign in with the administrator password. TOTP, recovery codes, sessions, saved private GitHub tokens, stored node-plugin configurations, and pending encrypted plugin commands have been discarded.
@@ -112,7 +112,7 @@ printf '\n'
 printf '%s\n' "$RELAYWARD_PASSWORD" | docker compose run --rm --no-deps -T relayward \
   admin reset-password -data /var/lib/relayward -password-stdin
 unset RELAYWARD_PASSWORD
-docker compose up -d
+docker compose up -d --wait
 docker compose exec relayward relayward healthcheck
 ```
 

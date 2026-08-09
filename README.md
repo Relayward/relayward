@@ -72,7 +72,7 @@ chmod 600 .env
 
 ```bash
 docker compose config --quiet
-docker compose up -d
+docker compose up -d --wait
 docker compose exec relayward relayward healthcheck
 docker compose logs --tail=100 relayward
 ```
@@ -82,6 +82,8 @@ docker compose logs --tail=100 relayward
 ### 2. 配置访问方式
 
 Relayward 支持直接使用 HTTP，HTTPS 不是启动和使用系统的前置条件。通过 HTTP 使用管理端和 Agent 时，登录凭据、会话数据、注册凭据、命令及遥测会以明文传输；界面会持续显示安全警告。只应在你接受该风险的网络中使用 HTTP。
+
+直接使用 HTTP 时，还需要在云平台防火墙和宿主机防火墙中放行 `RELAYWARD_PORT` 对应的 TCP 端口。仅当宿主机使用 UFW 且保留默认端口时，可以执行 `ufw allow 8080/tcp`；其他环境应使用对应的防火墙工具和实际端口。
 
 强烈建议使用反向代理终止 TLS，并将所有路径（包括 WebSocket 升级请求）转发到 `127.0.0.1:8080`。最小 Caddy 配置如下：
 
