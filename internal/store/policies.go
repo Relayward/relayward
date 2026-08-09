@@ -555,6 +555,44 @@ FROM traffic_periods WHERE authorization_id = ? ORDER BY starts_at DESC, period_
 	return values, nil
 }
 
+func (store *Store) TrafficPeriodByID(ctx context.Context, authorizationID, periodID string) (TrafficPeriod, error) {
+	value, err := scanTrafficPeriod(store.db.QueryRowContext(ctx, `
+SELECT authorization_id, period_id, starts_at, ends_at, upload_bytes, download_bytes,
+       revision, enforced_at, coalesce(observed_at_ns, updated_at * 1000000000), updated_at
+FROM traffic_periods WHERE authorization_id = ? AND period_id = ?`, authorizationID, periodID))
+	if errors.Is(err, sql.ErrNoRows) {
+		return TrafficPeriod{}, ErrNotFound
+	}
+	return value, err
+}
+
+func (store *Store) ListCurrentTrafficPeriods(ctx context.Context) ([]TrafficPeriod, error) {
+	rows, err := store.db.QueryContext(ctx, `
+SELECT traffic.authorization_id, traffic.period_id, traffic.starts_at, traffic.ends_at,
+       traffic.upload_bytes, traffic.download_bytes, traffic.revision, traffic.enforced_at,
+       coalesce(traffic.observed_at_ns, traffic.updated_at * 1000000000), traffic.updated_at
+FROM traffic_periods traffic
+JOIN authorization_policy_status status
+  ON status.authorization_id = traffic.authorization_id AND status.period_id = traffic.period_id
+ORDER BY traffic.authorization_id`)
+	if err != nil {
+		return nil, fmt.Errorf("list current traffic periods: %w", err)
+	}
+	defer rows.Close()
+	values := make([]TrafficPeriod, 0)
+	for rows.Next() {
+		value, err := scanTrafficPeriod(rows)
+		if err != nil {
+			return nil, err
+		}
+		values = append(values, value)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate current traffic periods: %w", err)
+	}
+	return values, nil
+}
+
 func (store *Store) ListLatestTrafficPeriods(ctx context.Context) ([]TrafficPeriod, error) {
 	rows, err := store.db.QueryContext(ctx, `
 SELECT authorization_id, period_id, starts_at, ends_at, upload_bytes, download_bytes,

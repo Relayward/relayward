@@ -89,15 +89,6 @@ func (server *Server) listAuthorizations(w http.ResponseWriter, request *http.Re
 		server.resourceError(w, request, err, "Authorization")
 		return
 	}
-	trafficValues, err := server.store.ListLatestTrafficPeriods(request.Context())
-	if err != nil {
-		server.internalError(w, request, err)
-		return
-	}
-	traffic := make(map[string]store.TrafficPeriod, len(trafficValues))
-	for _, value := range trafficValues {
-		traffic[value.AuthorizationID] = value
-	}
 	statusValues, err := server.store.ListAuthorizationPolicyStatuses(request.Context())
 	if err != nil {
 		server.internalError(w, request, err)
@@ -107,10 +98,20 @@ func (server *Server) listAuthorizations(w http.ResponseWriter, request *http.Re
 	for _, value := range statusValues {
 		statuses[value.AuthorizationID] = value
 	}
+	trafficValues, err := server.store.ListCurrentTrafficPeriods(request.Context())
+	if err != nil {
+		server.internalError(w, request, err)
+		return
+	}
+	traffic := make(map[string]store.TrafficPeriod, len(trafficValues))
+	for _, value := range trafficValues {
+		traffic[value.AuthorizationID] = value
+	}
 	items := make([]authorizationResponse, len(values))
 	for index, value := range values {
 		trafficValue, hasTraffic := traffic[value.ID]
 		statusValue, hasStatus := statuses[value.ID]
+		hasTraffic = hasTraffic && hasStatus && trafficValue.Period.ID == statusValue.Period.ID
 		items[index] = authorizationViewWithRuntime(value, trafficValue, hasTraffic, statusValue, hasStatus)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": items})
@@ -122,21 +123,22 @@ func (server *Server) getAuthorization(w http.ResponseWriter, request *http.Requ
 		server.resourceError(w, request, err, "Authorization")
 		return
 	}
-	traffic, err := server.store.TrafficPeriods(request.Context(), value.ID, 1)
-	if err != nil {
-		server.internalError(w, request, err)
-		return
-	}
 	status, statusErr := server.store.AuthorizationPolicyStatusByID(request.Context(), value.ID)
 	if statusErr != nil && !errors.Is(statusErr, store.ErrNotFound) {
 		server.internalError(w, request, statusErr)
 		return
 	}
 	var trafficValue store.TrafficPeriod
-	if len(traffic) > 0 {
-		trafficValue = traffic[0]
+	hasTraffic := false
+	if statusErr == nil {
+		trafficValue, err = server.store.TrafficPeriodByID(request.Context(), value.ID, status.Period.ID)
+		if err != nil && !errors.Is(err, store.ErrNotFound) {
+			server.internalError(w, request, err)
+			return
+		}
+		hasTraffic = err == nil
 	}
-	writeJSON(w, http.StatusOK, authorizationViewWithRuntime(value, trafficValue, len(traffic) > 0, status, statusErr == nil))
+	writeJSON(w, http.StatusOK, authorizationViewWithRuntime(value, trafficValue, hasTraffic, status, statusErr == nil))
 }
 
 func (server *Server) createAuthorization(w http.ResponseWriter, request *http.Request, _ auth.Authenticated) {

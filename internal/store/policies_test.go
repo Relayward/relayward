@@ -109,6 +109,18 @@ func TestPolicySnapshotReconcileAndTrafficLifecycle(t *testing.T) {
 	if err != nil || len(latest) != 1 || latest[0].Period.ID != nextPeriod.ID || latest[0].Revision != 1 {
 		t.Fatalf("ListLatestTrafficPeriods() = %+v, %v", latest, err)
 	}
+	policyStatus.Generation = 2
+	if err := database.RecordAuthorizationPolicyStatus(ctx, testPolicyNodeID, policyStatus, now.Add(9*time.Minute), now.Add(9*time.Minute)); err != nil {
+		t.Fatalf("RecordAuthorizationPolicyStatus() changed period error = %v", err)
+	}
+	current, err := database.ListCurrentTrafficPeriods(ctx)
+	if err != nil || len(current) != 1 || current[0].Period.ID != period.ID || current[0].Revision != 2 {
+		t.Fatalf("ListCurrentTrafficPeriods() = %+v, %v", current, err)
+	}
+	currentByID, err := database.TrafficPeriodByID(ctx, testPolicyAuthorizationID, period.ID)
+	if err != nil || currentByID.Period.ID != period.ID || currentByID.Revision != 2 {
+		t.Fatalf("TrafficPeriodByID() = %+v, %v", currentByID, err)
+	}
 	statuses, err := database.ListAuthorizationPolicyStatuses(ctx)
 	if err != nil || len(statuses) != 1 || statuses[0].AuthorizationID != testPolicyAuthorizationID || !statuses[0].ServicesEnabled {
 		t.Fatalf("ListAuthorizationPolicyStatuses() = %+v, %v", statuses, err)
