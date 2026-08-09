@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="relayward-mark-title">
+  <title id="relayward-mark-title">Relayward</title>
+  <style>
+    .mark { color: #18181b; }
+    @media (prefers-color-scheme: dark) {
+      .mark { color: #fafafa; }
+    }
+  </style>
+  <g class="mark" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="6">
+    <path d="M17 53V11h18c8.3 0 15 6.7 15 15s-6.7 15-15 15H17" />
+    <path d="M35 41l15 12" />
+  </g>
+  <g class="mark" fill="currentColor">
+    <circle cx="17" cy="11" r="4.5" />
+    <circle cx="35" cy="41" r="4.5" />
+    <circle cx="50" cy="53" r="4.5" />
+  </g>
+</svg>

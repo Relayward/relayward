@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title">
+  <title id="title">Relayward GitHub organization avatar</title>
+  <rect width="512" height="512" fill="#18181b" />
+  <g transform="translate(106 106) scale(4.6875)">
+    <g fill="none" stroke="#fafafa" stroke-linecap="round" stroke-linejoin="round" stroke-width="6">
+      <path d="M17 53V11h18c8.3 0 15 6.7 15 15s-6.7 15-15 15H17" />
+      <path d="M35 41l15 12" />
+    </g>
+    <g fill="#fafafa">
+      <circle cx="17" cy="11" r="4.5" />
+      <circle cx="35" cy="41" r="4.5" />
+      <circle cx="50" cy="53" r="4.5" />
+    </g>
+  </g>
+</svg>

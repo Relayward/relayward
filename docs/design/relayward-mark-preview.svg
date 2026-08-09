@@ -1,0 +1,62 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1040 680" role="img" aria-labelledby="title description">
+  <title id="title">Relayward mark preview</title>
+  <desc id="description">Relayward mark shown on light and dark surfaces and at common interface sizes.</desc>
+  <defs>
+    <symbol id="mark" viewBox="0 0 64 64">
+      <g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="6">
+        <path d="M17 53V11h18c8.3 0 15 6.7 15 15s-6.7 15-15 15H17" />
+        <path d="M35 41l15 12" />
+      </g>
+      <g fill="currentColor">
+        <circle cx="17" cy="11" r="4.5" />
+        <circle cx="35" cy="41" r="4.5" />
+        <circle cx="50" cy="53" r="4.5" />
+      </g>
+    </symbol>
+  </defs>
+
+  <rect width="1040" height="680" fill="#f4f4f5" />
+  <text x="56" y="68" fill="#18181b" font-family="Inter, Arial, sans-serif" font-size="28" font-weight="650">Relayward mark</text>
+  <text x="56" y="98" fill="#71717a" font-family="Inter, Arial, sans-serif" font-size="15">Monochrome, responsive sizes</text>
+
+  <g transform="translate(56 132)">
+    <rect width="448" height="300" rx="8" fill="#ffffff" stroke="#e4e4e7" />
+    <use href="#mark" x="152" y="62" width="144" height="144" color="#18181b" />
+    <text x="224" y="248" fill="#18181b" font-family="Inter, Arial, sans-serif" font-size="20" font-weight="650" text-anchor="middle">Relayward</text>
+    <text x="224" y="276" fill="#71717a" font-family="Inter, Arial, sans-serif" font-size="14" text-anchor="middle">Light surface</text>
+  </g>
+
+  <g transform="translate(536 132)">
+    <rect width="448" height="300" rx="8" fill="#18181b" stroke="#27272a" />
+    <use href="#mark" x="152" y="62" width="144" height="144" color="#fafafa" />
+    <text x="224" y="248" fill="#fafafa" font-family="Inter, Arial, sans-serif" font-size="20" font-weight="650" text-anchor="middle">Relayward</text>
+    <text x="224" y="276" fill="#a1a1aa" font-family="Inter, Arial, sans-serif" font-size="14" text-anchor="middle">Dark surface</text>
+  </g>
+
+  <g transform="translate(56 482)">
+    <text x="0" y="0" fill="#18181b" font-family="Inter, Arial, sans-serif" font-size="15" font-weight="650">Interface sizes</text>
+    <g transform="translate(0 42)" color="#18181b">
+      <use href="#mark" width="16" height="16" />
+      <text x="0" y="44" fill="#71717a" font-family="Inter, Arial, sans-serif" font-size="13">16 px</text>
+    </g>
+    <g transform="translate(112 38)" color="#18181b">
+      <use href="#mark" width="24" height="24" />
+      <text x="0" y="48" fill="#71717a" font-family="Inter, Arial, sans-serif" font-size="13">24 px</text>
+    </g>
+    <g transform="translate(232 34)" color="#18181b">
+      <use href="#mark" width="32" height="32" />
+      <text x="0" y="52" fill="#71717a" font-family="Inter, Arial, sans-serif" font-size="13">32 px</text>
+    </g>
+    <g transform="translate(368 18)" color="#18181b">
+      <use href="#mark" width="64" height="64" />
+      <text x="0" y="68" fill="#71717a" font-family="Inter, Arial, sans-serif" font-size="13">64 px</text>
+    </g>
+  </g>
+
+  <g transform="translate(728 500)">
+    <rect width="256" height="104" rx="8" fill="#ffffff" stroke="#e4e4e7" />
+    <use href="#mark" x="24" y="28" width="48" height="48" color="#18181b" />
+    <text x="92" y="53" fill="#18181b" font-family="Inter, Arial, sans-serif" font-size="18" font-weight="650">Relayward</text>
+    <text x="92" y="76" fill="#71717a" font-family="Inter, Arial, sans-serif" font-size="13">Center console</text>
+  </g>
+</svg>
