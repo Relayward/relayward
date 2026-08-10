@@ -131,7 +131,7 @@ The Agent needs no inbound firewall rule. It connects outbound to the HTTP or HT
 
 Relayward itself does not provide proxy protocols or a proxy core. Select a compatible runtime plugin and use that plugin repository's README as the authority for installation, node configuration, network exposure, and verification.
 
-To install a plugin, open **Plugins**, select **Install plugin**, and enter its GitHub repository, an explicit release version, and an optional token when the repository is private. Select **Check release**, review the manifest and artifacts, approve every requested permission, and install it.
+To install a plugin, open **Plugins**, select **Install plugin**, and enter its GitHub repository and an optional token when the repository is private. Wait for the published release list to load, select the version to install, and then select **Check release**. Review the manifest and artifacts, approve every requested permission, and install it.
 
 Current official runtime plugins are listed under [Related Projects](#related-projects). Protocols, configuration fields, service ports, subscription formats, and acceptance criteria belong to each plugin and are documented in its repository.
 
