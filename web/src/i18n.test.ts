@@ -36,4 +36,10 @@ describe("message translation", () => {
     expect(translateMessage("zh-CN", "Settings saved.")).toBe("设置已保存。");
     expect(translateMessage("zh-CN", "Refresh every {count} hours", { count: 24 })).toBe("每 24 小时刷新");
   });
+
+  it("translates kernel permission copy", () => {
+    expect(translateMessage("zh-CN", "Configure managed node plugins")).toBe("配置受管节点插件");
+    expect(translateMessage("zh-CN", "Read and publish this plugin's configuration on managed nodes."))
+      .toBe("读取并下发此插件在受管节点上的配置。");
+  });
 });

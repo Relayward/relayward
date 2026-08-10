@@ -14,6 +14,7 @@ import {
 } from "../api";
 import { useI18n } from "../i18n";
 import { cn } from "../lib/utils";
+import { pluginPermissionPresentation } from "../pluginPermissions";
 import { FormError } from "./AuthScreen";
 import { Modal } from "./Modal";
 import { PageHeader, StatusBadge, SummaryBar, SummaryItem } from "./PageLayout";
@@ -329,11 +330,17 @@ function PermissionOption({ name, reason, checked, onCheckedChange }: {
   checked: boolean;
   onCheckedChange: (checked: boolean) => void;
 }) {
+  const { t } = useI18n();
   const id = useId();
+  const presentation = pluginPermissionPresentation(name, reason);
   return (
     <label className="flex cursor-pointer items-start gap-2.5 rounded-sm border border-border bg-muted/45 px-3 py-2.5" htmlFor={id}>
       <Checkbox id={id} className="mt-0.5" checked={checked} onCheckedChange={(value) => onCheckedChange(value === true)} />
-      <span className="grid min-w-0 gap-0.5"><strong className="[overflow-wrap:anywhere] text-sm font-semibold">{name}</strong><small className="[overflow-wrap:anywhere] text-xs text-muted-foreground">{reason}</small></span>
+      <span className="grid min-w-0 gap-0.5">
+        <strong className="[overflow-wrap:anywhere] text-sm font-semibold">{t(presentation.title)}</strong>
+        <small className="[overflow-wrap:anywhere] text-xs text-muted-foreground">{t(presentation.description)}</small>
+        <code className="[overflow-wrap:anywhere] text-xs text-muted-foreground/80">{name}</code>
+      </span>
     </label>
   );
 }
