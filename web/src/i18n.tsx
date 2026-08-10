@@ -1,8 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { Languages } from "lucide-react";
 
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { cn } from "@/lib/utils";
+import { Combobox } from "@/components/ui/combobox";
 
 export type Locale = "zh-CN" | "en";
 
@@ -58,6 +57,9 @@ const zhCN: Record<string, string> = {
   "Security": "安全",
   "Settings": "设置",
   "Search...": "搜索...",
+  "Search options...": "搜索选项...",
+  "No matching options.": "没有匹配的选项。",
+  "Use {value}": "使用 {value}",
   "Search pages": "搜索页面",
   "Search pages...": "搜索页面...",
   "Open an administration page": "打开管理页面",
@@ -663,19 +665,17 @@ export function useI18n(): I18nValue {
 export function LanguageSwitcher({ className = "" }: { className?: string }) {
   const { locale, setLocale, t } = useI18n();
   return (
-    <Select value={locale} onValueChange={(value) => setLocale(value as Locale)}>
-      <SelectTrigger
-        className={cn("h-9 w-auto min-w-[8rem] border-transparent bg-transparent px-2 text-muted-foreground hover:bg-accent", className)}
-        aria-label={t("Language")}
-      >
-        <Languages className="size-4" aria-hidden="true" />
-        <SelectValue />
-      </SelectTrigger>
-      <SelectContent align="end">
-        <SelectItem value="zh-CN">简体中文</SelectItem>
-        <SelectItem value="en">English</SelectItem>
-      </SelectContent>
-    </Select>
+    <Combobox
+      value={locale}
+      onValueChange={(value) => setLocale(value as Locale)}
+      options={[{ value: "zh-CN", label: "简体中文" }, { value: "en", label: "English" }]}
+      searchPlaceholder={t("Search options...")}
+      emptyText={t("No matching options.")}
+      className={`h-9 w-auto min-w-[8rem] border-transparent bg-transparent px-2 text-muted-foreground hover:bg-accent ${className}`}
+      leadingIcon={<Languages className="size-4" aria-hidden="true" />}
+      aria-label={t("Language")}
+      align="end"
+    />
   );
 }
 

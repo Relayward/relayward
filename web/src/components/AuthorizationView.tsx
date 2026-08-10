@@ -26,15 +26,16 @@ import {
 } from "../api";
 import { useI18n } from "../i18n";
 import { cn } from "../lib/utils";
+import { timezoneOptions } from "../timezones";
 import { FormError } from "./AuthScreen";
 import { Modal } from "./Modal";
 import { PageHeader, StatusBadge, SummaryBar, SummaryItem } from "./PageLayout";
 import { Button } from "./ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
 import { Checkbox } from "./ui/checkbox";
+import { Combobox } from "./ui/combobox";
 import { DialogFooter } from "./ui/dialog";
 import { Input } from "./ui/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "./ui/table";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 
@@ -385,14 +386,24 @@ function AuthorizationDialog({ value, nodes, users, defaultTimezone, onClose, on
           {resetKind === "weekly" ? <SelectField label={t("Weekday")} value={resetValue || "1"} onChange={setResetValue} options={weekdayKeys.map((label, index) => ({ value: String(index + 1), label: t(label) }))} /> : null}
           {resetKind === "monthly" ? <NumberField label={t("Day of month")} value={resetValue} onChange={setResetValue} min="1" max="31" step="1" /> : null}
           {resetKind === "interval_days" ? <NumberField label={t("Interval (days)")} value={resetValue} onChange={setResetValue} min="1" max="3650" step="1" /> : null}
-          <FieldLabel label={t("Timezone")}><Input value={timezone} onChange={(event) => setTimezone(event.target.value)} list="relayward-timezones" required /></FieldLabel>
+          <FieldLabel label={t("Timezone")}>
+            <Combobox
+              value={timezone}
+              onValueChange={setTimezone}
+              options={timezoneOptions(timezone)}
+              searchPlaceholder={t("Search options...")}
+              emptyText={t("No matching options.")}
+              allowCustomValue
+              customValueLabel={(value) => t("Use {value}", { value })}
+              required
+            />
+          </FieldLabel>
           {resetKind === "interval_days" ? <DateTimeField label={t("Period anchor")} value={periodAnchor} onChange={setPeriodAnchor} required /> : null}
           <DateTimeField label={t("{field} (optional)", { field: t("Expires") })} value={expiresAt} onChange={setExpiresAt} />
           <NumberField label={t("{field} (optional)", { field: t("Soft IP limit") })} value={softIPLimit} onChange={setSoftIPLimit} min="1" max="1024" step="1" required={false} />
           <NumberField label={t("Activity window (minutes)")} value={activityMinutes} onChange={setActivityMinutes} min="1" max="1440" step="1" />
           <NumberField label={t("Block duration (minutes)")} value={blockMinutes} onChange={setBlockMinutes} min="1" max="10080" step="1" />
         </div>
-        <datalist id="relayward-timezones"><option value="UTC" /><option value="Asia/Shanghai" /><option value="Asia/Singapore" /><option value="Europe/London" /><option value="America/New_York" /></datalist>
         <label className="flex min-h-8 cursor-pointer items-center gap-2 text-sm font-semibold text-foreground/80" htmlFor={enabledID}>
           <Checkbox id={enabledID} checked={enabled} onCheckedChange={(checked) => setEnabled(checked === true)} />
           <span>{t("Enabled")}</span>
@@ -410,15 +421,23 @@ function AuthorizationDialog({ value, nodes, users, defaultTimezone, onClose, on
 function SelectField({ label, value, onChange, options, disabled = false }: {
   label: string; value: string; onChange: (value: string) => void; options: { value: string; label: string }[]; disabled?: boolean;
 }) {
+  const { t } = useI18n();
   const id = useId();
   const labelID = `${id}-label`;
   return (
     <label className="grid gap-1.5" htmlFor={id}>
       <span className="text-sm font-semibold text-foreground/80" id={labelID}>{label}</span>
-      <Select value={value} onValueChange={onChange} disabled={disabled} required>
-        <SelectTrigger id={id} aria-labelledby={labelID}><SelectValue /></SelectTrigger>
-        <SelectContent>{options.map((option) => <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>)}</SelectContent>
-      </Select>
+      <Combobox
+        value={value}
+        onValueChange={onChange}
+        options={options}
+        searchPlaceholder={t("Search options...")}
+        emptyText={t("No matching options.")}
+        disabled={disabled}
+        required
+        id={id}
+        aria-labelledby={labelID}
+      />
     </label>
   );
 }

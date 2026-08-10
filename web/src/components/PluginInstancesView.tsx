@@ -18,9 +18,9 @@ import { Modal } from "./Modal";
 import { PageHeader, StatusBadge, SummaryBar, SummaryItem } from "./PageLayout";
 import { Button } from "./ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
+import { Combobox } from "./ui/combobox";
 import { DialogFooter } from "./ui/dialog";
 import { Input } from "./ui/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "./ui/table";
 import { Textarea } from "./ui/textarea";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
@@ -301,15 +301,23 @@ function SelectField({ label, value, onChange, options, disabled = false, placeh
   disabled?: boolean;
   placeholder?: string;
 }) {
+  const { t } = useI18n();
   const id = useId();
   const labelID = `${id}-label`;
   return (
     <label className="grid gap-1.5" htmlFor={id}>
       <span className="text-sm font-semibold text-foreground/80" id={labelID}>{label}</span>
-      <Select value={value} onValueChange={onChange} disabled={disabled}>
-        <SelectTrigger id={id} aria-labelledby={labelID}><SelectValue placeholder={placeholder} /></SelectTrigger>
-        <SelectContent>{options.map((option) => <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>)}</SelectContent>
-      </Select>
+      <Combobox
+        value={value}
+        onValueChange={onChange}
+        options={options}
+        searchPlaceholder={t("Search options...")}
+        emptyText={t("No matching options.")}
+        placeholder={placeholder}
+        disabled={disabled}
+        id={id}
+        aria-labelledby={labelID}
+      />
     </label>
   );
 }

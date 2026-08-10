@@ -17,7 +17,7 @@ import { useI18n } from "../i18n";
 import { PageHeader, StatusBadge } from "./PageLayout";
 import { Button } from "./ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "./ui/card";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
+import { Combobox } from "./ui/combobox";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "./ui/table";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 
@@ -105,24 +105,33 @@ export function RecentEventsView() {
           <div className="flex w-full flex-col gap-3 sm:w-auto sm:flex-row sm:flex-wrap sm:items-center sm:justify-end">
             <label className="flex items-center gap-2 max-[520px]:w-full" htmlFor={nodeFilterID}>
               <span className="shrink-0 whitespace-nowrap text-xs font-semibold text-muted-foreground" id={nodeFilterLabelID}>{t("Node")}</span>
-              <Select value={nodeID || "all"} onValueChange={(value) => setNodeID(value === "all" ? "" : value)}>
-                <SelectTrigger className="h-9 min-w-40 max-[520px]:flex-1" id={nodeFilterID} aria-labelledby={nodeFilterLabelID}><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">{t("All nodes")}</SelectItem>
-                  {nodes.map((node) => <SelectItem key={node.id} value={node.id}>{node.name}</SelectItem>)}
-                </SelectContent>
-              </Select>
+              <Combobox
+                value={nodeID || "all"}
+                onValueChange={(value) => setNodeID(value === "all" ? "" : value)}
+                options={[{ value: "all", label: t("All nodes") }, ...nodes.map((node) => ({ value: node.id, label: node.name }))]}
+                searchPlaceholder={t("Search options...")}
+                emptyText={t("No matching options.")}
+                className="h-9 min-w-40 max-[520px]:flex-1"
+                id={nodeFilterID}
+                aria-labelledby={nodeFilterLabelID}
+              />
             </label>
             <label className="flex items-center gap-2 max-[520px]:w-full" htmlFor={actionFilterID}>
               <span className="shrink-0 whitespace-nowrap text-xs font-semibold text-muted-foreground" id={actionFilterLabelID}>{t("Action")}</span>
-              <Select value={action || "all"} onValueChange={(value) => setAction(value === "all" ? "" : value as AccessEvent["action"])}>
-                <SelectTrigger className="h-9 min-w-36 max-[520px]:flex-1" id={actionFilterID} aria-labelledby={actionFilterLabelID}><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">{t("All actions")}</SelectItem>
-                  <SelectItem value="accepted">{t("Accepted")}</SelectItem>
-                  <SelectItem value="blocked">{t("Blocked")}</SelectItem>
-                </SelectContent>
-              </Select>
+              <Combobox
+                value={action || "all"}
+                onValueChange={(value) => setAction(value === "all" ? "" : value as AccessEvent["action"])}
+                options={[
+                  { value: "all", label: t("All actions") },
+                  { value: "accepted", label: t("Accepted") },
+                  { value: "blocked", label: t("Blocked") },
+                ]}
+                searchPlaceholder={t("Search options...")}
+                emptyText={t("No matching options.")}
+                className="h-9 min-w-36 max-[520px]:flex-1"
+                id={actionFilterID}
+                aria-labelledby={actionFilterLabelID}
+              />
             </label>
             <Tooltip><TooltipTrigger asChild><Button className="shrink-0" variant="outline" onClick={() => setRefreshKey((value) => value + 1)} aria-label={t("Refresh events")} type="button"><RefreshCw size={16} />{t("Refresh")}</Button></TooltipTrigger><TooltipContent>{t("Refresh events")}</TooltipContent></Tooltip>
           </div>

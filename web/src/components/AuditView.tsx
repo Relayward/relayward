@@ -7,7 +7,7 @@ import { FormError } from "./AuthScreen";
 import { PageHeader, StatusBadge } from "./PageLayout";
 import { Button } from "./ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "./ui/card";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
+import { Combobox } from "./ui/combobox";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "./ui/table";
 
 const pageSize = 100;
@@ -69,13 +69,16 @@ export function AuditView() {
           <div className="flex w-full flex-col gap-3 sm:w-auto sm:flex-row sm:items-center">
             <label className="flex items-center gap-2 max-[520px]:w-full" htmlFor={outcomeFilterID}>
               <span className="shrink-0 whitespace-nowrap text-xs font-semibold text-muted-foreground" id={outcomeFilterLabelID}>{t("Outcome")}</span>
-              <Select value={outcome || "all"} onValueChange={(value) => setOutcome(value === "all" ? "" : value)}>
-                <SelectTrigger className="h-9 min-w-40 max-[520px]:flex-1" id={outcomeFilterID} aria-labelledby={outcomeFilterLabelID}><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">{t("All outcomes")}</SelectItem>
-                  {outcomes.map((value) => <SelectItem key={value} value={value}>{t(titleCase(value))}</SelectItem>)}
-                </SelectContent>
-              </Select>
+              <Combobox
+                value={outcome || "all"}
+                onValueChange={(value) => setOutcome(value === "all" ? "" : value)}
+                options={[{ value: "all", label: t("All outcomes") }, ...outcomes.map((value) => ({ value, label: t(titleCase(value)) }))]}
+                searchPlaceholder={t("Search options...")}
+                emptyText={t("No matching options.")}
+                className="h-9 min-w-40 max-[520px]:flex-1"
+                id={outcomeFilterID}
+                aria-labelledby={outcomeFilterLabelID}
+              />
             </label>
             <Button className="shrink-0" variant="outline" onClick={() => setRefreshKey((value) => value + 1)} type="button"><RefreshCw size={16} />{t("Refresh")}</Button>
           </div>

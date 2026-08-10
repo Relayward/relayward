@@ -3,10 +3,12 @@ import { AlertTriangle, Globe2, Save, Settings2, WalletCards } from "lucide-reac
 
 import { APIError, getSystemSettings, updateSystemSettings, type SystemSettings } from "../api";
 import { useI18n } from "../i18n";
+import { timezoneOptions } from "../timezones";
 import { FormError } from "./AuthScreen";
 import { PageHeader, StatusBadge } from "./PageLayout";
 import { Button } from "./ui/button";
 import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
+import { Combobox } from "./ui/combobox";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
@@ -88,8 +90,17 @@ export function SettingsView() {
               </CardHeader>
               <CardContent className="grid gap-5 md:grid-cols-2">
                 <SettingField id="settings-timezone" label={t("Default timezone")} description={t("Used when creating a new authorization.")}>
-                  <Input id="settings-timezone" value={draft?.timezone ?? ""} onChange={(event) => update("timezone", event.target.value)} list="relayward-settings-timezones" required />
-                  <datalist id="relayward-settings-timezones"><option value="UTC" /><option value="Asia/Shanghai" /><option value="Asia/Singapore" /><option value="Europe/London" /><option value="America/New_York" /></datalist>
+                  <Combobox
+                    id="settings-timezone"
+                    value={draft?.timezone ?? ""}
+                    onValueChange={(value) => update("timezone", value)}
+                    options={timezoneOptions(draft?.timezone)}
+                    searchPlaceholder={t("Search options...")}
+                    emptyText={t("No matching options.")}
+                    allowCustomValue
+                    customValueLabel={(value) => t("Use {value}", { value })}
+                    required
+                  />
                 </SettingField>
                 <SettingField id="settings-session-lifetime" label={t("Session lifetime")} description={t("Applies to newly created administrator sessions.")} suffix={t("minutes")}>
                   <Input id="settings-session-lifetime" type="number" min="60" max="525600" step="1" value={draft?.session_lifetime_minutes ?? ""} onChange={(event) => update("session_lifetime_minutes", Number(event.target.value))} required />
