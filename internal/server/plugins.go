@@ -31,6 +31,11 @@ type pluginReleaseRequest struct {
 	ApprovedPermissions []string `json:"approved_permissions,omitempty"`
 }
 
+type pluginReleaseListRequest struct {
+	Repository  string `json:"repository"`
+	GitHubToken string `json:"github_token,omitempty"`
+}
+
 type pluginUpgradeRequest struct {
 	Version             string   `json:"version"`
 	GitHubToken         string   `json:"github_token,omitempty"`
@@ -47,6 +52,12 @@ type pluginReleaseCandidateResponse struct {
 	Tag        string            `json:"tag"`
 	Manifest   manifest.Manifest `json:"manifest"`
 	Update     bool              `json:"update"`
+}
+
+type pluginReleaseVersionResponse struct {
+	Tag         string    `json:"tag"`
+	Version     string    `json:"version"`
+	PublishedAt time.Time `json:"published_at"`
 }
 
 type pluginUISessionResponse struct {
@@ -94,6 +105,28 @@ func (server *Server) inspectPluginRelease(w http.ResponseWriter, request *http.
 		Repository: value.Repository, ReleaseID: value.ReleaseID, Tag: value.Tag,
 		Manifest: value.Manifest, Update: value.Update,
 	})
+}
+
+func (server *Server) listPluginReleaseVersions(w http.ResponseWriter, request *http.Request, _ auth.Authenticated) {
+	var input pluginReleaseListRequest
+	if err := decodeJSON(request, &input); err != nil {
+		writeProblem(w, http.StatusBadRequest, protocol.ErrorInvalidArgument, "Invalid plugin release list request.", false)
+		return
+	}
+	values, err := server.management.ListPluginReleaseVersions(
+		request.Context(), input.Repository, input.GitHubToken,
+	)
+	if err != nil {
+		server.resourceError(w, request, err, "Plugin releases")
+		return
+	}
+	items := make([]pluginReleaseVersionResponse, len(values))
+	for index, value := range values {
+		items[index] = pluginReleaseVersionResponse{
+			Tag: value.Tag, Version: value.Version, PublishedAt: value.PublishedAt,
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": items})
 }
 
 func (server *Server) listPluginInstallations(w http.ResponseWriter, request *http.Request, _ auth.Authenticated) {

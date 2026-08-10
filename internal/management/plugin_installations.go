@@ -21,6 +21,7 @@ import (
 type pluginReleaseClient interface {
 	pluginartifact.Downloader
 	Inspect(context.Context, string, string, string) (githubrelease.Release, error)
+	ListStableVersions(context.Context, string, string) ([]githubrelease.ReleaseVersion, error)
 	ResolveAssetURL(context.Context, githubrelease.Repository, int64, string) (string, error)
 }
 
@@ -55,6 +56,12 @@ type PluginReleaseCandidate struct {
 	Update     bool
 }
 
+type PluginReleaseVersion struct {
+	Tag         string
+	Version     string
+	PublishedAt time.Time
+}
+
 func (service *Service) ConfigurePluginLifecycle(releases pluginReleaseClient, artifacts pluginArtifactStore, runtime centerPluginRuntime) error {
 	if releases == nil || artifacts == nil || runtime == nil {
 		return errors.New("complete plugin lifecycle dependencies are required")
@@ -79,6 +86,29 @@ func (service *Service) InspectPluginRelease(ctx context.Context, input PluginRe
 		Repository: release.Repository.URL(), ReleaseID: release.ID, Tag: release.Tag,
 		Manifest: release.Manifest, Update: existing != nil,
 	}, nil
+}
+
+func (service *Service) ListPluginReleaseVersions(ctx context.Context, repository, githubToken string) ([]PluginReleaseVersion, error) {
+	if err := service.requirePluginLifecycle(); err != nil {
+		return nil, err
+	}
+	service.pluginMu.Lock()
+	defer service.pluginMu.Unlock()
+	canonicalRepository, token, _, err := service.pluginRepositoryAccess(ctx, repository, githubToken)
+	if err != nil {
+		return nil, err
+	}
+	versions, err := service.pluginReleases.ListStableVersions(ctx, canonicalRepository, token)
+	if err != nil {
+		return nil, translateGitHubReleaseError(err)
+	}
+	result := make([]PluginReleaseVersion, len(versions))
+	for index, version := range versions {
+		result[index] = PluginReleaseVersion{
+			Tag: version.Tag, Version: version.Version, PublishedAt: version.PublishedAt,
+		}
+	}
+	return result, nil
 }
 
 func (service *Service) InstallPluginRelease(ctx context.Context, input PluginReleaseInput) (store.PluginInstallation, error) {
@@ -314,23 +344,9 @@ func (service *Service) OpenPluginUIFile(ctx context.Context, pluginID, name str
 }
 
 func (service *Service) inspectPluginRelease(ctx context.Context, input PluginReleaseInput) (githubrelease.Release, string, *store.PluginInstallation, error) {
-	repository, err := githubrelease.ParseRepository(input.Repository)
+	canonicalRepository, token, existingByRepository, err := service.pluginRepositoryAccess(ctx, input.Repository, input.GitHubToken)
 	if err != nil {
-		return githubrelease.Release{}, "", nil, invalid("repository", err.Error())
-	}
-	canonicalRepository := repository.URL()
-	var existingByRepository *store.PluginInstallation
-	if value, err := service.store.PluginInstallationByRepository(ctx, canonicalRepository); err == nil {
-		existingByRepository = &value
-	} else if !errors.Is(err, store.ErrNotFound) {
 		return githubrelease.Release{}, "", nil, err
-	}
-	token := input.GitHubToken
-	if token == "" && existingByRepository != nil {
-		token, err = service.decryptPluginGitHubToken(ctx, existingByRepository.PluginID)
-		if err != nil && !errors.Is(err, store.ErrNotFound) {
-			return githubrelease.Release{}, "", nil, err
-		}
 	}
 	release, err := service.pluginReleases.Inspect(ctx, canonicalRepository, input.Version, token)
 	if err != nil {
@@ -361,6 +377,28 @@ func (service *Service) inspectPluginRelease(ctx context.Context, input PluginRe
 		return release, token, nil, nil
 	}
 	return release, token, &existing, nil
+}
+
+func (service *Service) pluginRepositoryAccess(ctx context.Context, rawRepository, suppliedToken string) (string, string, *store.PluginInstallation, error) {
+	repository, err := githubrelease.ParseRepository(rawRepository)
+	if err != nil {
+		return "", "", nil, invalid("repository", err.Error())
+	}
+	canonicalRepository := repository.URL()
+	var existing *store.PluginInstallation
+	if value, err := service.store.PluginInstallationByRepository(ctx, canonicalRepository); err == nil {
+		existing = &value
+	} else if !errors.Is(err, store.ErrNotFound) {
+		return "", "", nil, err
+	}
+	token := suppliedToken
+	if token == "" && existing != nil {
+		token, err = service.decryptPluginGitHubToken(ctx, existing.PluginID)
+		if err != nil && !errors.Is(err, store.ErrNotFound) {
+			return "", "", nil, err
+		}
+	}
+	return canonicalRepository, token, existing, nil
 }
 
 func (service *Service) decryptPluginGitHubToken(ctx context.Context, pluginID string) (string, error) {

@@ -61,18 +61,27 @@ function Combobox({
 }: ComboboxProps) {
   const [open, setOpen] = React.useState(false)
   const [search, setSearch] = React.useState("")
+  const [portalled, setPortalled] = React.useState(true)
   const triggerRef = React.useRef<HTMLButtonElement>(null)
   const searchRef = React.useRef<HTMLInputElement>(null)
   const suppressFocusOpen = React.useRef(false)
   const returnFocusOnClose = React.useRef(false)
   const selected = options.find((option) => option.value === value)
   const normalizedSearch = search.trim()
+  const normalizedSearchLower = normalizedSearch.toLocaleLowerCase()
   const exactOption = options.some((option) => (
     option.value.toLocaleLowerCase() === normalizedSearch.toLocaleLowerCase() ||
     option.label.toLocaleLowerCase() === normalizedSearch.toLocaleLowerCase()
   ))
+  const filteredOptions = normalizedSearch === "" ? options : options.filter((option) => (
+    [option.value, option.label, ...(option.keywords ?? [])]
+      .some((candidate) => candidate.toLocaleLowerCase().includes(normalizedSearchLower))
+  ))
 
   function changeOpen(next: boolean) {
+    if (next) {
+      setPortalled(triggerRef.current?.closest("[data-slot=dialog-content]") === null)
+    }
     if (!next) {
       setSearch("")
     }
@@ -102,11 +111,11 @@ function Combobox({
               suppressFocusOpen.current = false
               return
             }
-            setOpen(true)
+            changeOpen(true)
           }}
           onClick={(event) => {
             event.preventDefault()
-            setOpen(true)
+            changeOpen(true)
           }}
           type="button"
           {...ariaProps}
@@ -123,6 +132,7 @@ function Combobox({
       <PopoverContent
         align={align}
         className="w-[var(--radix-popover-trigger-width)] min-w-56 p-0"
+        portalled={portalled}
         onOpenAutoFocus={(event) => {
           event.preventDefault()
           window.requestAnimationFrame(() => searchRef.current?.focus())
@@ -136,7 +146,7 @@ function Combobox({
           triggerRef.current?.focus({ preventScroll: true })
         }}
       >
-        <Command>
+        <Command shouldFilter={false}>
           <CommandInput ref={searchRef} value={search} onValueChange={setSearch} placeholder={searchPlaceholder} />
           <CommandList>
             <CommandEmpty>{emptyText}</CommandEmpty>
@@ -147,10 +157,11 @@ function Combobox({
                   <span className="truncate">{customValueLabel(normalizedSearch)}</span>
                 </CommandItem>
               ) : null}
-              {options.map((option) => (
+              {filteredOptions.map((option) => (
                 <CommandItem
                   key={option.value}
-                  value={[option.label, option.value, ...(option.keywords ?? [])].join(" ")}
+                  value={option.value}
+                  keywords={[option.label, ...(option.keywords ?? [])]}
                   onSelect={() => select(option.value)}
                 >
                   <CheckIcon className={cn("size-4", value === option.value ? "opacity-100" : "opacity-0")} />

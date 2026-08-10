@@ -173,6 +173,73 @@ func TestClientRejectsInvalidLatestStableRelease(t *testing.T) {
 	}
 }
 
+func TestClientListsAllPublishedStablePluginVersions(t *testing.T) {
+	publishedAt := time.Date(2026, time.August, 5, 10, 0, 0, 0, time.UTC)
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		requests++
+		if request.URL.Path != "/repos/Relayward/plugin/releases" || request.URL.Query().Get("per_page") != "100" ||
+			request.URL.Query().Get("page") != "1" || request.Header.Get("Authorization") != "Bearer private-token" {
+			t.Fatalf("unexpected request: %s, headers = %+v", request.URL.String(), request.Header)
+		}
+		_ = json.NewEncoder(writer).Encode([]map[string]any{
+			{"id": 5, "tag_name": "v2.0.0", "published_at": publishedAt.Add(time.Hour), "assets": []map[string]any{{"id": 50, "name": ManifestAssetName, "size": 10}}},
+			{"id": 4, "tag_name": "v2.0.0-rc.1", "prerelease": true, "published_at": publishedAt, "assets": []map[string]any{{"id": 40, "name": ManifestAssetName, "size": 10}}},
+			{"id": 3, "tag_name": "v1.2.3", "published_at": publishedAt, "assets": []map[string]any{{"id": 30, "name": ManifestAssetName, "size": 10}}},
+			{"id": 2, "tag_name": "release-1", "published_at": publishedAt, "assets": []map[string]any{{"id": 20, "name": ManifestAssetName, "size": 10}}},
+			{"id": 1, "tag_name": "v1.0.0", "published_at": publishedAt, "assets": []map[string]any{{"id": 10, "name": "other", "size": 10}}},
+		})
+	}))
+	defer server.Close()
+	base, _ := url.Parse(server.URL)
+	client := newClient(server.Client(), base, func(*url.URL) error { return nil })
+
+	versions, err := client.ListStableVersions(context.Background(), "https://github.com/Relayward/plugin", "private-token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if requests != 1 || len(versions) != 2 || versions[0].Version != "2.0.0" || versions[0].Tag != "v2.0.0" ||
+		versions[1].Version != "1.2.3" || !versions[1].PublishedAt.Equal(publishedAt) {
+		t.Fatalf("versions = %+v, requests = %d", versions, requests)
+	}
+}
+
+func TestClientPaginatesPluginVersions(t *testing.T) {
+	publishedAt := time.Date(2026, time.August, 5, 10, 0, 0, 0, time.UTC)
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		page := request.URL.Query().Get("page")
+		count := 1
+		if page == "1" {
+			count = releasesPerPage
+		} else if page != "2" {
+			t.Fatalf("unexpected page %q", page)
+		}
+		values := make([]map[string]any, count)
+		for index := range values {
+			version := fmt.Sprintf("1.%d.0", index)
+			if page == "2" {
+				version = "2.0.0"
+			}
+			values[index] = map[string]any{
+				"id": index + 1, "tag_name": "v" + version, "published_at": publishedAt,
+				"assets": []map[string]any{{"id": index + 10, "name": ManifestAssetName, "size": 10}},
+			}
+		}
+		_ = json.NewEncoder(writer).Encode(values)
+	}))
+	defer server.Close()
+	base, _ := url.Parse(server.URL)
+	client := newClient(server.Client(), base, func(*url.URL) error { return nil })
+
+	versions, err := client.ListStableVersions(context.Background(), "https://github.com/Relayward/plugin", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(versions) != releasesPerPage+1 || versions[len(versions)-1].Version != "2.0.0" {
+		t.Fatalf("versions = %+v", versions)
+	}
+}
+
 func TestClientUsesLongerTimeoutForArtifactDownloads(t *testing.T) {
 	client := NewClient(nil)
 	if client.httpClient.Timeout != 0 {

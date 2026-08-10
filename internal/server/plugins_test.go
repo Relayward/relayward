@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	centerpluginv1 "github.com/Relayward/relayward-sdk/centerplugin/v1"
 	"github.com/Relayward/relayward-sdk/manifest"
@@ -23,13 +24,19 @@ import (
 )
 
 type serverReleaseClient struct {
-	release githubrelease.Release
-	token   string
+	release  githubrelease.Release
+	versions []githubrelease.ReleaseVersion
+	token    string
 }
 
 func (client *serverReleaseClient) Inspect(_ context.Context, _, _, token string) (githubrelease.Release, error) {
 	client.token = token
 	return client.release, nil
+}
+
+func (client *serverReleaseClient) ListStableVersions(_ context.Context, _, token string) ([]githubrelease.ReleaseVersion, error) {
+	client.token = token
+	return client.versions, nil
 }
 
 func (*serverReleaseClient) DownloadAsset(context.Context, githubrelease.Repository, githubrelease.Asset, string, string, io.Writer) error {
@@ -131,6 +138,19 @@ func TestPluginLifecycleHTTPFlowDoesNotExposeSecrets(t *testing.T) {
 	handler, releases, artifacts, runtime := newPluginLifecycleHandler(t)
 	sessionCookie, csrfCookie := setupCookies(t, handler)
 	headers := map[string]string{"Content-Type": "application/json", "X-CSRF-Token": csrfCookie.Value}
+	listBody := []byte(`{
+      "repository":"https://github.com/Relayward/test-plugin",
+      "github_token":"private-token"
+    }`)
+	unauthenticatedList := performRequest(handler, http.MethodPost, "/api/v1/plugins/releases", listBody, headers)
+	if unauthenticatedList.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated release list status = %d", unauthenticatedList.Code)
+	}
+	listedReleases := performRequest(handler, http.MethodPost, "/api/v1/plugins/releases", listBody, headers, sessionCookie)
+	if listedReleases.Code != http.StatusOK || !strings.Contains(listedReleases.Body.String(), `"version":"1.2.3"`) ||
+		strings.Contains(listedReleases.Body.String(), "private-token") || releases.token != "private-token" {
+		t.Fatalf("release list status = %d, body = %s, token = %q", listedReleases.Code, listedReleases.Body.String(), releases.token)
+	}
 	inspectBody := []byte(`{
       "repository":"https://github.com/Relayward/test-plugin",
       "version":"1.2.3",
@@ -260,7 +280,12 @@ func newPluginLifecycleHandler(t *testing.T) (http.Handler, *serverReleaseClient
 	if err != nil {
 		t.Fatal(err)
 	}
-	releases := &serverReleaseClient{release: serverPluginRelease("1.2.3")}
+	releases := &serverReleaseClient{
+		release: serverPluginRelease("1.2.3"),
+		versions: []githubrelease.ReleaseVersion{{
+			Tag: "v1.2.3", Version: "1.2.3", PublishedAt: time.Date(2026, time.August, 10, 0, 0, 0, 0, time.UTC),
+		}},
+	}
 	uiFile := filepath.Join(directory, "plugin-ui.html")
 	if err := os.WriteFile(uiFile, []byte(`<main id="plugin-ui">Plugin UI</main>`), 0o600); err != nil {
 		t.Fatal(err)

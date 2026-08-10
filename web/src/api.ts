@@ -193,6 +193,12 @@ export interface PluginReleaseCandidate {
   update: boolean;
 }
 
+export interface PluginReleaseVersion {
+  tag: string;
+  version: string;
+  published_at: string;
+}
+
 export interface PluginInstallation {
   plugin_id: string;
   repository: string;
@@ -217,6 +223,11 @@ export interface PluginReleaseInput {
   version: string;
   github_token?: string;
   approved_permissions?: string[];
+}
+
+export interface PluginReleaseSource {
+  repository: string;
+  github_token?: string;
 }
 
 export interface PluginUpgradeInput {
@@ -564,6 +575,14 @@ export async function reconcileNodePlugin(nodeID: string, pluginID: string, inpu
 
 export async function inspectPluginRelease(input: Omit<PluginReleaseInput, "approved_permissions">): Promise<PluginReleaseCandidate> {
   return request("/api/v1/plugins/inspect", { method: "POST", body: JSON.stringify(input) });
+}
+
+export async function listPluginReleaseVersions(input: PluginReleaseSource): Promise<PluginReleaseVersion[]> {
+  const response = await request<{ items: PluginReleaseVersion[] }>("/api/v1/plugins/releases", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+  return response.items;
 }
 
 export async function listPluginInstallations(): Promise<PluginInstallation[]> {

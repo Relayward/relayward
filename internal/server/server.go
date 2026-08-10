@@ -117,6 +117,7 @@ func New(options Options) http.Handler {
 	mux.HandleFunc("GET /api/v1/nodes/{node_id}/plugins/{plugin_id}", server.withAuthentication(server.getNodePluginInstance))
 	mux.HandleFunc("PUT /api/v1/nodes/{node_id}/plugins/{plugin_id}", server.withAuthentication(server.withCSRF(server.reconcileNodePlugin)))
 	mux.HandleFunc("POST /api/v1/plugins/inspect", server.withAuthentication(server.withCSRF(server.inspectPluginRelease)))
+	mux.HandleFunc("POST /api/v1/plugins/releases", server.withAuthentication(server.withCSRF(server.listPluginReleaseVersions)))
 	mux.HandleFunc("GET /api/v1/plugins", server.withAuthentication(server.listPluginInstallations))
 	mux.HandleFunc("POST /api/v1/plugins", server.withAuthentication(server.withCSRF(server.installPlugin)))
 	mux.HandleFunc("GET /api/v1/plugins/{plugin_id}", server.withAuthentication(server.getPluginInstallation))

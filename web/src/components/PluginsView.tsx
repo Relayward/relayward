@@ -6,11 +6,13 @@ import {
   inspectPluginRelease,
   installPlugin,
   listPluginInstallations,
+  listPluginReleaseVersions,
   replacePluginGitHubToken,
   uninstallPlugin,
   upgradePlugin,
   type PluginInstallation,
   type PluginReleaseCandidate,
+  type PluginReleaseVersion,
 } from "../api";
 import { useI18n } from "../i18n";
 import { cn } from "../lib/utils";
@@ -23,6 +25,7 @@ import { PluginInstancesView } from "./PluginInstancesView";
 import { Button } from "./ui/button";
 import { Card, CardAction, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "./ui/card";
 import { Checkbox } from "./ui/checkbox";
+import { Combobox } from "./ui/combobox";
 import { DialogFooter } from "./ui/dialog";
 import { Input } from "./ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
@@ -213,10 +216,47 @@ function PluginReleaseDialog({ existing, onClose, onSaved }: {
   const [repository, setRepository] = useState(existing?.repository ?? "");
   const [version, setVersion] = useState("");
   const [token, setToken] = useState("");
+  const [versions, setVersions] = useState<PluginReleaseVersion[]>([]);
+  const [versionsLoading, setVersionsLoading] = useState(false);
+  const [versionsLoaded, setVersionsLoaded] = useState(false);
   const [candidate, setCandidate] = useState<PluginReleaseCandidate>();
   const [approved, setApproved] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
+  const versionID = useId();
+  const versionLabelID = `${versionID}-label`;
+
+  useEffect(() => {
+    let active = true;
+    setVersions([]);
+    setVersion("");
+    setVersionsLoaded(false);
+    setVersionsLoading(false);
+    if (!isCompleteGitHubRepository(repository)) return () => { active = false; };
+    const timeout = window.setTimeout(() => {
+      setVersionsLoading(true);
+      setError(undefined);
+      listPluginReleaseVersions({
+        repository,
+        ...(token === "" ? {} : { github_token: token }),
+      }).then((values) => {
+        if (!active) return;
+        setVersions(values);
+        setVersion(values[0]?.version ?? "");
+        setVersionsLoaded(true);
+        setVersionsLoading(false);
+      }, (cause) => {
+        if (!active) return;
+        setError(errorMessage(cause));
+        setVersionsLoaded(true);
+        setVersionsLoading(false);
+      });
+    }, 350);
+    return () => {
+      active = false;
+      window.clearTimeout(timeout);
+    };
+  }, [repository, token]);
 
   function changeSource(change: () => void) {
     change();
@@ -226,6 +266,10 @@ function PluginReleaseDialog({ existing, onClose, onSaved }: {
 
   async function inspect(event: FormEvent) {
     event.preventDefault();
+    if (version === "") {
+      setError("Select a plugin version.");
+      return;
+    }
     setBusy(true);
     setError(undefined);
     try {
@@ -278,15 +322,35 @@ function PluginReleaseDialog({ existing, onClose, onSaved }: {
           <Input value={repository} onChange={(event) => changeSource(() => setRepository(event.target.value))} disabled={existing !== undefined} placeholder="https://github.com/owner/repository" required />
         </FieldLabel>
         <div className="grid grid-cols-2 gap-4 max-[700px]:grid-cols-1">
-          <FieldLabel label={t("{field} (optional)", { field: t("Version") })}>
-            <Input value={version} onChange={(event) => changeSource(() => setVersion(event.target.value))} placeholder={t("Latest stable release")} />
-          </FieldLabel>
+          <div className="grid gap-1.5">
+            <span className="text-sm font-semibold text-foreground/80" id={versionLabelID}>{t("Version")}</span>
+            <Combobox
+              value={version}
+              onValueChange={(value) => changeSource(() => setVersion(value))}
+              options={versions.map((release, index) => ({
+                value: release.version,
+                label: index === 0 ? `v${release.version} (${t("Latest")})` : `v${release.version}`,
+                keywords: [release.tag],
+              }))}
+              searchPlaceholder={t("Search options...")}
+              emptyText={t("No published plugin versions.")}
+              placeholder={versionsLoading
+                ? t("Loading versions...")
+                : versionsLoaded
+                  ? t("Select a version")
+                  : t("Enter a repository to load versions")}
+              disabled={versionsLoading || !isCompleteGitHubRepository(repository)}
+              required
+              id={versionID}
+              aria-labelledby={versionLabelID}
+            />
+          </div>
           <FieldLabel label={t("{field} (optional)", { field: t("GitHub token") })}>
             <Input value={token} onChange={(event) => changeSource(() => setToken(event.target.value))} type="password" autoComplete="off" placeholder={existing === undefined ? t("Public repository") : t("Use saved token")} />
           </FieldLabel>
         </div>
         <div className="flex justify-end">
-          <Button variant="secondary" disabled={busy} type="submit"><RefreshCw size={16} />{busy ? t("Checking...") : t("Check release")}</Button>
+          <Button variant="secondary" disabled={busy || versionsLoading || version === ""} type="submit"><RefreshCw size={16} />{busy ? t("Checking...") : t("Check release")}</Button>
         </div>
       </form>
       {candidate ? (
@@ -347,6 +411,17 @@ function PermissionOption({ name, reason, checked, onCheckedChange }: {
 
 function FieldLabel({ label, children }: { label: string; children: ReactNode }) {
   return <label className="grid gap-1.5"><span className="text-sm font-semibold text-foreground/80">{label}</span>{children}</label>;
+}
+
+function isCompleteGitHubRepository(value: string): boolean {
+  try {
+    const parsed = new URL(value.trim());
+    const parts = parsed.pathname.split("/").filter(Boolean);
+    return parsed.protocol === "https:" && parsed.hostname.toLowerCase() === "github.com" &&
+      parsed.username === "" && parsed.password === "" && parsed.search === "" && parsed.hash === "" && parts.length === 2;
+  } catch {
+    return false;
+  }
 }
 
 function PluginUninstallDialog({ plugin, onClose, onRemoved }: {

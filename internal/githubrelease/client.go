@@ -24,6 +24,8 @@ const (
 	ManifestAssetName       = "relayward-plugin.json"
 	maximumManifestBytes    = 1 << 20
 	maximumReleaseJSON      = 2 << 20
+	maximumReleasePages     = 10
+	releasesPerPage         = 100
 	maximumRedirects        = 5
 	defaultRequestTimeout   = 30 * time.Second
 	artifactDownloadTimeout = 5 * time.Minute
@@ -66,6 +68,12 @@ type StableRelease struct {
 	Version     string
 	PublishedAt time.Time
 	Assets      map[string]Asset
+}
+
+type ReleaseVersion struct {
+	Tag         string
+	Version     string
+	PublishedAt time.Time
 }
 
 type Client struct {
@@ -220,6 +228,45 @@ func (client *Client) LatestStable(ctx context.Context, rawRepository, token str
 		ID: response.ID, Repository: repository, Tag: response.TagName, Version: version,
 		PublishedAt: response.PublishedAt.UTC(), Assets: assets,
 	}, nil
+}
+
+func (client *Client) ListStableVersions(ctx context.Context, rawRepository, token string) ([]ReleaseVersion, error) {
+	ctx, cancel := context.WithTimeout(ctx, defaultRequestTimeout)
+	defer cancel()
+	repository, err := ParseRepository(rawRepository)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateToken(token); err != nil {
+		return nil, err
+	}
+	versions := make([]ReleaseVersion, 0)
+	seen := make(map[string]struct{})
+	for page := 1; page <= maximumReleasePages; page++ {
+		endpoint := client.repositoryEndpoint(repository) + "/releases?per_page=" + strconv.Itoa(releasesPerPage) +
+			"&page=" + strconv.Itoa(page)
+		var response []releaseResponse
+		if err := client.getJSON(ctx, endpoint, token, &response); err != nil {
+			return nil, err
+		}
+		for _, candidate := range response {
+			version, valid := stablePluginVersion(candidate)
+			if !valid {
+				continue
+			}
+			if _, duplicate := seen[version]; duplicate {
+				continue
+			}
+			seen[version] = struct{}{}
+			versions = append(versions, ReleaseVersion{
+				Tag: candidate.TagName, Version: version, PublishedAt: candidate.PublishedAt.UTC(),
+			})
+		}
+		if len(response) < releasesPerPage {
+			return versions, nil
+		}
+	}
+	return nil, errors.New("GitHub repository has too many releases")
 }
 
 func (client *Client) DownloadAsset(ctx context.Context, repository Repository, asset Asset, token, expectedSHA256 string, destination io.Writer) error {
@@ -431,4 +478,20 @@ type releaseResponse struct {
 		Name string `json:"name"`
 		Size int64  `json:"size"`
 	} `json:"assets"`
+}
+
+func stablePluginVersion(value releaseResponse) (string, bool) {
+	if value.ID < 1 || value.Draft || value.Prerelease || value.PublishedAt.IsZero() || !strings.HasPrefix(value.TagName, "v") {
+		return "", false
+	}
+	version := strings.TrimPrefix(value.TagName, "v")
+	if err := contract.ValidateSemanticVersion(version); err != nil || strings.Contains(strings.SplitN(version, "+", 2)[0], "-") {
+		return "", false
+	}
+	for _, asset := range value.Assets {
+		if asset.ID > 0 && asset.Name == ManifestAssetName && asset.Size > 0 {
+			return version, true
+		}
+	}
+	return "", false
 }

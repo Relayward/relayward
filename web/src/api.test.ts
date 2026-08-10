@@ -9,6 +9,7 @@ import {
   getNode,
   listAdministratorSessions,
   listNodeCommands,
+  listPluginReleaseVersions,
   reconcileNodePlugin,
   requestAgentUpdate,
   requestLatestAgentUpdate,
@@ -179,6 +180,29 @@ describe("Plugin UI API", () => {
     const headers = new Headers(init?.headers);
     expect(path).toBe("/api/v1/plugins/io.relayward%2Fplugin/ui-session");
     expect(init?.method).toBe("POST");
+    expect(headers.get("X-CSRF-Token")).toBe("csrf-token");
+  });
+});
+
+describe("Plugin release API", () => {
+  it("lists repository versions without placing the GitHub token in the URL", async () => {
+    const versions = [{ tag: "v1.2.3", version: "1.2.3", published_at: "2026-08-10T00:00:00Z" }];
+    const fetchMock = vi.fn<typeof fetch>(async () => jsonResponse({ items: versions }));
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("document", { cookie: "relayward_csrf=csrf-token" });
+
+    await expect(listPluginReleaseVersions({
+      repository: "https://github.com/Relayward/plugin",
+      github_token: "private-token",
+    })).resolves.toEqual(versions);
+    const [path, init] = fetchMock.mock.calls[0];
+    const headers = new Headers(init?.headers);
+    expect(path).toBe("/api/v1/plugins/releases");
+    expect(init?.method).toBe("POST");
+    expect(init?.body).toBe(JSON.stringify({
+      repository: "https://github.com/Relayward/plugin",
+      github_token: "private-token",
+    }));
     expect(headers.get("X-CSRF-Token")).toBe("csrf-token");
   });
 });

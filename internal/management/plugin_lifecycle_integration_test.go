@@ -38,6 +38,10 @@ func (client *integrationReleaseClient) Inspect(context.Context, string, string,
 	return client.release, nil
 }
 
+func (*integrationReleaseClient) ListStableVersions(context.Context, string, string) ([]githubrelease.ReleaseVersion, error) {
+	return nil, nil
+}
+
 func (client *integrationReleaseClient) DownloadAsset(_ context.Context, _ githubrelease.Repository, asset githubrelease.Asset,
 	_ string, _ string, destination io.Writer,
 ) error {

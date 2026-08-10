@@ -21,6 +21,7 @@ import (
 
 type releaseClientStub struct {
 	release            githubrelease.Release
+	versions           []githubrelease.ReleaseVersion
 	err                error
 	token              string
 	resolvedRepository githubrelease.Repository
@@ -33,6 +34,11 @@ type releaseClientStub struct {
 func (client *releaseClientStub) Inspect(_ context.Context, _, _, token string) (githubrelease.Release, error) {
 	client.token = token
 	return client.release, client.err
+}
+
+func (client *releaseClientStub) ListStableVersions(_ context.Context, _, token string) ([]githubrelease.ReleaseVersion, error) {
+	client.token = token
+	return client.versions, client.err
 }
 
 func (*releaseClientStub) DownloadAsset(context.Context, githubrelease.Repository, githubrelease.Asset, string, string, io.Writer) error {
@@ -153,6 +159,13 @@ func TestPluginReleaseInspectionApprovalAndPrivateInstall(t *testing.T) {
 	}
 	if installed.ActiveVersion != "1.2.3" || !artifacts.installed || runtime.switched == nil || releases.token != "private-token" {
 		t.Fatalf("installed = %+v, artifacts=%v runtime=%+v token=%q", installed, artifacts.installed, runtime.switched, releases.token)
+	}
+	releases.versions = []githubrelease.ReleaseVersion{{
+		Tag: "v1.2.3", Version: "1.2.3", PublishedAt: time.Date(2026, time.August, 10, 0, 0, 0, 0, time.UTC),
+	}}
+	versions, err := service.ListPluginReleaseVersions(t.Context(), "https://github.com/Relayward/test-plugin", "")
+	if err != nil || len(versions) != 1 || versions[0].Version != "1.2.3" || releases.token != "private-token" {
+		t.Fatalf("ListPluginReleaseVersions() = %+v, %v, token = %q", versions, err, releases.token)
 	}
 	ciphertext, err := service.store.Secret(t.Context(), store.PluginInstallationSecretOwnerType, pluginManifest.ID, store.PluginInstallationGitHubToken)
 	if err != nil || string(ciphertext) == "private-token" || strings.Contains(string(ciphertext), "private-token") {
