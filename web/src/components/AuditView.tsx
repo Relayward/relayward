@@ -2,6 +2,7 @@ import { useEffect, useId, useMemo, useState } from "react";
 import { RefreshCw } from "lucide-react";
 
 import { APIError, listAudit, type AuditEntry } from "../api";
+import { auditActionLabel, auditActorLabel, auditOutcomeLabel, auditTargetTypeLabel, shortAuditID } from "../auditPresentation";
 import { useI18n } from "../i18n";
 import { FormError } from "./AuthScreen";
 import { PageHeader, StatusBadge } from "./PageLayout";
@@ -72,7 +73,7 @@ export function AuditView() {
               <Combobox
                 value={outcome || "all"}
                 onValueChange={(value) => setOutcome(value === "all" ? "" : value)}
-                options={[{ value: "all", label: t("All outcomes") }, ...outcomes.map((value) => ({ value, label: t(titleCase(value)) }))]}
+                options={[{ value: "all", label: t("All outcomes") }, ...outcomes.map((value) => ({ value, label: auditOutcomeLabel(value, t) }))]}
                 searchPlaceholder={t("Search options...")}
                 emptyText={t("No matching options.")}
                 className="h-9 min-w-40 max-[520px]:flex-1"
@@ -92,9 +93,9 @@ export function AuditView() {
                 {!loading ? visibleItems.map((entry) => (
                   <TableRow key={entry.id}>
                     <TableCell className="whitespace-nowrap text-muted-foreground">{formatDateTime(entry.occurred_at)}</TableCell>
-                    <TableCell><code className="rounded-sm bg-muted px-1.5 py-1 text-xs">{entry.action}</code></TableCell>
-                    <TableCell className="text-muted-foreground">{entry.target_type}{entry.target_id ? ` / ${shortID(entry.target_id)}` : ""}</TableCell>
-                    <TableCell className="text-muted-foreground">{entry.actor_type}</TableCell>
+                    <TableCell><span title={entry.action}>{auditActionLabel(entry.action, t)}</span></TableCell>
+                    <TableCell className="text-muted-foreground" title={entry.target_type}>{auditTargetTypeLabel(entry.target_type, t)}{entry.target_id ? ` / ${shortAuditID(entry.target_id)}` : ""}</TableCell>
+                    <TableCell className="text-muted-foreground" title={entry.actor_type}>{auditActorLabel(entry.actor_type, t)}</TableCell>
                     <TableCell><AuditOutcome value={entry.outcome} /></TableCell>
                   </TableRow>
                 )) : null}
@@ -112,15 +113,7 @@ export function AuditView() {
 
 function AuditOutcome({ value }: { value: string }) {
   const { t } = useI18n();
-  return <StatusBadge tone={value === "success" ? "success" : "danger"}>{t(titleCase(value))}</StatusBadge>;
-}
-
-function shortID(value: string): string {
-  return value.length > 12 ? `${value.slice(0, 8)}...` : value;
-}
-
-function titleCase(value: string): string {
-  return value.charAt(0).toUpperCase() + value.slice(1);
+  return <StatusBadge tone={value === "success" ? "success" : "danger"}>{auditOutcomeLabel(value, t)}</StatusBadge>;
 }
 
 function errorMessage(cause: unknown): string {

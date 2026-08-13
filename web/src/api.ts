@@ -170,8 +170,31 @@ export interface PluginArtifact {
   arch?: string;
 }
 
+export type PluginNavigationGroup = "resources" | "extensions" | "observability";
+export type PluginNavigationIcon = "activity" | "gauge" | "network" | "route" | "server-cog" | "shield" | "sliders-horizontal";
+
+export interface PluginUIContribution {
+  navigation?: {
+    label: {
+      "zh-CN": string;
+      en: string;
+    };
+    icon: PluginNavigationIcon;
+    group: PluginNavigationGroup;
+    order: number;
+  };
+  node_detail?: {
+    label: {
+      "zh-CN": string;
+      en: string;
+    };
+    icon: PluginNavigationIcon;
+    order: number;
+  };
+}
+
 export interface PluginManifest {
-  api_version: "relayward.plugin/v1";
+  api_version: "relayward.plugin/v1" | "relayward.plugin/v2";
   id: string;
   name: string;
   version: string;
@@ -182,6 +205,7 @@ export interface PluginManifest {
     ui_api?: number;
   };
   permissions: PluginPermission[];
+  ui?: PluginUIContribution;
   artifacts: PluginArtifact[];
 }
 

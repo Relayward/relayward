@@ -15,6 +15,7 @@ import {
   type SessionInfo,
   type User,
 } from "../api";
+import { auditActionLabel, auditTargetTypeLabel } from "../auditPresentation";
 import { useI18n } from "../i18n";
 import type { SystemInfo } from "../system";
 import { FormError } from "./AuthScreen";
@@ -395,20 +396,8 @@ function auditTarget(entry: AuditEntry, names: ReturnType<typeof buildNames>, t:
       node: names.nodes.get(nodeID) ?? shortID(nodeID),
     });
   }
-  return entry.target_id ? `${entry.target_type} / ${shortID(entry.target_id)}` : entry.target_type;
-}
-
-function auditActionLabel(action: string, t: Translate): string {
-  const labels: Record<string, string> = {
-    "node.create": "Node created", "node.update": "Node updated", "node.register": "Agent registered",
-    "node.plugin_reconcile.complete": "Node plugin configuration completed", "plugin.install": "Plugin installed",
-    "user.create": "User created", "user.update": "User updated", "authorization.create": "Authorization created",
-    "authorization.update": "Authorization updated", "authorization.subscription_token.rotate": "Subscription token rotated",
-    "announcement.update": "Announcement updated", "system.settings.update": "System settings updated",
-    "administrator.username.update": "Administrator username changed", "administrator.password.update": "Administrator password changed",
-    "administrator.totp.enable": "Two-factor authentication enabled", "administrator.totp.reset": "Two-factor authentication reset",
-  };
-  return t(labels[action] ?? action);
+  const targetType = auditTargetTypeLabel(entry.target_type, t);
+  return entry.target_id ? `${targetType} / ${shortID(entry.target_id)}` : targetType;
 }
 
 function showOnOverview(entry: AuditEntry): boolean {

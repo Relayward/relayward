@@ -1,11 +1,10 @@
 import { type FormEvent, type ReactNode, useEffect, useId, useState } from "react";
-import { Activity, Boxes, ExternalLink, KeyRound, PackagePlus, Puzzle, RefreshCw, ServerCog, Trash2 } from "lucide-react";
+import { Activity, Boxes, KeyRound, LoaderCircle, PackagePlus, Puzzle, RefreshCw, ServerCog, Trash2 } from "lucide-react";
 
 import {
   APIError,
   inspectPluginRelease,
   installPlugin,
-  listPluginInstallations,
   listPluginReleaseVersions,
   replacePluginGitHubToken,
   uninstallPlugin,
@@ -20,7 +19,6 @@ import { pluginPermissionPresentation } from "../pluginPermissions";
 import { FormError } from "./AuthScreen";
 import { Modal } from "./Modal";
 import { PageHeader, StatusBadge, SummaryBar, SummaryItem } from "./PageLayout";
-import { PluginFrame, type PluginNavigationTarget } from "./PluginFrame";
 import { PluginInstancesView } from "./PluginInstancesView";
 import { Button } from "./ui/button";
 import { Card, CardAction, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "./ui/card";
@@ -33,14 +31,16 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 
 type PluginTab = "installations" | "instances";
 
-export function PluginsView({ onNavigate }: { onNavigate: (target: PluginNavigationTarget) => void }) {
+export function PluginsView({ installations, loading, loadError, onReload, onInstallationsChange }: {
+  installations: PluginInstallation[];
+  loading: boolean;
+  loadError?: string;
+  onReload: () => void;
+  onInstallationsChange: (installations: PluginInstallation[]) => void;
+}) {
   const { t } = useI18n();
   const [tab, setTab] = useState<PluginTab>("installations");
-  const [openedPlugin, setOpenedPlugin] = useState<PluginInstallation>();
 
-  if (openedPlugin !== undefined) {
-    return <PluginFrame plugin={openedPlugin} onClose={() => setOpenedPlugin(undefined)} onNavigate={onNavigate} />;
-  }
   return (
     <Tabs value={tab} onValueChange={(value) => setTab(value as PluginTab)}>
       <section aria-labelledby="plugins-title">
@@ -54,45 +54,39 @@ export function PluginsView({ onNavigate }: { onNavigate: (target: PluginNavigat
             <TabsTrigger value="instances">{t("Node instances")}</TabsTrigger>
           </TabsList>}
         />
-        <TabsContent value="installations"><PluginInstallationsView onOpen={setOpenedPlugin} /></TabsContent>
+        <TabsContent value="installations">
+          <PluginInstallationsView
+            items={installations}
+            loading={loading}
+            loadError={loadError}
+            onReload={onReload}
+            onItemsChange={onInstallationsChange}
+          />
+        </TabsContent>
         <TabsContent value="instances"><PluginInstancesView embedded /></TabsContent>
       </section>
     </Tabs>
   );
 }
 
-function PluginInstallationsView({ onOpen }: { onOpen: (plugin: PluginInstallation) => void }) {
+function PluginInstallationsView({ items, loading, loadError, onReload, onItemsChange }: {
+  items: PluginInstallation[];
+  loading: boolean;
+  loadError?: string;
+  onReload: () => void;
+  onItemsChange: (items: PluginInstallation[]) => void;
+}) {
   const { t } = useI18n();
-  const [items, setItems] = useState<PluginInstallation[]>([]);
-  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string>();
   const [installing, setInstalling] = useState(false);
   const [upgrading, setUpgrading] = useState<PluginInstallation>();
   const [removing, setRemoving] = useState<PluginInstallation>();
   const [replacingToken, setReplacingToken] = useState<PluginInstallation>();
 
-  useEffect(() => {
-    let active = true;
-    listPluginInstallations().then((values) => {
-      if (active) {
-        setItems(values);
-        setLoading(false);
-      }
-    }, (cause) => {
-      if (active) {
-        setError(errorMessage(cause));
-        setLoading(false);
-      }
-    });
-    return () => { active = false; };
-  }, []);
-
   function replace(value: PluginInstallation) {
-    setItems((current) => {
-      const found = current.some((item) => item.plugin_id === value.plugin_id);
-      return (found ? current.map((item) => item.plugin_id === value.plugin_id ? value : item) : [...current, value])
-        .sort((left, right) => left.manifest.name.localeCompare(right.manifest.name));
-    });
+    const found = items.some((item) => item.plugin_id === value.plugin_id);
+    onItemsChange((found ? items.map((item) => item.plugin_id === value.plugin_id ? value : item) : [...items, value])
+      .sort((left, right) => left.manifest.name.localeCompare(right.manifest.name)));
   }
 
   const active = items.filter((item) => item.state === "active").length;
@@ -109,14 +103,14 @@ function PluginInstallationsView({ onOpen }: { onOpen: (plugin: PluginInstallati
         <SummaryItem icon={<Puzzle size={17} />} label={t("Feature plugins")} value={features} note={t("{count} healthy", { count: healthy })} />
       </SummaryBar>
       <div className="mb-3 flex min-h-10 flex-wrap items-center justify-end gap-4">
-        {error ? <div className="mr-auto"><FormError message={t(error)} /></div> : null}
+        {error || loadError ? <div className="mr-auto"><FormError message={t(error ?? loadError ?? "")} /></div> : null}
+        {loadError ? <Button variant="outline" size="sm" disabled={loading} onClick={onReload} type="button"><RefreshCw />{t("Retry")}</Button> : null}
         <Button size="sm" onClick={() => setInstalling(true)} type="button">
           <PackagePlus size={17} />{t("Install plugin")}
         </Button>
       </div>
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
         {items.map((item) => {
-          const hasUI = item.manifest.artifacts.some((artifact) => artifact.role === "ui");
           return (
             <Card key={item.plugin_id}>
               <CardHeader>
@@ -133,9 +127,6 @@ function PluginInstallationsView({ onOpen }: { onOpen: (plugin: PluginInstallati
                 </dl>
               </CardContent>
               <CardFooter className="justify-end gap-1 border-t pt-6">
-                {hasUI ? (
-                  <Button variant="outline" size="sm" onClick={() => onOpen(item)}><ExternalLink />{t("Open plugin")}</Button>
-                ) : null}
                 <IconAction label={t("Upgrade {name}", { name: item.manifest.name })} description={t("Check for upgrade")} onClick={() => setUpgrading(item)}><RefreshCw size={17} /></IconAction>
                 <IconAction label={t("Replace GitHub token for {name}", { name: item.manifest.name })} description={t("Replace GitHub token")} onClick={() => setReplacingToken(item)}><KeyRound size={17} /></IconAction>
                 <IconAction label={t("Uninstall {name}", { name: item.manifest.name })} description={t("Uninstall plugin")} danger onClick={() => setRemoving(item)}><Trash2 size={17} /></IconAction>
@@ -154,7 +145,7 @@ function PluginInstallationsView({ onOpen }: { onOpen: (plugin: PluginInstallati
           plugin={removing}
           onClose={() => setRemoving(undefined)}
           onRemoved={() => {
-            setItems((current) => current.filter((item) => item.plugin_id !== removing.plugin_id));
+            onItemsChange(items.filter((item) => item.plugin_id !== removing.plugin_id));
             setRemoving(undefined);
           }}
         />
@@ -221,7 +212,10 @@ function PluginReleaseDialog({ existing, onClose, onSaved }: {
   const [versionsLoaded, setVersionsLoaded] = useState(false);
   const [candidate, setCandidate] = useState<PluginReleaseCandidate>();
   const [approved, setApproved] = useState<Set<string>>(new Set());
-  const [busy, setBusy] = useState(false);
+  const [inspecting, setInspecting] = useState(false);
+  const [inspectionFailed, setInspectionFailed] = useState(false);
+  const [inspectionRetry, setInspectionRetry] = useState(0);
+  const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string>();
   const versionID = useId();
   const versionLabelID = `${versionID}-label`;
@@ -262,33 +256,43 @@ function PluginReleaseDialog({ existing, onClose, onSaved }: {
     change();
     setCandidate(undefined);
     setApproved(new Set());
+    setInspectionFailed(false);
+    setError(undefined);
   }
 
-  async function inspect(event: FormEvent) {
-    event.preventDefault();
-    if (version === "") {
-      setError("Select a plugin version.");
-      return;
-    }
-    setBusy(true);
+  useEffect(() => {
+    let active = true;
+    setCandidate(undefined);
+    setApproved(new Set());
+    setInspectionFailed(false);
+    setInspecting(false);
+    if (!isCompleteGitHubRepository(repository) || version === "") return () => { active = false; };
+
+    setInspecting(true);
     setError(undefined);
-    try {
-      const value = await inspectPluginRelease({
-        repository,
-        version,
-        ...(token === "" ? {} : { github_token: token }),
-      });
-      if (existing !== undefined && value.manifest.id !== existing.plugin_id) {
-        throw new Error("The release belongs to a different plugin.");
+    void (async () => {
+      try {
+        const value = await inspectPluginRelease({
+          repository,
+          version,
+          ...(token === "" ? {} : { github_token: token }),
+        });
+        if (!active) return;
+        if (existing !== undefined && value.manifest.id !== existing.plugin_id) {
+          throw new Error("The release belongs to a different plugin.");
+        }
+        setCandidate(value);
+        setApproved(new Set());
+        setInspecting(false);
+      } catch (cause) {
+        if (!active) return;
+        setError(errorMessage(cause));
+        setInspectionFailed(true);
+        setInspecting(false);
       }
-      setCandidate(value);
-      setApproved(new Set());
-    } catch (cause) {
-      setError(errorMessage(cause));
-    } finally {
-      setBusy(false);
-    }
-  }
+    })();
+    return () => { active = false; };
+  }, [existing, inspectionRetry, repository, token, version]);
 
   async function save() {
     if (candidate === undefined) return;
@@ -297,7 +301,8 @@ function PluginReleaseDialog({ existing, onClose, onSaved }: {
       setError("Approve every requested permission before continuing.");
       return;
     }
-    setBusy(true);
+    setSaving(true);
+    setInspectionFailed(false);
     setError(undefined);
     try {
       const input = {
@@ -311,15 +316,18 @@ function PluginReleaseDialog({ existing, onClose, onSaved }: {
       onSaved(saved);
     } catch (cause) {
       setError(errorMessage(cause));
-      setBusy(false);
+      setSaving(false);
     }
   }
 
+  const allPermissionsApproved = candidate !== undefined && candidate.manifest.permissions
+    .every((permission) => approved.has(permission.name));
+
   return (
     <Modal title={existing === undefined ? t("Install plugin") : t("Upgrade {name}", { name: existing.manifest.name })} onClose={onClose} width="wide">
-      <form className="grid gap-4" onSubmit={inspect}>
+      <div className="grid gap-4">
         <FieldLabel label={t("GitHub repository")}>
-          <Input value={repository} onChange={(event) => changeSource(() => setRepository(event.target.value))} disabled={existing !== undefined} placeholder="https://github.com/owner/repository" required />
+          <Input value={repository} onChange={(event) => changeSource(() => setRepository(event.target.value))} disabled={saving || existing !== undefined} placeholder="https://github.com/owner/repository" required />
         </FieldLabel>
         <div className="grid grid-cols-2 gap-4 max-[700px]:grid-cols-1">
           <div className="grid gap-1.5">
@@ -339,21 +347,22 @@ function PluginReleaseDialog({ existing, onClose, onSaved }: {
                 : versionsLoaded
                   ? t("Select a version")
                   : t("Enter a repository to load versions")}
-              disabled={versionsLoading || !isCompleteGitHubRepository(repository)}
+              disabled={saving || versionsLoading || !isCompleteGitHubRepository(repository)}
               required
               id={versionID}
               aria-labelledby={versionLabelID}
             />
           </div>
           <FieldLabel label={t("{field} (optional)", { field: t("GitHub token") })}>
-            <Input value={token} onChange={(event) => changeSource(() => setToken(event.target.value))} type="password" autoComplete="off" placeholder={existing === undefined ? t("Public repository") : t("Use saved token")} />
+            <Input value={token} onChange={(event) => changeSource(() => setToken(event.target.value))} disabled={saving} type="password" autoComplete="off" placeholder={existing === undefined ? t("Public repository") : t("Use saved token")} />
           </FieldLabel>
         </div>
-        <div className="flex justify-end">
-          <Button variant="secondary" disabled={busy || versionsLoading || version === ""} type="submit"><RefreshCw size={16} />{busy ? t("Checking...") : t("Check release")}</Button>
+      </div>
+      {inspecting ? (
+        <div className="mt-1 flex items-center justify-center gap-2 border-y border-border py-6 text-sm text-muted-foreground" role="status">
+          <LoaderCircle className="size-4 animate-spin" />{t("Checking selected version...")}
         </div>
-      </form>
-      {candidate ? (
+      ) : candidate ? (
         <div className="mt-1 border-y border-border py-4">
           <div className="flex items-center justify-between gap-4">
             <div className="grid min-w-0 gap-0.5"><strong className="font-semibold">{candidate.manifest.name}</strong><small className="[overflow-wrap:anywhere] text-muted-foreground">{candidate.manifest.id}</small></div>
@@ -377,11 +386,14 @@ function PluginReleaseDialog({ existing, onClose, onSaved }: {
           </div>
         </div>
       ) : null}
-      <FormError message={error !== undefined ? t(error) : undefined} />
+      <div className="flex items-center gap-3">
+        <FormError message={error !== undefined ? t(error) : undefined} />
+        {inspectionFailed ? <Button className="ml-auto" variant="outline" size="sm" onClick={() => setInspectionRetry((value) => value + 1)} type="button">{t("Retry")}</Button> : null}
+      </div>
       <DialogFooter>
         <Button variant="ghost" onClick={onClose} type="button">{t("Cancel")}</Button>
-        <Button disabled={busy || candidate === undefined} onClick={save} type="button">
-          {busy ? t("Saving...") : existing === undefined ? t("Install") : t("Upgrade")}
+        <Button disabled={saving || inspecting || !allPermissionsApproved} onClick={save} type="button">
+          {saving ? t("Saving...") : existing === undefined ? t("Install") : t("Upgrade")}
         </Button>
       </DialogFooter>
     </Modal>

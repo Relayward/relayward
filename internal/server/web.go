@@ -67,7 +67,7 @@ func (server *Server) serveWeb(w http.ResponseWriter, request *http.Request) {
 	}
 	styleNonce := ""
 	if name == "index.html" {
-		styleNonce, err = newWebStyleNonce()
+		styleNonce, err = newStyleNonce()
 		if err != nil {
 			server.internalError(w, request, err)
 			return
@@ -92,7 +92,7 @@ func (server *Server) serveWeb(w http.ResponseWriter, request *http.Request) {
 	http.ServeContent(w, request, path.Base(name), time.Time{}, bytes.NewReader(contents))
 }
 
-func newWebStyleNonce() (string, error) {
+func newStyleNonce() (string, error) {
 	value := make([]byte, 16)
 	if _, err := rand.Read(value); err != nil {
 		return "", fmt.Errorf("generate web style nonce: %w", err)

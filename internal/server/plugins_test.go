@@ -5,6 +5,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -222,11 +223,15 @@ func TestPluginLifecycleHTTPFlowDoesNotExposeSecrets(t *testing.T) {
 		t.Fatalf("plugin UI session URL = %q", session.URL)
 	}
 	uiAsset := performRequest(handler, http.MethodGet, session.URL, nil, nil)
+	styleNonce := pluginUIStyleNonce(t, uiAsset)
 	if uiAsset.Code != http.StatusOK || !strings.Contains(uiAsset.Body.String(), "plugin-ui") ||
 		uiAsset.Header().Get("X-Frame-Options") != "" || uiAsset.Header().Get("Content-Security-Policy") !=
-		"default-src 'none'; script-src 'self'; style-src 'self'; style-src-attr 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'none'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'" ||
+		pluginUIContentSecurityPolicy(styleNonce) ||
 		uiAsset.Header().Get("Access-Control-Allow-Origin") != "*" ||
-		uiAsset.Header().Get("Cross-Origin-Resource-Policy") != "cross-origin" {
+		uiAsset.Header().Get("Cross-Origin-Resource-Policy") != "cross-origin" ||
+		uiAsset.Header().Get("Cache-Control") != "no-store" ||
+		!strings.Contains(uiAsset.Body.String(), `content="`+styleNonce+`"`) ||
+		strings.Contains(uiAsset.Body.String(), pluginUIStyleNoncePlaceholder) {
 		t.Fatalf("plugin UI asset status = %d, headers = %+v, body = %s", uiAsset.Code, uiAsset.Header(), uiAsset.Body.String())
 	}
 	invalidUIAsset := performRequest(handler, http.MethodGet,
@@ -259,6 +264,22 @@ func TestPluginLifecycleHTTPFlowDoesNotExposeSecrets(t *testing.T) {
 	}
 }
 
+func pluginUIStyleNonce(t *testing.T, response *httptest.ResponseRecorder) string {
+	t.Helper()
+	policy := response.Header().Get("Content-Security-Policy")
+	prefix := "style-src 'self' 'nonce-"
+	start := strings.Index(policy, prefix)
+	if start < 0 {
+		t.Fatalf("plugin UI CSP has no style nonce: %q", policy)
+	}
+	start += len(prefix)
+	end := strings.IndexByte(policy[start:], '\'')
+	if end < 1 {
+		t.Fatalf("plugin UI CSP has an invalid style nonce: %q", policy)
+	}
+	return policy[start : start+end]
+}
+
 func newPluginLifecycleHandler(t *testing.T) (http.Handler, *serverReleaseClient, *serverArtifactStore, *serverPluginRuntime) {
 	t.Helper()
 	directory := t.TempDir()
@@ -287,7 +308,7 @@ func newPluginLifecycleHandler(t *testing.T) (http.Handler, *serverReleaseClient
 		}},
 	}
 	uiFile := filepath.Join(directory, "plugin-ui.html")
-	if err := os.WriteFile(uiFile, []byte(`<main id="plugin-ui">Plugin UI</main>`), 0o600); err != nil {
+	if err := os.WriteFile(uiFile, []byte(`<meta name="relayward-style-nonce" content="`+pluginUIStyleNoncePlaceholder+`"><main id="plugin-ui">Plugin UI</main>`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	artifacts := &serverArtifactStore{uiFile: uiFile}

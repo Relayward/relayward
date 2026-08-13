@@ -1,22 +1,20 @@
 import { useEffect, useRef, useState } from "react";
-import { ChevronLeft } from "lucide-react";
-
 import { createPluginUISession, invokePluginUI, type PluginInstallation } from "../api";
 import { useI18n } from "../i18n";
 import { cn } from "../lib/utils";
 import { bridgeFailure, bridgeSuccess, isRecord, parsePluginUIRequest } from "../pluginBridge";
-import { Button } from "./ui/button";
-import { Card } from "./ui/card";
 
 export type PluginNavigationTarget = "plugins" | "nodes" | "users" | "authorizations" | "audit";
 
 interface PluginFrameProps {
   plugin: PluginInstallation;
-  onClose: () => void;
+  title: string;
   onNavigate: (target: PluginNavigationTarget) => void;
+  nodeID?: string;
+  embedded?: boolean;
 }
 
-export function PluginFrame({ plugin, onClose, onNavigate }: PluginFrameProps) {
+export function PluginFrame({ plugin, title, onNavigate, nodeID, embedded = false }: PluginFrameProps) {
   const { locale, t } = useI18n();
   const frame = useRef<HTMLIFrameElement>(null);
   const [loading, setLoading] = useState(true);
@@ -37,7 +35,7 @@ export function PluginFrame({ plugin, onClose, onNavigate }: PluginFrameProps) {
       }
     });
     return () => { active = false; };
-  }, [locale, plugin.plugin_id]);
+  }, [locale, nodeID, plugin.plugin_id]);
 
   useEffect(() => {
     async function receive(event: MessageEvent<unknown>) {
@@ -53,6 +51,7 @@ export function PluginFrame({ plugin, onClose, onNavigate }: PluginFrameProps) {
               plugin_id: plugin.plugin_id,
               theme: document.documentElement.classList.contains("dark") ? "dark" : "light",
               locale,
+              ...(nodeID === undefined ? {} : { scope: { kind: "node", node_id: nodeID } }),
             };
             break;
           case "rpc": {
@@ -86,20 +85,18 @@ export function PluginFrame({ plugin, onClose, onNavigate }: PluginFrameProps) {
     }
     window.addEventListener("message", receive);
     return () => window.removeEventListener("message", receive);
-  }, [locale, onNavigate, plugin.plugin_id]);
+  }, [locale, nodeID, onNavigate, plugin.plugin_id]);
 
   return (
-    <section aria-labelledby="plugin-frame-title">
-      <div className="mb-6 flex items-center justify-between gap-4">
+    <section aria-label={embedded ? title : undefined} aria-labelledby={embedded ? undefined : "plugin-frame-title"}>
+      {!embedded ? <div className="mb-2 flex items-center justify-between gap-4 px-4 lg:px-6">
         <div>
-          <Button className="-ml-2 h-8 px-2" variant="ghost" size="sm" onClick={onClose} type="button">
-            <ChevronLeft size={17} />{t("Plugins")}
-          </Button>
-          <h1 className="mt-1.5 mb-0 text-2xl font-bold tracking-tight" id="plugin-frame-title">{plugin.manifest.name}</h1>
+          <h1 className="mb-0 text-2xl font-bold tracking-tight" id="plugin-frame-title">{title}</h1>
+          <p className="mt-1 text-sm text-muted-foreground">{plugin.manifest.name}</p>
         </div>
         <span className="shrink-0 text-xs font-semibold text-muted-foreground">v{plugin.active_version}</span>
-      </div>
-      <Card className="relative h-[min(75vh,800px)] min-h-[520px] overflow-hidden py-0 max-[700px]:h-[calc(100vh-220px)] max-[700px]:min-h-[460px]">
+      </div> : null}
+      <div className="relative h-[min(75vh,800px)] min-h-[520px] overflow-hidden max-[700px]:h-[calc(100vh-220px)] max-[700px]:min-h-[460px]">
         {loading && !failed ? <div className="absolute inset-0 flex items-center justify-center text-sm text-muted-foreground">{t("Loading...")}</div> : null}
         {failed ? <div className="absolute inset-0 flex items-center justify-center px-4 text-center text-sm text-destructive">{t("Plugin page could not be loaded.")}</div> : null}
         {source !== undefined ? (
@@ -114,7 +111,7 @@ export function PluginFrame({ plugin, onClose, onNavigate }: PluginFrameProps) {
             onError={() => { setLoading(false); setFailed(true); }}
           />
         ) : null}
-      </Card>
+      </div>
     </section>
   );
 }

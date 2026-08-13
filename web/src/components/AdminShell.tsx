@@ -2,6 +2,7 @@ import { useEffect, useState, type ComponentProps, type CSSProperties, type Reac
 import {
   Activity,
   BadgeCheck,
+  CircleAlert,
   CircleUser,
   EllipsisVertical,
   LayoutDashboard,
@@ -20,6 +21,7 @@ import {
 } from "lucide-react"
 
 import type { SessionInfo } from "@/api"
+import type { AdminView, PluginNavigationPage } from "@/adminNavigation"
 import { LanguageSwitcher, useI18n } from "@/i18n"
 import type { SystemInfo } from "@/system"
 import { Button } from "@/components/ui/button"
@@ -40,6 +42,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { Input } from "@/components/ui/input"
 import { InsecureTransportWarning } from "@/components/InsecureTransportWarning"
+import { pluginIcons } from "@/pluginIcons"
 import { Separator } from "@/components/ui/separator"
 import {
   Sidebar,
@@ -57,7 +60,7 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar"
 
-export type AdminView = "system" | "nodes" | "plugins" | "users" | "authorizations" | "events" | "announcement" | "audit" | "security" | "settings"
+export type { AdminView } from "@/adminNavigation"
 
 interface AdminShellProps {
   view: AdminView
@@ -66,6 +69,7 @@ interface AdminShellProps {
   system: SystemInfo
   busy: boolean
   onLogout: () => void
+  pluginPages: PluginNavigationPage[]
   children: ReactNode
 }
 
@@ -73,43 +77,77 @@ interface NavigationItem {
   view: AdminView
   label: string
   icon: typeof LayoutDashboard
+  order: number
+  translated?: boolean
+  unavailable?: boolean
 }
 
-const navigation: Array<{ label: string; items: NavigationItem[] }> = [
+interface NavigationGroupDefinition {
+  label: string
+  pluginGroup?: PluginNavigationPage["group"]
+  items: NavigationItem[]
+}
+
+const coreNavigation: NavigationGroupDefinition[] = [
   {
     label: "Overview",
-    items: [{ view: "system", label: "System overview", icon: LayoutDashboard }],
+    items: [{ view: "system", label: "System overview", icon: LayoutDashboard, order: 100 }],
   },
   {
     label: "Resource management",
+    pluginGroup: "resources",
     items: [
-      { view: "nodes", label: "Nodes", icon: Server },
-      { view: "users", label: "Users", icon: Users },
-      { view: "authorizations", label: "Authorizations", icon: BadgeCheck },
+      { view: "nodes", label: "Nodes", icon: Server, order: 100 },
+      { view: "users", label: "Users", icon: Users, order: 200 },
+      { view: "authorizations", label: "Authorizations", icon: BadgeCheck, order: 300 },
     ],
   },
   {
     label: "Extensions",
-    items: [{ view: "plugins", label: "Plugins", icon: Plug }],
+    pluginGroup: "extensions",
+    items: [{ view: "plugins", label: "Plugins", icon: Plug, order: 100 }],
   },
   {
     label: "Observability",
+    pluginGroup: "observability",
     items: [
-      { view: "events", label: "Recent events", icon: Activity },
-      { view: "audit", label: "Audit", icon: ScrollText },
+      { view: "events", label: "Recent events", icon: Activity, order: 100 },
+      { view: "audit", label: "Audit", icon: ScrollText, order: 200 },
     ],
   },
   {
     label: "System",
     items: [
-      { view: "announcement", label: "Announcement", icon: Megaphone },
-      { view: "settings", label: "Settings", icon: Settings },
-      { view: "security", label: "Security", icon: Shield },
+      { view: "announcement", label: "Announcement", icon: Megaphone, order: 100 },
+      { view: "settings", label: "Settings", icon: Settings, order: 200 },
+      { view: "security", label: "Security", icon: Shield, order: 300 },
     ],
   },
 ]
 
-export function AdminShell({ view, onViewChange, session, system, busy, onLogout, children }: AdminShellProps) {
+function navigationWithPlugins(pluginPages: PluginNavigationPage[]): NavigationGroupDefinition[] {
+  const result = coreNavigation.map((group) => ({ ...group, items: [...group.items] }))
+  for (const page of pluginPages) {
+    const group = result.find((candidate) => candidate.pluginGroup === page.group)
+    if (group === undefined) continue
+    group.items.push({
+      view: page.view,
+      label: page.label,
+      icon: pluginIcons[page.icon],
+      order: page.order,
+      translated: false,
+      unavailable: page.unavailable,
+    })
+  }
+  for (const group of result) group.items.sort((left, right) => left.order - right.order || left.view.localeCompare(right.view))
+  return result
+}
+
+function navigationLabel(item: NavigationItem, translate: (message: string) => string) {
+  return item.translated === false ? item.label : translate(item.label)
+}
+
+export function AdminShell({ view, onViewChange, session, system, busy, onLogout, pluginPages, children }: AdminShellProps) {
   return (
     <SidebarProvider
       style={{
@@ -124,11 +162,12 @@ export function AdminShell({ view, onViewChange, session, system, busy, onLogout
         username={session.administrator.username}
         busy={busy}
         onLogout={onLogout}
+        pluginPages={pluginPages}
         variant="inset"
         collapsible="icon"
       />
       <SidebarInset>
-        <AdminHeader view={view} onViewChange={onViewChange} version={system.version} />
+        <AdminHeader view={view} onViewChange={onViewChange} version={system.version} pluginPages={pluginPages} />
         <InsecureTransportWarning className="mx-4 mt-4 lg:mx-6" />
         <div className="flex flex-1 flex-col">
           <div className="@container/main flex flex-1 flex-col gap-2">
@@ -142,15 +181,17 @@ export function AdminShell({ view, onViewChange, session, system, busy, onLogout
   )
 }
 
-function AdminSidebar({ view, onViewChange, username, busy, onLogout, ...props }: ComponentProps<typeof Sidebar> & {
+function AdminSidebar({ view, onViewChange, username, busy, onLogout, pluginPages, ...props }: ComponentProps<typeof Sidebar> & {
   view: AdminView
   onViewChange: (view: AdminView) => void
   username: string
   busy: boolean
   onLogout: () => void
+  pluginPages: PluginNavigationPage[]
 }) {
   const { t } = useI18n()
   const { isMobile, setOpenMobile } = useSidebar()
+  const navigation = navigationWithPlugins(pluginPages)
 
   function navigate(nextView: AdminView) {
     onViewChange(nextView)
@@ -183,11 +224,12 @@ function AdminSidebar({ view, onViewChange, username, busy, onLogout, ...props }
                 <SidebarMenuItem key={item.view}>
                   <SidebarMenuButton
                     isActive={view === item.view}
-                    tooltip={t(item.label)}
+                    tooltip={navigationLabel(item, t)}
                     onClick={() => navigate(item.view)}
                   >
                     <item.icon />
-                    <span>{t(item.label)}</span>
+                    <span>{navigationLabel(item, t)}</span>
+                    {item.unavailable ? <><CircleAlert className="ml-auto text-destructive" /><span className="sr-only">{t("Plugin unavailable")}</span></> : null}
                   </SidebarMenuButton>
                 </SidebarMenuItem>
               ))}
@@ -238,7 +280,7 @@ function AdminSidebar({ view, onViewChange, username, busy, onLogout, ...props }
   )
 }
 
-function AdminHeader({ view, onViewChange, version }: { view: AdminView; onViewChange: (view: AdminView) => void; version: string }) {
+function AdminHeader({ view, onViewChange, version, pluginPages }: { view: AdminView; onViewChange: (view: AdminView) => void; version: string; pluginPages: PluginNavigationPage[] }) {
   const { t } = useI18n()
   const [searchOpen, setSearchOpen] = useState(false)
 
@@ -269,7 +311,7 @@ function AdminHeader({ view, onViewChange, version }: { view: AdminView; onViewC
           </div>
         </div>
       </header>
-      <PageSearch open={searchOpen} onOpenChange={setSearchOpen} currentView={view} onViewChange={onViewChange} />
+      <PageSearch open={searchOpen} onOpenChange={setSearchOpen} currentView={view} onViewChange={onViewChange} pluginPages={pluginPages} />
     </>
   )
 }
@@ -292,16 +334,17 @@ function SearchTrigger({ onClick }: { onClick: () => void }) {
   )
 }
 
-function PageSearch({ open, onOpenChange, currentView, onViewChange }: {
+function PageSearch({ open, onOpenChange, currentView, onViewChange, pluginPages }: {
   open: boolean
   onOpenChange: (open: boolean) => void
   currentView: AdminView
   onViewChange: (view: AdminView) => void
+  pluginPages: PluginNavigationPage[]
 }) {
   const { t } = useI18n()
   const [query, setQuery] = useState("")
-  const items = navigation.flatMap((group) => group.items)
-  const visibleItems = items.filter((item) => t(item.label).toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()))
+  const items = navigationWithPlugins(pluginPages).flatMap((group) => group.items)
+  const visibleItems = items.filter((item) => navigationLabel(item, t).toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()))
 
   function select(view: AdminView) {
     onViewChange(view)
@@ -333,8 +376,9 @@ function PageSearch({ open, onOpenChange, currentView, onViewChange }: {
               className="flex h-12 w-full cursor-pointer items-center gap-3 rounded-md px-3 text-left text-sm outline-none hover:bg-accent focus-visible:bg-accent"
             >
               <item.icon className="size-4 text-muted-foreground" />
-              <span>{t(item.label)}</span>
-              {currentView === item.view ? <span className="ml-auto text-xs text-muted-foreground">{t("Current")}</span> : null}
+              <span>{navigationLabel(item, t)}</span>
+              {item.unavailable ? <><CircleAlert className="ml-auto size-4 text-destructive" /><span className="sr-only">{t("Plugin unavailable")}</span></> : null}
+              {currentView === item.view ? <span className={item.unavailable ? "text-xs text-muted-foreground" : "ml-auto text-xs text-muted-foreground"}>{t("Current")}</span> : null}
             </button>
           ))}
         </div>

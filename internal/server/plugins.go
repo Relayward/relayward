@@ -1,8 +1,11 @@
 package server
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
+	"io"
 	"mime"
 	"net/http"
 	"net/url"
@@ -17,7 +20,7 @@ import (
 	"github.com/Relayward/relayward/internal/store"
 )
 
-const pluginUIContentSecurityPolicy = "default-src 'none'; script-src 'self'; style-src 'self'; style-src-attr 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'none'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'"
+const pluginUIStyleNoncePlaceholder = "__RELAYWARD_STYLE_NONCE__"
 
 const (
 	pluginUISecretOwnerType = "plugin_ui"
@@ -289,16 +292,44 @@ func (server *Server) servePluginUI(w http.ResponseWriter, request *http.Request
 		return
 	}
 	defer file.Close()
+	var contents io.ReadSeeker = file
+	styleNonce := ""
+	if name == "index.html" {
+		body, err := io.ReadAll(file)
+		if err != nil {
+			server.internalError(w, request, fmt.Errorf("read plugin UI index: %w", err))
+			return
+		}
+		placeholder := []byte(pluginUIStyleNoncePlaceholder)
+		if bytes.Count(body, placeholder) == 1 {
+			styleNonce, err = newStyleNonce()
+			if err != nil {
+				server.internalError(w, request, err)
+				return
+			}
+			body = bytes.Replace(body, placeholder, []byte(styleNonce), 1)
+		}
+		contents = bytes.NewReader(body)
+		w.Header().Set("Cache-Control", "no-store")
+	}
 	contentType := mime.TypeByExtension(filepath.Ext(name))
 	if contentType == "" {
 		contentType = "application/octet-stream"
 	}
 	w.Header().Set("Content-Type", contentType)
-	w.Header().Set("Content-Security-Policy", pluginUIContentSecurityPolicy)
+	w.Header().Set("Content-Security-Policy", pluginUIContentSecurityPolicy(styleNonce))
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Cross-Origin-Resource-Policy", "cross-origin")
 	w.Header().Del("X-Frame-Options")
-	http.ServeContent(w, request, info.Name(), info.ModTime(), file)
+	http.ServeContent(w, request, info.Name(), info.ModTime(), contents)
+}
+
+func pluginUIContentSecurityPolicy(styleNonce string) string {
+	styleSource := "style-src 'self'"
+	if styleNonce != "" {
+		styleSource += " 'nonce-" + styleNonce + "'"
+	}
+	return "default-src 'none'; script-src 'self'; " + styleSource + "; style-src-attr 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'none'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'"
 }
 
 func pluginInstallationView(value store.PluginInstallation) pluginInstallationResponse {

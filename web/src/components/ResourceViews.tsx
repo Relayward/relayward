@@ -1,21 +1,17 @@
-import { type FormEvent, type ReactNode, useCallback, useEffect, useId, useState } from "react";
-import { Eye, KeyRound, Mail, MessageCircle, Pencil, Plus, RefreshCw, Server, ShieldX, Trash2, Users } from "lucide-react";
+import { type FormEvent, type ReactNode, useEffect, useState } from "react";
+import { KeyRound, Mail, MessageCircle, Pencil, Plus, Power, RefreshCw, Server, ShieldX, Trash2, Users } from "lucide-react";
 
 import {
   APIError,
-  createNode,
   createUser,
-  deleteNode,
   deleteUser,
   getLatestAgentUpdate,
   listNodes,
   listUsers,
-  revokeNodeCredential,
   updateNode,
   updateUser,
   type AgentUpdate,
   type Node,
-  type NodeInput,
   type User,
   type UserInput,
 } from "../api";
@@ -23,44 +19,41 @@ import { agentUpdatePresentation } from "../agentUpdate";
 import { useI18n } from "../i18n";
 import { cn } from "../lib/utils";
 import { Field, FormError } from "./AuthScreen";
-import { AgentUpdateDialog } from "./AgentUpdateDialog";
 import { Modal } from "./Modal";
-import { NodeDetailsDialog } from "./NodeDetailsDialog";
-import { NodeEnrollmentDialog } from "./NodeEnrollmentDialog";
+import { NodeEditorDialog } from "./NodeActions";
 import { PageHeader, SummaryBar, SummaryItem } from "./PageLayout";
 import { Button } from "./ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
-import { Checkbox } from "./ui/checkbox";
 import { DialogFooter } from "./ui/dialog";
 import { Input } from "./ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "./ui/table";
 import { Textarea } from "./ui/textarea";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 
-export function NodesView() {
+export function NodesView({ onOpenNode }: { onOpenNode: (nodeID: string) => void }) {
   const { t, formatDateTime } = useI18n();
   const [items, setItems] = useState<Node[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string>();
-  const [editing, setEditing] = useState<Node | "new">();
-  const [deleting, setDeleting] = useState<Node>();
-  const [revoking, setRevoking] = useState<Node>();
-  const [enrollment, setEnrollment] = useState<{ nodeID: string; mode: "register" | "reregister" }>();
-  const [updatingNodeID, setUpdatingNodeID] = useState<string>();
+  const [creating, setCreating] = useState(false);
+  const [changingNodeID, setChangingNodeID] = useState<string>();
   const [updates, setUpdates] = useState<Record<string, AgentUpdate | null>>({});
-  const [inspectingNodeID, setInspectingNodeID] = useState<string>();
   const [search, setSearch] = useState("");
-  const updating = items.find((node) => node.id === updatingNodeID);
-  const inspecting = items.find((node) => node.id === inspectingNodeID);
-  const enrolling = items.find((node) => node.id === enrollment?.nodeID);
   const visibleItems = items.filter((node) => [node.name, node.hostname, node.agent_os, node.agent_status]
     .some((value) => value?.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase())));
-  const updateListedNode = useCallback((node: Node) => {
-    setItems((current) => current.map((item) => item.id === node.id ? node : item).sort(byName));
-  }, []);
-  const updateListedAgentUpdate = useCallback((nodeID: string, value: AgentUpdate | null) => {
-    setUpdates((current) => ({ ...current, [nodeID]: value }));
-  }, []);
+
+  async function toggleNode(node: Node) {
+    setChangingNodeID(node.id);
+    setError(undefined);
+    try {
+      const updated = await updateNode(node.id, { name: node.name, enabled: !node.enabled });
+      setItems((current) => current.map((item) => item.id === updated.id ? updated : item).sort(byName));
+    } catch (cause) {
+      setError(errorMessage(cause));
+    } finally {
+      setChangingNodeID(undefined);
+    }
+  }
 
   useEffect(() => {
     let active = true;
@@ -99,105 +92,52 @@ export function NodesView() {
       <ResourceTable
         title={t("Node list")}
         description={t("{count} nodes", { count: visibleItems.length })}
-        actions={<><Input className="max-w-sm" value={search} onChange={(event) => setSearch(event.target.value)} placeholder={t("Search nodes...")} /><Button className="shrink-0" onClick={() => setEditing("new")} type="button"><Plus />{t("Add node")}</Button></>}
-        tableClassName="min-w-[920px]"
+        actions={<><Input className="max-w-sm" value={search} onChange={(event) => setSearch(event.target.value)} placeholder={t("Search nodes...")} /><Button className="shrink-0" onClick={() => setCreating(true)} type="button"><Plus />{t("Add node")}</Button></>}
+        tableClassName="min-w-[840px]"
         headers={["Node", "Agent", "Policy", "Update", "Last seen", "Actions"].map((value) => t(value))}
         loading={loading}
         empty={t("No nodes have been created.")}
         error={error}
       >
         {visibleItems.map((node) => (
-          <TableRow key={node.id}>
+          <TableRow
+            className="cursor-pointer focus-visible:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+            key={node.id}
+            role="link"
+            tabIndex={0}
+            aria-label={t("View {name} node details", { name: node.name })}
+            onClick={(event) => {
+              if (!isInteractiveTarget(event.target)) onOpenNode(node.id);
+            }}
+            onKeyDown={(event) => {
+              if (event.target !== event.currentTarget || (event.key !== "Enter" && event.key !== " ")) return;
+              event.preventDefault();
+              onOpenNode(node.id);
+            }}
+          >
             <TableCell><span className="flex min-w-[170px] items-center gap-3"><span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-primary-soft text-primary"><Server size={16} /></span><span className="grid min-w-0 gap-0.5"><strong className="truncate font-semibold">{node.name}</strong><small className="truncate text-xs text-muted-foreground">{[node.agent_os, node.agent_arch].filter(Boolean).join(" · ") || t("Not reported")}</small></span></span></TableCell>
             <TableCell><span className="grid gap-1"><Status value={t(agentStatusLabel(node.agent_status))} tone={agentStatusTone(node.agent_status)} /><small className="text-xs text-muted-foreground">{node.agent_version || t("Not reported")}</small></span></TableCell>
             <TableCell><NodePolicyStatus node={node} /></TableCell>
             <TableCell><AgentUpdateStatus node={node} value={updates[node.id]} /></TableCell>
             <TableCell className="whitespace-nowrap text-muted-foreground">{node.last_seen_at ? formatDateTime(node.last_seen_at) : t("Never")}</TableCell>
             <TableCell className="w-px text-right whitespace-nowrap">
-              <IconAction label={t("View node details")} onClick={() => setInspectingNodeID(node.id)}><Eye size={17} /></IconAction>
               <IconAction
-                label={t(node.registered_at ? "Re-register Agent" : "Register Agent")}
-                onClick={() => setEnrollment({ nodeID: node.id, mode: node.registered_at ? "reregister" : "register" })}
-              ><KeyRound size={17} /></IconAction>
-              <IconAction
-                label={t("Update Agent")}
-                title={translatedOptional(agentUpdateUnavailable(node), t)}
-                disabled={agentUpdateUnavailable(node) !== undefined}
-                onClick={() => setUpdatingNodeID(node.id)}
-              ><RefreshCw size={17} /></IconAction>
-              <IconAction
-                label={t("Revoke Agent credential")}
-                title={node.registered_at === null ? t("No active Agent credential") : undefined}
-                danger
-                disabled={node.registered_at === null}
-                onClick={() => setRevoking(node)}
-              ><ShieldX size={17} /></IconAction>
-              <IconAction label={t("Edit node")} onClick={() => setEditing(node)}><Pencil size={17} /></IconAction>
-              <IconAction label={t("Delete node")} danger onClick={() => setDeleting(node)}><Trash2 size={17} /></IconAction>
+                label={t(node.enabled ? "Disable node" : "Enable node")}
+                disabled={changingNodeID === node.id}
+                onClick={() => { void toggleNode(node); }}
+              ><Power size={17} /></IconAction>
             </TableCell>
           </TableRow>
         ))}
       </ResourceTable>
-      {inspecting ? (
-        <NodeDetailsDialog
-          node={inspecting}
-          onClose={() => setInspectingNodeID(undefined)}
-        />
-      ) : null}
-      {editing ? (
-        <NodeDialog
-          value={editing === "new" ? undefined : editing}
-          onClose={() => setEditing(undefined)}
+      {creating ? (
+        <NodeEditorDialog
+          onClose={() => setCreating(false)}
           onSaved={(node) => {
-            const created = editing === "new";
-            setItems((current) => created ? [...current, node].sort(byName) : current.map((item) => item.id === node.id ? node : item).sort(byName));
-            setEditing(undefined);
-            if (created) setEnrollment({ nodeID: node.id, mode: "register" });
+            setItems((current) => [...current, node].sort(byName));
+            setCreating(false);
+            onOpenNode(node.id);
           }}
-        />
-      ) : null}
-      {deleting ? (
-        <ConfirmAction
-          title={t("Delete node")}
-          name={deleting.name}
-          action={t("Delete")}
-          onClose={() => setDeleting(undefined)}
-          onConfirm={async () => {
-            await deleteNode(deleting.id);
-            setItems((current) => current.filter((item) => item.id !== deleting.id));
-            setDeleting(undefined);
-          }}
-        />
-      ) : null}
-      {revoking ? (
-        <ConfirmAction
-          title={t("Revoke Agent credential")}
-          name={revoking.name}
-          action={t("Revoke")}
-          onClose={() => setRevoking(undefined)}
-          onConfirm={async () => {
-            const node = await revokeNodeCredential(revoking.id);
-            setItems((current) => current.map((item) => item.id === node.id ? node : item).sort(byName));
-            setRevoking(undefined);
-          }}
-        />
-      ) : null}
-      {enrollment && enrolling ? (
-        <NodeEnrollmentDialog
-          key={`${enrollment.nodeID}:${enrollment.mode}`}
-          node={enrolling}
-          mode={enrollment.mode}
-          onClose={() => setEnrollment(undefined)}
-          onNodeUpdated={updateListedNode}
-        />
-      ) : null}
-      {updating ? (
-        <AgentUpdateDialog
-          node={updating}
-          latest={updates[updating.id]}
-          onClose={() => setUpdatingNodeID(undefined)}
-          onNodeUpdated={updateListedNode}
-          onUpdateChanged={updateListedAgentUpdate}
         />
       ) : null}
     </section>
@@ -318,44 +258,6 @@ function ResourceTable({ title, description, actions, tableClassName, headers, l
           </div>
         </CardContent>
       </Card>
-  );
-}
-
-function NodeDialog({ value, onClose, onSaved }: { value?: Node; onClose: () => void; onSaved: (node: Node) => void }) {
-  const { t } = useI18n();
-  const enabledID = useId();
-  const [name, setName] = useState(value?.name ?? "");
-  const [enabled, setEnabled] = useState(value?.enabled ?? true);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string>();
-
-  async function submit(event: FormEvent) {
-    event.preventDefault();
-    setBusy(true);
-    setError(undefined);
-    const input: NodeInput = { name, enabled };
-    try {
-      onSaved(value ? await updateNode(value.id, input) : await createNode(input));
-    } catch (cause) {
-      setError(errorMessage(cause));
-      setBusy(false);
-    }
-  }
-
-  return (
-    <Modal title={value ? t("Edit node") : t("Add node")} onClose={onClose}>
-      <form className="grid gap-5" onSubmit={submit}>
-        <div className="grid gap-4">
-          <Field label={t("Name")} value={name} onChange={setName} autoFocus />
-          <label className="flex min-h-8 cursor-pointer items-center gap-2 text-sm font-semibold text-foreground/80" htmlFor={enabledID}>
-            <Checkbox id={enabledID} checked={enabled} onCheckedChange={(checked) => setEnabled(checked === true)} />
-            <span>{t("Enabled")}</span>
-          </label>
-        </div>
-        <FormError message={error !== undefined ? t(error) : undefined} />
-        <DialogActions busy={busy} onClose={onClose} submitLabel={value ? t("Save") : t("Add node")} />
-      </form>
-    </Modal>
   );
 }
 
@@ -521,16 +423,8 @@ function agentStatusTone(status: Node["agent_status"]): "ok" | "warning" | "mute
   return "warning";
 }
 
-function agentUpdateUnavailable(node: Node): string | undefined {
-  if (!node.enabled) return "Enable the node before updating its Agent";
-  if (node.registered_at === null) return "Register the Agent before updating it";
-  if (!node.capabilities.includes("control.commands")) return "The Agent does not support durable commands";
-  if (!node.capabilities.includes("agent.self_update")) return "The Agent does not support self-update";
-  return undefined;
-}
-
-function translatedOptional(value: string | undefined, t: (message: string) => string): string | undefined {
-  return value === undefined ? undefined : t(value);
+function isInteractiveTarget(target: EventTarget | null): boolean {
+  return target instanceof Element && target.closest("button, a, input, select, textarea, [role=button], [role=menuitem]") !== null;
 }
 
 function byName(left: Node, right: Node) {
