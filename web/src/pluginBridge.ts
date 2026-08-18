@@ -1,6 +1,7 @@
 import { APIError, type Problem } from "./api";
 
 export const UI_BRIDGE_API_VERSION = "relayward.plugin-ui/v1" as const;
+export const PLUGIN_IFRAME_SANDBOX = "allow-forms allow-scripts";
 
 export type PluginBridgeMethod = "context" | "rpc" | "navigate" | "confirm";
 

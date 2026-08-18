@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { createPluginUISession, invokePluginUI, type PluginInstallation } from "../api";
 import { useI18n } from "../i18n";
 import { cn } from "../lib/utils";
-import { bridgeFailure, bridgeSuccess, isRecord, parsePluginUIRequest } from "../pluginBridge";
+import { bridgeFailure, bridgeSuccess, isRecord, parsePluginUIRequest, PLUGIN_IFRAME_SANDBOX } from "../pluginBridge";
 
 export type PluginNavigationTarget = "plugins" | "nodes" | "users" | "authorizations" | "audit";
 
@@ -105,7 +105,7 @@ export function PluginFrame({ plugin, title, onNavigate, nodeID, embedded = fals
             className={cn("block size-full border-0", (loading || failed) && "invisible")}
             title={t("{name} plugin", { name: plugin.manifest.name })}
             src={source}
-            sandbox="allow-scripts"
+            sandbox={PLUGIN_IFRAME_SANDBOX}
             referrerPolicy="no-referrer"
             onLoad={() => setLoading(false)}
             onError={() => { setLoading(false); setFailed(true); }}
