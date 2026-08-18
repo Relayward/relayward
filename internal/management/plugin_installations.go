@@ -4,10 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"sort"
+	"strings"
 	"time"
 
+	agentv1 "github.com/Relayward/relayward-sdk/agent/v1"
 	centerpluginv1 "github.com/Relayward/relayward-sdk/centerplugin/v1"
 	"github.com/Relayward/relayward-sdk/contract"
 	"github.com/Relayward/relayward-sdk/manifest"
@@ -30,6 +33,7 @@ type pluginArtifactStore interface {
 	Verify(manifest.Manifest) (pluginartifact.Paths, error)
 	RemoveRelease(string, string) error
 	QuarantinePlugin(string) (pluginartifact.QuarantinedPlugin, error)
+	OpenNodeFile(string, string) (*os.File, os.FileInfo, error)
 	OpenUIFile(string, string, string) (*os.File, os.FileInfo, error)
 }
 
@@ -62,6 +66,11 @@ type PluginReleaseVersion struct {
 	PublishedAt time.Time
 }
 
+type developmentPluginRelease struct {
+	release   githubrelease.Release
+	publicURL string
+}
+
 func (service *Service) ConfigurePluginLifecycle(releases pluginReleaseClient, artifacts pluginArtifactStore, runtime centerPluginRuntime) error {
 	if releases == nil || artifacts == nil || runtime == nil {
 		return errors.New("complete plugin lifecycle dependencies are required")
@@ -70,6 +79,114 @@ func (service *Service) ConfigurePluginLifecycle(releases pluginReleaseClient, a
 	service.pluginArtifacts = artifacts
 	service.pluginRuntime = runtime
 	return nil
+}
+
+func (service *Service) ConfigureDevelopmentPluginRelease(release githubrelease.Release, publicURL string) error {
+	if err := service.requirePluginLifecycle(); err != nil {
+		return err
+	}
+	if err := manifest.Validate(release.Manifest); err != nil {
+		return fmt.Errorf("validate development plugin manifest: %w", err)
+	}
+	if release.ID < 1 || release.Tag != "v"+release.Manifest.Version ||
+		release.Repository.Owner == "" || release.Repository.Name == "" {
+		return errors.New("development plugin release metadata is invalid")
+	}
+	for _, artifact := range release.Manifest.Artifacts {
+		asset, exists := release.Assets[artifact.Role]
+		if !exists || asset.ID < 1 || asset.Name != artifact.File || asset.Size != artifact.Size {
+			return errors.New("development plugin release assets do not match its manifest")
+		}
+	}
+	parsed, err := url.Parse(strings.TrimSpace(publicURL))
+	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil ||
+		parsed.Path != "" || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return errors.New("development public URL must be an HTTPS origin without a path, query, fragment, or credentials")
+	}
+	service.developmentPlugin = &developmentPluginRelease{release: release, publicURL: parsed.String()}
+	return nil
+}
+
+func (service *Service) EnsureDevelopmentPluginRelease(ctx context.Context) (store.PluginInstallation, error) {
+	if service.developmentPlugin == nil {
+		return store.PluginInstallation{}, errors.New("development plugin release is not configured")
+	}
+	value := service.developmentPlugin.release
+	existing, err := service.store.PluginInstallationByID(ctx, value.Manifest.ID)
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		existing = store.PluginInstallation{}
+	case err != nil:
+		return store.PluginInstallation{}, err
+	case existing.Repository != value.Repository.URL():
+		return store.PluginInstallation{}, store.ErrConflict
+	}
+	var installation store.PluginInstallation
+	if existing.ActiveVersion == value.Manifest.Version && existing.State == "active" {
+		if _, err := service.pluginArtifacts.Verify(value.Manifest); err != nil {
+			return store.PluginInstallation{}, fmt.Errorf("verify active development plugin release: %w", err)
+		}
+		installation = existing
+	} else {
+		approved := make([]string, len(value.Manifest.Permissions))
+		for index, permission := range value.Manifest.Permissions {
+			approved[index] = permission.Name
+		}
+		installation, err = service.InstallPluginRelease(ctx, PluginReleaseInput{
+			Repository: value.Repository.URL(), Version: value.Manifest.Version, ApprovedPermissions: approved,
+		})
+		if err != nil {
+			return store.PluginInstallation{}, err
+		}
+	}
+	return installation, nil
+}
+
+func (service *Service) ReconcileDevelopmentNodePlugins(ctx context.Context) (int, error) {
+	if service.developmentPlugin == nil {
+		return 0, errors.New("development plugin release is not configured")
+	}
+	value := service.developmentPlugin.release
+	instances, err := service.ListNodePluginInstances(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("list development node plugin instances: %w", err)
+	}
+	updated := 0
+	for _, instance := range instances {
+		if instance.PluginID != value.Manifest.ID || instance.DesiredState == agentv1.PluginStateAbsent ||
+			instance.DesiredVersion == value.Manifest.Version {
+			continue
+		}
+		if _, err := service.ReconcileNodePlugin(ctx, instance.NodeID, instance.PluginID, NodePluginInput{
+			DesiredState: instance.DesiredState, Version: value.Manifest.Version,
+		}); err != nil {
+			return updated, fmt.Errorf("upgrade development node plugin on %s: %w", instance.NodeID, err)
+		}
+		updated++
+	}
+	return updated, nil
+}
+
+func (service *Service) OpenDevelopmentNodeArtifact(ctx context.Context, pluginID, version string) (*os.File, os.FileInfo, error) {
+	if service.developmentPlugin == nil || pluginID != service.developmentPlugin.release.Manifest.ID ||
+		version != service.developmentPlugin.release.Manifest.Version {
+		return nil, nil, store.ErrNotFound
+	}
+	installation, err := service.store.PluginInstallationByID(ctx, pluginID)
+	if err != nil {
+		return nil, nil, err
+	}
+	if installation.State != "active" || installation.ActiveVersion != version || installation.Manifest.Version != version {
+		return nil, nil, store.ErrNotFound
+	}
+	if _, err := service.pluginArtifacts.Verify(installation.Manifest); err != nil {
+		return nil, nil, fmt.Errorf("verify development plugin artifacts: %w", err)
+	}
+	file, info, err := service.pluginArtifacts.OpenNodeFile(pluginID, version)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil, store.ErrNotFound
+	}
+	return file, info, err
 }
 
 func (service *Service) InspectPluginRelease(ctx context.Context, input PluginReleaseInput) (PluginReleaseCandidate, error) {

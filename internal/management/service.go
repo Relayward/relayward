@@ -28,6 +28,7 @@ type Service struct {
 	pluginReleases    pluginReleaseClient
 	pluginArtifacts   pluginArtifactStore
 	pluginRuntime     centerPluginRuntime
+	developmentPlugin *developmentPluginRelease
 	subscriptionLocks sync.Map
 }
 

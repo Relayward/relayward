@@ -100,6 +100,10 @@ func (*artifactStoreStub) OpenUIFile(string, string, string) (*os.File, os.FileI
 	return nil, nil, os.ErrNotExist
 }
 
+func (*artifactStoreStub) OpenNodeFile(string, string) (*os.File, os.FileInfo, error) {
+	return nil, nil, os.ErrNotExist
+}
+
 type pluginRuntimeStub struct {
 	switched   *store.PluginVersion
 	rolledBack bool

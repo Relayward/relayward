@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime"
@@ -322,6 +323,26 @@ func (server *Server) servePluginUI(w http.ResponseWriter, request *http.Request
 	w.Header().Set("Cross-Origin-Resource-Policy", "cross-origin")
 	w.Header().Del("X-Frame-Options")
 	http.ServeContent(w, request, info.Name(), info.ModTime(), contents)
+}
+
+func (server *Server) serveDevelopmentNodeArtifact(w http.ResponseWriter, request *http.Request) {
+	file, info, err := server.management.OpenDevelopmentNodeArtifact(
+		request.Context(), request.PathValue("plugin_id"), request.PathValue("version"),
+	)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			http.NotFound(w, request)
+			return
+		}
+		server.internalError(w, request, err)
+		return
+	}
+	defer file.Close()
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Content-Disposition", `attachment; filename="relayward-node-plugin"`)
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	http.ServeContent(w, request, "relayward-node-plugin", info.ModTime(), file)
 }
 
 func pluginUIContentSecurityPolicy(styleNonce string) string {

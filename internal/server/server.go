@@ -127,6 +127,7 @@ func New(options Options) http.Handler {
 	mux.HandleFunc("POST /api/v1/plugins/{plugin_id}/ui-session", server.withAuthentication(server.withCSRF(server.createPluginUISession)))
 	mux.HandleFunc("POST /api/v1/plugins/{plugin_id}/ui/{method}", server.withAuthentication(server.withCSRF(server.invokePluginUI)))
 	mux.HandleFunc("GET /plugin-ui/{plugin_id}/{token}/{path...}", server.servePluginUI)
+	mux.HandleFunc("GET /development-artifacts/{plugin_id}/{version}/node", server.serveDevelopmentNodeArtifact)
 	mux.HandleFunc("GET /api/v1/users", server.withAuthentication(server.listUsers))
 	mux.HandleFunc("POST /api/v1/users", server.withAuthentication(server.withCSRF(server.createUser)))
 	mux.HandleFunc("GET /api/v1/users/{user_id}", server.withAuthentication(server.getUser))

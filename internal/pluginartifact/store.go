@@ -39,6 +39,7 @@ type Downloader interface {
 type Paths struct {
 	Root       string
 	Executable string
+	Node       string
 	UI         string
 	UIArchive  string
 	Manifest   string
@@ -127,6 +128,12 @@ func (store *Store) Install(ctx context.Context, release githubrelease.Release, 
 	if err := downloadFile(ctx, centerPath, 0o700, release, centerAsset, centerDeclaration.SHA256, token, downloader); err != nil {
 		return Paths{}, fmt.Errorf("install center plugin artifact: %w", err)
 	}
+	if nodeDeclaration, nodeAsset, exists := releaseArtifact(release, manifest.ArtifactNode); exists {
+		nodePath := filepath.Join(staging, "node")
+		if err := downloadFile(ctx, nodePath, 0o700, release, nodeAsset, nodeDeclaration.SHA256, token, downloader); err != nil {
+			return Paths{}, fmt.Errorf("install node plugin artifact: %w", err)
+		}
+	}
 	if uiDeclaration, uiAsset, exists := releaseArtifact(release, manifest.ArtifactUI); exists {
 		archivePath := filepath.Join(staging, ".ui.tar.gz")
 		if err := downloadFile(ctx, archivePath, 0o600, release, uiAsset, uiDeclaration.SHA256, token, downloader); err != nil {
@@ -171,7 +178,7 @@ func (store *Store) Paths(pluginID, version string) (Paths, error) {
 	}
 	root := filepath.Join(store.releasesDir, pluginID, version)
 	return Paths{
-		Root: root, Executable: filepath.Join(root, "center"), UI: filepath.Join(root, "ui"),
+		Root: root, Executable: filepath.Join(root, "center"), Node: filepath.Join(root, "node"), UI: filepath.Join(root, "ui"),
 		UIArchive: filepath.Join(root, "ui.tar.gz"), Manifest: filepath.Join(root, "manifest.json"),
 	}, nil
 }
@@ -201,6 +208,10 @@ func (store *Store) Verify(value manifest.Manifest) (Paths, error) {
 		switch artifact.Role {
 		case manifest.ArtifactCenter:
 			if err := verifyFile(paths.Executable, artifact, true); err != nil {
+				return Paths{}, err
+			}
+		case manifest.ArtifactNode:
+			if err := verifyFile(paths.Node, artifact, true); err != nil {
 				return Paths{}, err
 			}
 		case manifest.ArtifactUI:
@@ -247,6 +258,27 @@ func (store *Store) RemoveRelease(pluginID, version string) error {
 		return fmt.Errorf("remove plugin release: %w", err)
 	}
 	return syncDirectory(filepath.Dir(paths.Root))
+}
+
+func (store *Store) OpenNodeFile(pluginID, version string) (*os.File, os.FileInfo, error) {
+	paths, err := store.Paths(pluginID, version)
+	if err != nil {
+		return nil, nil, err
+	}
+	file, err := os.Open(paths.Node)
+	if err != nil {
+		return nil, nil, fmt.Errorf("open plugin node artifact: %w", err)
+	}
+	info, err := file.Stat()
+	if err != nil {
+		file.Close()
+		return nil, nil, fmt.Errorf("inspect plugin node artifact: %w", err)
+	}
+	if !info.Mode().IsRegular() || info.Mode().Perm() != 0o700 {
+		file.Close()
+		return nil, nil, errors.New("plugin node artifact failed verification")
+	}
+	return file, info, nil
 }
 
 func (store *Store) OpenUIFile(pluginID, version, name string) (*os.File, os.FileInfo, error) {

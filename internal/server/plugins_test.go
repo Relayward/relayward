@@ -51,6 +51,7 @@ func (*serverReleaseClient) ResolveAssetURL(context.Context, githubrelease.Repos
 type serverArtifactStore struct {
 	quarantine *serverQuarantine
 	uiFile     string
+	nodeFile   string
 }
 
 func (*serverArtifactStore) Install(context.Context, githubrelease.Release, string, pluginartifact.Downloader) (pluginartifact.Paths, error) {
@@ -73,6 +74,22 @@ func (artifacts *serverArtifactStore) OpenUIFile(_, _, name string) (*os.File, o
 		return nil, nil, os.ErrNotExist
 	}
 	file, err := os.Open(artifacts.uiFile)
+	if err != nil {
+		return nil, nil, err
+	}
+	info, err := file.Stat()
+	if err != nil {
+		file.Close()
+		return nil, nil, err
+	}
+	return file, info, nil
+}
+
+func (artifacts *serverArtifactStore) OpenNodeFile(string, string) (*os.File, os.FileInfo, error) {
+	if artifacts.nodeFile == "" {
+		return nil, nil, os.ErrNotExist
+	}
+	file, err := os.Open(artifacts.nodeFile)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -136,7 +153,7 @@ func (runtime *serverPluginRuntime) RenderSubscription(_ context.Context, _ stri
 }
 
 func TestPluginLifecycleHTTPFlowDoesNotExposeSecrets(t *testing.T) {
-	handler, releases, artifacts, runtime := newPluginLifecycleHandler(t)
+	handler, releases, artifacts, runtime, _ := newPluginLifecycleHandler(t)
 	sessionCookie, csrfCookie := setupCookies(t, handler)
 	headers := map[string]string{"Content-Type": "application/json", "X-CSRF-Token": csrfCookie.Value}
 	listBody := []byte(`{
@@ -264,6 +281,31 @@ func TestPluginLifecycleHTTPFlowDoesNotExposeSecrets(t *testing.T) {
 	}
 }
 
+func TestDevelopmentNodeArtifactOnlyServesActiveVersion(t *testing.T) {
+	handler, releases, artifacts, _, manager := newPluginLifecycleHandler(t)
+	nodeFile := filepath.Join(t.TempDir(), "node")
+	if err := os.WriteFile(nodeFile, []byte("development-node"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	artifacts.nodeFile = nodeFile
+	if err := manager.ConfigureDevelopmentPluginRelease(releases.release, "https://development.example.com"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.EnsureDevelopmentPluginRelease(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	path := "/development-artifacts/io.relayward.test/1.2.3/node"
+	response := performRequest(handler, http.MethodGet, path, nil, nil)
+	if response.Code != http.StatusOK || response.Body.String() != "development-node" ||
+		response.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("development artifact status = %d, headers = %+v, body = %q", response.Code, response.Header(), response.Body.String())
+	}
+	missing := performRequest(handler, http.MethodGet, "/development-artifacts/io.relayward.test/1.2.2/node", nil, nil)
+	if missing.Code != http.StatusNotFound {
+		t.Fatalf("stale development artifact status = %d", missing.Code)
+	}
+}
+
 func pluginUIStyleNonce(t *testing.T, response *httptest.ResponseRecorder) string {
 	t.Helper()
 	policy := response.Header().Get("Content-Security-Policy")
@@ -280,7 +322,7 @@ func pluginUIStyleNonce(t *testing.T, response *httptest.ResponseRecorder) strin
 	return policy[start : start+end]
 }
 
-func newPluginLifecycleHandler(t *testing.T) (http.Handler, *serverReleaseClient, *serverArtifactStore, *serverPluginRuntime) {
+func newPluginLifecycleHandler(t *testing.T) (http.Handler, *serverReleaseClient, *serverArtifactStore, *serverPluginRuntime, *management.Service) {
 	t.Helper()
 	directory := t.TempDir()
 	database, err := store.Open(t.Context(), filepath.Join(directory, "relayward.db"))
@@ -321,7 +363,7 @@ func newPluginLifecycleHandler(t *testing.T) (http.Handler, *serverReleaseClient
 		Version: "test", Store: database, EventStore: events, Auth: authentication,
 		Management: manager, Secrets: secrets, Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	})
-	return handler, releases, artifacts, runtime
+	return handler, releases, artifacts, runtime, manager
 }
 
 func serverPluginRelease(version string) githubrelease.Release {

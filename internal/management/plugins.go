@@ -263,6 +263,12 @@ func (service *Service) reconcileNodePluginLocked(ctx context.Context, nodeID, p
 }
 
 func (service *Service) nodePluginArtifactURL(ctx context.Context, installation store.PluginInstallation, artifact manifest.Artifact) (string, error) {
+	if development := service.developmentPlugin; development != nil &&
+		installation.PluginID == development.release.Manifest.ID &&
+		installation.ActiveVersion == development.release.Manifest.Version {
+		return development.publicURL + "/development-artifacts/" + url.PathEscape(installation.PluginID) + "/" +
+			url.PathEscape(installation.ActiveVersion) + "/node", nil
+	}
 	ciphertext, err := service.store.Secret(
 		ctx, store.PluginInstallationSecretOwnerType, installation.PluginID, store.PluginInstallationGitHubToken,
 	)

@@ -249,6 +249,31 @@ func TestPublicReleaseAssetURL(t *testing.T) {
 	}
 }
 
+func TestDevelopmentPluginUsesCenterArtifactURL(t *testing.T) {
+	service := newTestService(t)
+	release := managedRelease(managedRuntimeManifest())
+	releases := &releaseClientStub{release: release}
+	if err := service.ConfigurePluginLifecycle(releases, &artifactStoreStub{}, &pluginRuntimeStub{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.ConfigureDevelopmentPluginRelease(release, "https://development.example.com"); err != nil {
+		t.Fatal(err)
+	}
+	installation := store.PluginInstallation{
+		PluginID: release.Manifest.ID, Repository: release.Repository.URL(), ActiveVersion: release.Manifest.Version,
+	}
+	artifact, _ := nodeArtifact(release.Manifest)
+	value, err := service.nodePluginArtifactURL(t.Context(), installation, artifact)
+	if err != nil || value != "https://development.example.com/development-artifacts/io.relayward.test/1.2.3/node" {
+		t.Fatalf("nodePluginArtifactURL() = %q, %v", value, err)
+	}
+	installation.ActiveVersion = "1.2.2"
+	value, err = service.nodePluginArtifactURL(t.Context(), installation, artifact)
+	if err != nil || value != "https://github.com/Relayward/test-plugin/releases/download/v1.2.2/node" {
+		t.Fatalf("stable nodePluginArtifactURL() = %q, %v", value, err)
+	}
+}
+
 func managedRuntimeManifest() manifest.Manifest {
 	agentAPI := uint32(1)
 	return manifest.Manifest{

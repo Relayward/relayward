@@ -36,7 +36,7 @@ func (downloader *memoryDownloader) DownloadAsset(_ context.Context, _ githubrel
 	return err
 }
 
-func TestStoreInstallsCenterAndSafeUIWithoutDownloadingNodeArtifact(t *testing.T) {
+func TestStoreInstallsCenterNodeAndSafeUI(t *testing.T) {
 	root, _ := filepath.Abs(filepath.Join(t.TempDir(), "plugins"))
 	store, err := Open(root)
 	if err != nil {
@@ -51,10 +51,12 @@ func TestStoreInstallsCenterAndSafeUIWithoutDownloadingNodeArtifact(t *testing.T
 	if err != nil {
 		t.Fatalf("Install() error = %v", err)
 	}
-	if len(downloader.calls) != 2 || downloader.calls[0] != 2 || downloader.calls[1] != 4 {
+	if len(downloader.calls) != 3 || downloader.calls[0] != 2 || downloader.calls[1] != 3 || downloader.calls[2] != 4 {
 		t.Fatalf("downloaded assets = %v", downloader.calls)
 	}
-	for path, mode := range map[string]os.FileMode{paths.Root: 0o700, paths.Executable: 0o700, filepath.Join(paths.UI, "index.html"): 0o600} {
+	for path, mode := range map[string]os.FileMode{
+		paths.Root: 0o700, paths.Executable: 0o700, paths.Node: 0o700, filepath.Join(paths.UI, "index.html"): 0o600,
+	} {
 		info, err := os.Stat(path)
 		if err != nil || info.Mode().Perm() != mode {
 			t.Fatalf("%s mode = %v, error = %v", path, info.Mode().Perm(), err)
@@ -65,6 +67,15 @@ func TestStoreInstallsCenterAndSafeUIWithoutDownloadingNodeArtifact(t *testing.T
 	}
 	if _, err := store.Verify(release.Manifest); err != nil {
 		t.Fatalf("Verify() error = %v", err)
+	}
+	nodeFile, nodeInfo, err := store.OpenNodeFile(release.Manifest.ID, release.Manifest.Version)
+	if err != nil {
+		t.Fatalf("OpenNodeFile() error = %v", err)
+	}
+	nodeRaw, nodeReadErr := io.ReadAll(nodeFile)
+	_ = nodeFile.Close()
+	if nodeReadErr != nil || !bytes.Equal(nodeRaw, node) || nodeInfo.Mode().Perm() != 0o700 {
+		t.Fatalf("OpenNodeFile() = %q, %+v, %v", nodeRaw, nodeInfo, nodeReadErr)
 	}
 	file, info, err := store.OpenUIFile(release.Manifest.ID, release.Manifest.Version, "assets/app.js")
 	if err != nil {

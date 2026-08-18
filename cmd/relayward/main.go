@@ -19,6 +19,7 @@ import (
 	"github.com/Relayward/relayward/internal/agentrelease"
 	"github.com/Relayward/relayward/internal/auth"
 	"github.com/Relayward/relayward/internal/buildinfo"
+	"github.com/Relayward/relayward/internal/developmentrelease"
 	"github.com/Relayward/relayward/internal/eventprocessor"
 	"github.com/Relayward/relayward/internal/eventstore"
 	"github.com/Relayward/relayward/internal/githubrelease"
@@ -111,6 +112,9 @@ func serve(args []string, logger *slog.Logger) error {
 	webDir := flags.String("web", "./web/dist", "built web asset directory")
 	eventHotRetention := flags.Duration("event-hot-retention", 24*time.Hour, "hot event retention")
 	eventArchiveRetention := flags.Duration("event-archive-retention", 90*24*time.Hour, "access archive retention")
+	developmentPluginRelease := flags.String("development-plugin-release", "", "local development plugin release directory")
+	developmentPluginRepository := flags.String("development-plugin-repository", "", "canonical GitHub repository for the development plugin")
+	developmentPublicURL := flags.String("development-public-url", "", "public HTTPS origin used by development Agents")
 	if err := flags.Parse(args); err != nil {
 		return fmt.Errorf("parse serve flags: %w", err)
 	}
@@ -193,8 +197,23 @@ func serve(args []string, logger *slog.Logger) error {
 		return err
 	}
 	releaseClient := githubrelease.NewClient(nil)
-	if err := manager.ConfigurePluginLifecycle(releaseClient, artifacts, pluginSupervisor); err != nil {
-		return err
+	var developmentReleases *developmentrelease.Client
+	developmentEnabled := *developmentPluginRelease != "" || *developmentPluginRepository != "" || *developmentPublicURL != ""
+	if developmentEnabled {
+		if *developmentPluginRelease == "" || *developmentPluginRepository == "" || *developmentPublicURL == "" {
+			return errors.New("development plugin release, repository, and public URL must be configured together")
+		}
+		developmentReleases, err = developmentrelease.Open(*developmentPluginRelease, *developmentPluginRepository, releaseClient)
+		if err != nil {
+			return err
+		}
+		if err := manager.ConfigurePluginLifecycle(developmentReleases, artifacts, pluginSupervisor); err != nil {
+			return err
+		}
+	} else {
+		if err := manager.ConfigurePluginLifecycle(releaseClient, artifacts, pluginSupervisor); err != nil {
+			return err
+		}
 	}
 	agentReleases, err := agentrelease.New(releaseClient)
 	if err != nil {
@@ -208,6 +227,23 @@ func serve(args []string, logger *slog.Logger) error {
 	defer stop()
 	if err := pluginSupervisor.Start(signalContext); err != nil {
 		return fmt.Errorf("start center plugin supervisor: %w", err)
+	}
+	defer func() {
+		closeContext, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		if err := pluginSupervisor.Close(closeContext); err != nil {
+			logger.Error("center plugin shutdown failed", "error", err)
+		}
+	}()
+	if developmentReleases != nil {
+		if err := manager.ConfigureDevelopmentPluginRelease(developmentReleases.Release(), *developmentPublicURL); err != nil {
+			return err
+		}
+		if _, err := manager.EnsureDevelopmentPluginRelease(signalContext); err != nil {
+			return fmt.Errorf("activate development plugin release: %w", err)
+		}
+		logger.Info("development plugin release active", "plugin_id", developmentReleases.Release().Manifest.ID,
+			"version", developmentReleases.Release().Manifest.Version)
 	}
 	go func() {
 		if err := policies.Run(signalContext); err != nil && signalContext.Err() == nil {
@@ -224,14 +260,6 @@ func serve(args []string, logger *slog.Logger) error {
 			logger.Error("event archiver stopped", "error", err)
 		}
 	}()
-	defer func() {
-		closeContext, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		defer cancel()
-		if err := pluginSupervisor.Close(closeContext); err != nil {
-			logger.Error("center plugin shutdown failed", "error", err)
-		}
-	}()
-
 	httpServer := &http.Server{
 		Addr: *listen,
 		Handler: server.New(server.Options{
@@ -264,6 +292,9 @@ func serve(args []string, logger *slog.Logger) error {
 	}()
 
 	logger.Info("Relayward starting", "listen", *listen, "version", buildinfo.Version, "data_dir", absoluteDataDir)
+	if developmentReleases != nil {
+		go reconcileDevelopmentNodes(signalContext, manager, logger)
+	}
 	err = httpServer.ListenAndServe()
 	if err != nil && !errors.Is(err, http.ErrServerClosed) {
 		stop()
@@ -272,6 +303,25 @@ func serve(args []string, logger *slog.Logger) error {
 	}
 	<-shutdownDone
 	return nil
+}
+
+func reconcileDevelopmentNodes(ctx context.Context, manager *management.Service, logger *slog.Logger) {
+	timer := time.NewTimer(2 * time.Second)
+	defer timer.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-timer.C:
+			updated, err := manager.ReconcileDevelopmentNodePlugins(ctx)
+			if err == nil {
+				logger.Info("development node plugins reconciled", "updated", updated)
+				return
+			}
+			logger.Warn("development node plugin reconciliation will retry", "error", err)
+			timer.Reset(5 * time.Second)
+		}
+	}
 }
 
 func runAdmin(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
