@@ -198,7 +198,7 @@ The Vite server proxies API requests to `127.0.0.1:8080`. Relayward selects sess
 
 - [Relayward Agent](https://github.com/Relayward/relayward-agent)
 - [Relayward SDK](https://github.com/Relayward/relayward-sdk)
-- [Relayward Xray Plugin](https://github.com/Relayward/relayward-plugin-xray)
+- [Xray Plugin for Relayward](https://github.com/qqqasdwx/relayward-plugin-xray)
 
 ## Security
 

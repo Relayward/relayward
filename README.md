@@ -198,7 +198,7 @@ Vite 开发服务器会将 API 请求代理到 `127.0.0.1:8080`。Relayward 会�
 
 - [Relayward Agent](https://github.com/Relayward/relayward-agent)
 - [Relayward SDK](https://github.com/Relayward/relayward-sdk)
-- [Relayward Xray Plugin](https://github.com/Relayward/relayward-plugin-xray)
+- [Xray Plugin for Relayward](https://github.com/qqqasdwx/relayward-plugin-xray)
 
 ## 安全
 
