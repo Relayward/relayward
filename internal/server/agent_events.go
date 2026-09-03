@@ -67,6 +67,11 @@ func (server *Server) receiveAgentEvents(w http.ResponseWriter, request *http.Re
 				writeProblem(w, http.StatusBadRequest, protocol.ErrorInvalidArgument, "Invalid access event.", false)
 				return
 			}
+		case agentv1.EventPublicAddresses:
+			if _, err := agentv1.DecodePublicAddressesEvent(event.Payload); err != nil {
+				writeProblem(w, http.StatusBadRequest, protocol.ErrorInvalidArgument, "Invalid public address observation.", false)
+				return
+			}
 		}
 	}
 	if server.eventStore == nil {

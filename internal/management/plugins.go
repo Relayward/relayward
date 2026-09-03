@@ -14,6 +14,7 @@ import (
 	agentv1 "github.com/Relayward/relayward-sdk/agent/v1"
 	"github.com/Relayward/relayward-sdk/contract"
 	"github.com/Relayward/relayward-sdk/manifest"
+	nodepluginv1 "github.com/Relayward/relayward-sdk/nodeplugin/v1"
 	"github.com/google/uuid"
 
 	"github.com/Relayward/relayward/internal/githubrelease"
@@ -21,7 +22,10 @@ import (
 	"github.com/Relayward/relayward/internal/store"
 )
 
-const pluginReconcileCommandLifetime = 30 * time.Minute
+const (
+	pluginReconcileCommandLifetime = 30 * time.Minute
+	pluginDiagnoseCommandLifetime  = 2 * time.Minute
+)
 
 var githubRepositoryPartPattern = regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)
 
@@ -121,6 +125,78 @@ func (service *Service) ConfigureNodePlugin(ctx context.Context, nodeID, pluginI
 		return store.NodePluginInstance{}, fmt.Errorf("%w: %v", store.ErrStateConflict, err)
 	}
 	return result, err
+}
+
+func (service *Service) DiagnoseNodePlugin(ctx context.Context, nodeID, pluginID, name string, payload json.RawMessage) (json.RawMessage, error) {
+	if err := validateID("node_id", nodeID); err != nil {
+		return nil, err
+	}
+	if err := contract.ValidatePluginID(pluginID); err != nil {
+		return nil, invalid("plugin_id", err.Error())
+	}
+	instance, err := service.store.NodePluginInstanceByID(ctx, nodeID, pluginID)
+	if err != nil {
+		return nil, err
+	}
+	if instance.ActualState != agentv1.PluginStateRunning || instance.Health != agentv1.PluginHealthHealthy ||
+		!containsCapability(instance.Capabilities, nodepluginv1.CapabilityDiagnostics) {
+		return nil, store.ErrStateConflict
+	}
+	now := service.currentTime()
+	command, err := agentv1.NewPluginDiagnoseCommand(agentv1.PluginDiagnoseCommand{
+		PluginID: pluginID, Name: name, JSON: append(json.RawMessage(nil), payload...),
+	}, now, now.Add(pluginDiagnoseCommandLifetime))
+	if err != nil {
+		return nil, invalid("body", err.Error())
+	}
+	commandID := uuid.NewString()
+	plaintext, err := json.Marshal(command)
+	if err != nil {
+		return nil, fmt.Errorf("encode plugin diagnostic command: %w", err)
+	}
+	if service.secrets == nil || !service.secrets.Available() {
+		return nil, secretbox.ErrUnavailable
+	}
+	ciphertext, err := service.secrets.Encrypt(
+		store.AgentCommandSecretOwnerType, commandID, store.AgentCommandRequestSecret, plaintext,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("encrypt plugin diagnostic command: %w", err)
+	}
+	if _, err := service.store.CreateEncryptedPluginDiagnoseCommand(ctx, commandID, nodeID, pluginID, command, ciphertext, now); err != nil {
+		return nil, err
+	}
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-ticker.C:
+			stored, err := service.store.AgentCommandByID(ctx, commandID)
+			if err != nil {
+				return nil, err
+			}
+			switch stored.Status {
+			case store.AgentCommandSucceeded:
+				if stored.Result == nil {
+					return nil, errors.New("plugin diagnostic completed without a result")
+				}
+				output, err := agentv1.DecodePluginDiagnoseOutput(stored.Result.Output)
+				if err != nil {
+					return nil, fmt.Errorf("decode plugin diagnostic result: %w", err)
+				}
+				return append(json.RawMessage(nil), output.JSON...), nil
+			case store.AgentCommandFailed:
+				if stored.Result != nil && stored.Result.Problem != nil {
+					return nil, fmt.Errorf("plugin diagnostic failed: %s", stored.Result.Problem.Message)
+				}
+				return nil, errors.New("plugin diagnostic failed")
+			case store.AgentCommandExpired:
+				return nil, context.DeadlineExceeded
+			}
+		}
+	}
 }
 
 func (service *Service) reconcileNodePluginLocked(ctx context.Context, nodeID, pluginID string, input NodePluginInput,

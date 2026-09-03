@@ -1,5 +1,5 @@
 import { type FormEvent, type ReactNode, useEffect, useState } from "react";
-import { KeyRound, Mail, MessageCircle, Pencil, Plus, Power, RefreshCw, Server, ShieldX, Trash2, Users } from "lucide-react";
+import { ChevronRight, KeyRound, Mail, MessageCircle, Pencil, Plus, Power, RefreshCw, Server, ShieldX, Trash2, Users } from "lucide-react";
 
 import {
   APIError,
@@ -101,7 +101,7 @@ export function NodesView({ onOpenNode }: { onOpenNode: (nodeID: string) => void
       >
         {visibleItems.map((node) => (
           <TableRow
-            className="cursor-pointer focus-visible:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+            className="group cursor-pointer hover:bg-primary/5 focus-visible:bg-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
             key={node.id}
             role="link"
             tabIndex={0}
@@ -115,17 +115,20 @@ export function NodesView({ onOpenNode }: { onOpenNode: (nodeID: string) => void
               onOpenNode(node.id);
             }}
           >
-            <TableCell><span className="flex min-w-[170px] items-center gap-3"><span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-primary-soft text-primary"><Server size={16} /></span><span className="grid min-w-0 gap-0.5"><strong className="truncate font-semibold">{node.name}</strong><small className="truncate text-xs text-muted-foreground">{[node.agent_os, node.agent_arch].filter(Boolean).join(" · ") || t("Not reported")}</small></span></span></TableCell>
+            <TableCell><span className="flex min-w-[170px] items-center gap-3"><span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-primary-soft text-primary transition-colors group-hover:bg-primary group-hover:text-primary-foreground"><Server size={16} /></span><span className="grid min-w-0 gap-0.5"><strong className="truncate font-semibold transition-colors group-hover:text-primary-strong">{node.name}</strong><small className="truncate text-xs text-muted-foreground">{[node.agent_os, node.agent_arch].filter(Boolean).join(" · ") || t("Not reported")}</small></span></span></TableCell>
             <TableCell><span className="grid gap-1"><Status value={t(agentStatusLabel(node.agent_status))} tone={agentStatusTone(node.agent_status)} /><small className="text-xs text-muted-foreground">{node.agent_version || t("Not reported")}</small></span></TableCell>
             <TableCell><NodePolicyStatus node={node} /></TableCell>
             <TableCell><AgentUpdateStatus node={node} value={updates[node.id]} /></TableCell>
             <TableCell className="whitespace-nowrap text-muted-foreground">{node.last_seen_at ? formatDateTime(node.last_seen_at) : t("Never")}</TableCell>
             <TableCell className="w-px text-right whitespace-nowrap">
-              <IconAction
-                label={t(node.enabled ? "Disable node" : "Enable node")}
-                disabled={changingNodeID === node.id}
-                onClick={() => { void toggleNode(node); }}
-              ><Power size={17} /></IconAction>
+              <span className="inline-flex items-center gap-2">
+                <IconAction
+                  label={t(node.enabled ? "Disable node" : "Enable node")}
+                  disabled={changingNodeID === node.id}
+                  onClick={() => { void toggleNode(node); }}
+                ><Power size={17} /></IconAction>
+                <span className="flex size-8 items-center justify-center text-muted-foreground transition-all group-hover:translate-x-0.5 group-hover:text-primary" aria-hidden="true"><ChevronRight size={18} /></span>
+              </span>
             </TableCell>
           </TableRow>
         ))}

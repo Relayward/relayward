@@ -100,7 +100,7 @@ function Combobox({
         <Button
           ref={triggerRef}
           id={id}
-          className={cn("w-full justify-between font-normal", className)}
+          className={cn("min-w-0 w-full justify-between overflow-hidden font-normal", className)}
           variant="outline"
           role="combobox"
           aria-expanded={open}
@@ -120,9 +120,9 @@ function Combobox({
           type="button"
           {...ariaProps}
         >
-          <span className="flex min-w-0 items-center gap-2">
+          <span className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden">
             {leadingIcon}
-            <span className={cn("truncate", !selected && value === "" && "text-muted-foreground")}>
+            <span className={cn("block min-w-0 truncate", !selected && value === "" && "text-muted-foreground")}>
               {selected?.label ?? (value || placeholder)}
             </span>
           </span>

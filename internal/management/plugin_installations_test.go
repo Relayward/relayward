@@ -13,6 +13,8 @@ import (
 	agentv1 "github.com/Relayward/relayward-sdk/agent/v1"
 	centerpluginv1 "github.com/Relayward/relayward-sdk/centerplugin/v1"
 	"github.com/Relayward/relayward-sdk/manifest"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/Relayward/relayward/internal/githubrelease"
 	"github.com/Relayward/relayward/internal/pluginartifact"
@@ -109,6 +111,7 @@ type pluginRuntimeStub struct {
 	rolledBack bool
 	stopped    bool
 	switchErr  error
+	invokeErr  error
 }
 
 func (runtime *pluginRuntimeStub) Switch(_ context.Context, value store.PluginVersion) (bool, error) {
@@ -125,11 +128,59 @@ func (runtime *pluginRuntimeStub) StopPlugin(context.Context, string) error {
 	runtime.stopped = true
 	return nil
 }
-func (*pluginRuntimeStub) InvokeUI(context.Context, string, string, []byte) ([]byte, error) {
-	return []byte(`{}`), nil
+func (runtime *pluginRuntimeStub) InvokeUI(context.Context, string, string, []byte) ([]byte, error) {
+	return []byte(`{}`), runtime.invokeErr
 }
 func (*pluginRuntimeStub) RenderSubscription(context.Context, string, *centerpluginv1.RenderSubscriptionRequest) (*centerpluginv1.RenderSubscriptionResponse, error) {
 	return nil, errors.New("subscription unavailable")
+}
+
+func TestInvokePluginUIMapsRPCStatuses(t *testing.T) {
+	service := newTestService(t)
+	pluginManifest := managedRuntimeManifest()
+	runtime := &pluginRuntimeStub{}
+	if err := service.ConfigurePluginLifecycle(
+		&releaseClientStub{release: managedRelease(pluginManifest)}, &artifactStoreStub{}, runtime,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.InstallPluginRelease(t.Context(), PluginReleaseInput{
+		Repository: "https://github.com/Relayward/test-plugin", Version: pluginManifest.Version,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name      string
+		code      codes.Code
+		want      error
+		wantField string
+	}{
+		{name: "invalid argument", code: codes.InvalidArgument, wantField: "body"},
+		{name: "resource exhausted", code: codes.ResourceExhausted, wantField: "body"},
+		{name: "aborted", code: codes.Aborted, want: store.ErrStateConflict},
+		{name: "failed precondition", code: codes.FailedPrecondition, want: store.ErrStateConflict},
+		{name: "not found", code: codes.NotFound, want: store.ErrNotFound},
+		{name: "unavailable", code: codes.Unavailable, want: ErrUpstreamUnavailable},
+		{name: "internal", code: codes.Internal, want: ErrUpstreamUnavailable},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			runtime.invokeErr = status.Error(test.code, "plugin detail must not be exposed")
+			_, err := service.InvokePluginUI(t.Context(), pluginManifest.ID, "configuration.save", []byte(`{}`))
+			if test.wantField != "" {
+				var fieldError *FieldError
+				if !errors.As(err, &fieldError) || fieldError.Field != test.wantField ||
+					strings.Contains(fieldError.Description, "plugin detail") {
+					t.Fatalf("InvokePluginUI() error = %v", err)
+				}
+				return
+			}
+			if !errors.Is(err, test.want) {
+				t.Fatalf("InvokePluginUI() error = %v, want %v", err, test.want)
+			}
+		})
+	}
 }
 
 func TestPluginReleaseInspectionApprovalAndPrivateInstall(t *testing.T) {
@@ -331,11 +382,14 @@ func TestPluginInspectRejectsUnsupportedPermissions(t *testing.T) {
 	}
 }
 
-func TestPluginInspectAcceptsNodeConfigurationPermission(t *testing.T) {
+func TestPluginInspectAcceptsRuntimePermissions(t *testing.T) {
 	service := newTestService(t)
 	pluginManifest := managedRuntimeManifest()
 	pluginManifest.Permissions = []manifest.Permission{
+		{Name: centerpluginv1.PermissionAuthorizationsRead, Reason: "Read node authorizations."},
+		{Name: centerpluginv1.PermissionPortDiagnose, Reason: "Diagnose configured service ports."},
 		{Name: centerpluginv1.PermissionNodeConfigure, Reason: "Configure the runtime on managed nodes."},
+		{Name: centerpluginv1.PermissionNodeDiagnose, Reason: "Invoke runtime diagnostics on managed nodes."},
 		{Name: centerpluginv1.PermissionNodesRead, Reason: "Read managed nodes."},
 		{Name: centerpluginv1.PermissionServicesWrite, Reason: "Publish runtime services."},
 	}

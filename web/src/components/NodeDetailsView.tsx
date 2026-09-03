@@ -1,15 +1,17 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  Activity,
   ArrowLeft,
-  Boxes,
+  ChevronLeft,
+  ChevronRight,
   CircleAlert,
-  Cpu,
   EllipsisVertical,
+  HeartPulse,
   KeyRound,
   Pencil,
   Power,
   RefreshCw,
+  Server,
+  ShieldCheck,
   ShieldX,
   Trash2,
 } from "lucide-react";
@@ -30,12 +32,12 @@ import {
 } from "../api";
 import type { PluginNodeDetailPage } from "../adminNavigation";
 import { useI18n } from "../i18n";
-import { pluginIcons } from "../pluginIcons";
 import { AgentUpdateDialog } from "./AgentUpdateDialog";
 import { FormError } from "./AuthScreen";
 import { ConfirmNodeAction, NodeEditorDialog } from "./NodeActions";
 import { NodeEnrollmentDialog } from "./NodeEnrollmentDialog";
-import { PageHeader, StatusBadge } from "./PageLayout";
+import { NodeEndpointsPanel } from "./NodeEndpointsPanel";
+import { PageHeader, StatusBadge, SummaryBar, SummaryItem } from "./PageLayout";
 import { PluginFrame, type PluginNavigationTarget } from "./PluginFrame";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
@@ -51,11 +53,12 @@ import { Skeleton } from "./ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "./ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
 
-export function NodeDetailsView({ nodeID, pluginPages, onBack, onDeleted, onNavigate }: {
+export function NodeDetailsView({ nodeID, pluginPages, onBack, onDeleted, onOpenDDNS, onNavigate }: {
   nodeID: string;
   pluginPages: PluginNodeDetailPage[];
   onBack: () => void;
   onDeleted: () => void;
+  onOpenDDNS: () => void;
   onNavigate: (target: PluginNavigationTarget) => void;
 }) {
   const { t, formatDateTime } = useI18n();
@@ -164,6 +167,9 @@ export function NodeDetailsView({ nodeID, pluginPages, onBack, onDeleted, onNavi
             type="button"
           ><RefreshCw />{t("Update Agent")}</Button>
           <Button onClick={() => setEditing(true)} type="button"><Pencil />{t("Edit node")}</Button>
+          <Button variant="outline" size="icon" aria-label={t("Refresh")} disabled={refreshing} onClick={() => { void load(false); }} type="button">
+            <RefreshCw className={refreshing ? "animate-spin" : undefined} />
+          </Button>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="outline" size="icon" aria-label={t("More node actions")}><EllipsisVertical /></Button>
@@ -185,53 +191,74 @@ export function NodeDetailsView({ nodeID, pluginPages, onBack, onDeleted, onNavi
       />
 
       <FormError message={error !== undefined ? t(error) : undefined} />
-      <Tabs defaultValue="overview" className="w-full min-w-0">
-        <div className="mb-4 flex min-w-0 items-center justify-between gap-3">
-          <TabsList className="min-w-0 flex-1 justify-start overflow-x-auto">
-            <TabsTrigger value="overview"><Cpu />{t("Overview")}</TabsTrigger>
-            {pluginPages.map((page) => {
-              const Icon = pluginIcons[page.icon];
-              return <TabsTrigger key={page.plugin.plugin_id} value={`plugin:${page.plugin.plugin_id}`}><Icon />{page.label}{page.unavailable ? <CircleAlert className="text-destructive" /> : null}</TabsTrigger>;
-            })}
-            <TabsTrigger value="runtimes"><Boxes />{t("Runtime instances")}</TabsTrigger>
-            <TabsTrigger value="history"><Activity />{t("Execution history")}</TabsTrigger>
-          </TabsList>
-          <Button className="shrink-0" variant="outline" size="sm" disabled={refreshing} onClick={() => { void load(false); }} type="button">
-            <RefreshCw className={refreshing ? "animate-spin" : undefined} /><span className="hidden sm:inline">{t("Refresh")}</span>
-          </Button>
-        </div>
+      <Tabs defaultValue="overview" className="w-full min-w-0 gap-4">
+        <NodeTabNavigation pluginPages={pluginPages} />
 
         <TabsContent value="overview">
-          <div className="grid gap-4 lg:grid-cols-2">
-            <DetailCard title={t("Agent information")} description={t("Connection and runtime identity reported by the Agent.")}>
-              <Detail label={t("Status")}><NodeStatus status={node.agent_status} /></Detail>
-              <Detail label={t("Version")} value={node.agent_version || t("Not reported")} />
-              <Detail label={t("Hostname")} value={node.hostname || t("Not reported")} />
-              <Detail label={t("Platform")} value={[node.agent_os, node.agent_arch].filter(Boolean).join(" / ") || t("Not reported")} />
-              <Detail label={t("Started")} value={formatOptional(node.agent_started_at, formatDateTime, t("Not reported"))} />
-              <Detail label={t("Last seen")} value={formatOptional(node.last_seen_at, formatDateTime, t("Never"))} />
-            </DetailCard>
-            <DetailCard title={t("Node information")} description={t("Registration and policy state managed by Relayward.")}>
-              <Detail label={t("State")}><StatusBadge tone={node.enabled ? "success" : "muted"}>{t(node.enabled ? "Enabled" : "Disabled")}</StatusBadge></Detail>
-              <Detail label={t("Registration")} value={formatOptional(node.registered_at, formatDateTime, t("Not registered"))} />
-              <Detail label={t("Policy")}><StatusBadge tone={policyTone(node)}>{t(policyLabel(node))}</StatusBadge></Detail>
-              <Detail label={t("Policy generation")} value={node.policy ? `${node.policy.applied_generation} / ${node.policy.desired_generation}` : t("Not configured")} />
-              <Detail label={t("Created")} value={formatDateTime(node.created_at)} />
-              <Detail label={t("Updated")} value={formatDateTime(node.updated_at)} />
-            </DetailCard>
-          </div>
-          <Card className="mt-4">
-            <CardHeader><CardTitle>{t("Capabilities")}</CardTitle><CardDescription>{t("Features supported by the connected Agent.")}</CardDescription></CardHeader>
-            <CardContent className="flex min-h-14 flex-wrap content-start gap-2">
-              {node.capabilities.length > 0
-                ? node.capabilities.map((capability) => <Badge variant="outline" key={capability}>{capability}</Badge>)
-                : <span className="text-sm text-muted-foreground">{t("No reported capabilities")}</span>}
+          <SummaryBar className="mb-4">
+            <SummaryItem
+              icon={<HeartPulse size={17} />}
+              label={t("Agent")}
+              value={t(titleCase(node.agent_status))}
+              note={t("Last heartbeat {time}", { time: formatOptional(node.last_seen_at, formatDateTime, t("Never")) })}
+              tone={agentTone(node.agent_status)}
+            />
+            <SummaryItem
+              icon={<Power size={17} />}
+              label={t("Node")}
+              value={t(node.enabled ? "Enabled" : "Disabled")}
+              note={node.registered_at ? t("Registered {time}", { time: formatDateTime(node.registered_at) }) : t("Not registered")}
+              tone={node.enabled ? "success" : "default"}
+            />
+            <SummaryItem
+              icon={<Server size={17} />}
+              label={t("Runtime instances")}
+              value={`${healthyRuntimeCount(instances)} / ${instances.length}`}
+              note={instances.length > 0 ? t("Healthy instances") : t("No runtime instances are configured on this node.")}
+              tone={runtimeTone(instances)}
+            />
+            <SummaryItem
+              icon={<ShieldCheck size={17} />}
+              label={t("Policy")}
+              value={t(policyLabel(node))}
+              note={t("Policy generation {generation}", { generation: node.policy ? `${node.policy.applied_generation} / ${node.policy.desired_generation}` : t("Not configured") })}
+              tone={summaryPolicyTone(node)}
+            />
+          </SummaryBar>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>{t("Node information")}</CardTitle>
+              <CardDescription>{t("Connection and runtime identity reported by the Agent.")}</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <dl className="grid gap-x-8 gap-y-6 sm:grid-cols-2 xl:grid-cols-3">
+                <Detail label={t("Hostname")} value={node.hostname || t("Not reported")} />
+                <Detail label={t("Version")} value={node.agent_version || t("Not reported")} />
+                <Detail label={t("Platform")} value={[node.agent_os, node.agent_arch].filter(Boolean).join(" / ") || t("Not reported")} />
+                <Detail label={t("Started")} value={formatOptional(node.agent_started_at, formatDateTime, t("Not reported"))} />
+                <Detail label={t("Created")} value={formatDateTime(node.created_at)} />
+                <Detail label={t("Updated")} value={formatDateTime(node.updated_at)} />
+              </dl>
             </CardContent>
+            <div className="border-t px-6 pt-6">
+              <div className="mb-3 grid gap-1">
+                <strong className="text-sm font-medium">{t("Capabilities")}</strong>
+                <span className="text-sm text-muted-foreground">{t("Features supported by the connected Agent.")}</span>
+              </div>
+              <div className="flex min-h-6 flex-wrap gap-2">
+                {node.capabilities.length > 0
+                  ? node.capabilities.map((capability) => <Badge variant="outline" key={capability}>{capability}</Badge>)
+                  : <span className="text-sm text-muted-foreground">{t("No reported capabilities")}</span>}
+              </div>
+            </div>
           </Card>
         </TabsContent>
 
+        <TabsContent value="endpoints"><NodeEndpointsPanel nodeID={node.id} onManageDDNS={onOpenDDNS} /></TabsContent>
+
         {pluginPages.map((page) => (
-          <TabsContent className="min-w-0" key={page.plugin.plugin_id} value={`plugin:${page.plugin.plugin_id}`}>
+          <TabsContent className="min-w-0 data-[state=inactive]:hidden" forceMount key={page.plugin.plugin_id} value={`plugin:${page.plugin.plugin_id}`}>
             <Card className="overflow-hidden py-0">
               <PluginFrame plugin={page.plugin} title={page.label} nodeID={node.id} embedded onNavigate={onNavigate} />
             </Card>
@@ -283,6 +310,69 @@ export function NodeDetailsView({ nodeID, pluginPages, onBack, onDeleted, onNavi
   );
 }
 
+function NodeTabNavigation({ pluginPages }: { pluginPages: PluginNodeDetailPage[] }) {
+  const { locale, t } = useI18n();
+  const listRef = useRef<HTMLDivElement>(null);
+  const [canScrollStart, setCanScrollStart] = useState(false);
+  const [canScrollEnd, setCanScrollEnd] = useState(false);
+  const pageLabels = pluginPages.map((page) => page.label).join("\u0000");
+
+  const updateOverflow = useCallback(() => {
+    const list = listRef.current;
+    if (!list) return;
+    const maxScroll = Math.max(0, list.scrollWidth - list.clientWidth);
+    const current = Math.min(maxScroll, Math.max(0, list.scrollLeft));
+    setCanScrollStart(current > 1);
+    setCanScrollEnd(maxScroll - current > 1);
+  }, []);
+
+  useEffect(() => {
+    const list = listRef.current;
+    if (!list) return;
+    const frame = window.requestAnimationFrame(updateOverflow);
+    const observer = new ResizeObserver(updateOverflow);
+    observer.observe(list);
+    window.addEventListener("resize", updateOverflow);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      observer.disconnect();
+      window.removeEventListener("resize", updateOverflow);
+    };
+  }, [locale, pageLabels, updateOverflow]);
+
+  function scrollTabs(direction: -1 | 1) {
+    const list = listRef.current;
+    if (!list) return;
+    list.scrollBy({ left: direction * Math.max(160, Math.floor(list.clientWidth * 0.7)), behavior: "smooth" });
+  }
+
+  return (
+    <div className="relative min-w-0">
+      <TabsList ref={listRef} variant="underline" aria-label={t("Node details")} onScroll={updateOverflow}>
+        <TabsTrigger variant="underline" value="overview">{t("Overview")}</TabsTrigger>
+        <TabsTrigger variant="underline" value="endpoints">{t("Subscription endpoints")}</TabsTrigger>
+        {pluginPages.map((page) => (
+          <TabsTrigger variant="underline" key={page.plugin.plugin_id} value={`plugin:${page.plugin.plugin_id}`}>
+            {page.label}{page.unavailable ? <CircleAlert className="text-destructive" /> : null}
+          </TabsTrigger>
+        ))}
+        <TabsTrigger variant="underline" value="runtimes">{t("Runtime instances")}</TabsTrigger>
+        <TabsTrigger variant="underline" value="history">{t("Execution history")}</TabsTrigger>
+      </TabsList>
+      {canScrollStart ? (
+        <Button className="absolute top-1/2 left-0 z-10 size-8 -translate-y-1/2 bg-background shadow-sm" variant="outline" size="icon" aria-label={t("Scroll tabs left")} onClick={() => scrollTabs(-1)} type="button">
+          <ChevronLeft />
+        </Button>
+      ) : null}
+      {canScrollEnd ? (
+        <Button className="absolute top-1/2 right-0 z-10 size-8 -translate-y-1/2 bg-background shadow-sm" variant="outline" size="icon" aria-label={t("Scroll tabs right")} onClick={() => scrollTabs(1)} type="button">
+          <ChevronRight />
+        </Button>
+      ) : null}
+    </div>
+  );
+}
+
 function NodeDetailsLoading({ onBack }: { onBack: () => void }) {
   const { t } = useI18n();
   return (
@@ -295,17 +385,8 @@ function NodeDetailsLoading({ onBack }: { onBack: () => void }) {
   );
 }
 
-function DetailCard({ title, description, children }: { title: string; description: string; children: ReactNode }) {
-  return (
-    <Card className="gap-0">
-      <CardHeader className="border-b"><CardTitle>{title}</CardTitle><CardDescription>{description}</CardDescription></CardHeader>
-      <CardContent className="px-0"><dl className="divide-y">{children}</dl></CardContent>
-    </Card>
-  );
-}
-
-function Detail({ label, value, children }: { label: string; value?: string; children?: ReactNode }) {
-  return <div className="flex min-h-12 items-center justify-between gap-4 px-6 py-2.5"><dt className="text-sm text-muted-foreground">{label}</dt><dd className="m-0 min-w-0 truncate text-right text-sm font-medium" title={value}>{children ?? value}</dd></div>;
+function Detail({ label, value }: { label: string; value: string }) {
+  return <div className="grid min-w-0 gap-1"><dt className="text-sm text-muted-foreground">{label}</dt><dd className="m-0 truncate text-sm font-medium" title={value}>{value}</dd></div>;
 }
 
 function NodeRuntimeTable({ instances, loading }: { instances: NodePluginInstance[]; loading: boolean }) {
@@ -350,11 +431,6 @@ function NodeCommandTable({ commands, loading }: { commands: NodeCommand[]; load
   );
 }
 
-function NodeStatus({ status }: { status: Node["agent_status"] }) {
-  const { t } = useI18n();
-  return <StatusBadge tone={status === "online" ? "success" : status === "disabled" ? "muted" : "warning"}>{t(titleCase(status))}</StatusBadge>;
-}
-
 function StateBadge({ value }: { value: NodePluginInstance["desired_state"] | NodePluginInstance["actual_state"] }) {
   const { t } = useI18n();
   const tone = value === "running" ? "success" : value === "failed" ? "danger" : value === "stopped" ? "warning" : "muted";
@@ -370,6 +446,30 @@ function policyTone(node: Node): "success" | "warning" | "danger" | "muted" {
   if (node.policy.status === "applied") return "success";
   if (node.policy.status === "failed" || node.policy.status === "unsupported") return "danger";
   return "warning";
+}
+
+function agentTone(status: Node["agent_status"]): "success" | "warning" | "danger" | "default" {
+  if (status === "online") return "success";
+  if (status === "offline") return "danger";
+  if (status === "disabled") return "default";
+  return "warning";
+}
+
+function healthyRuntimeCount(instances: NodePluginInstance[]): number {
+  return instances.filter((instance) => instance.actual_state === "running" && instance.health === "healthy").length;
+}
+
+function runtimeTone(instances: NodePluginInstance[]): "success" | "warning" | "danger" | "default" {
+  if (instances.length === 0) return "default";
+  const healthy = healthyRuntimeCount(instances);
+  if (healthy === instances.length) return "success";
+  if (instances.some((instance) => instance.actual_state === "failed" || instance.health === "unhealthy")) return "danger";
+  return "warning";
+}
+
+function summaryPolicyTone(node: Node): "success" | "warning" | "danger" | "default" {
+  const tone = policyTone(node);
+  return tone === "muted" ? "default" : tone;
 }
 
 function commandKindLabel(kind: string): string {

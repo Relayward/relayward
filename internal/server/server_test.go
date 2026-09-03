@@ -736,6 +736,9 @@ func TestAgentRegistrationControlAndDuplicateSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("decode first center hello: %v", err)
 	}
+	if firstSession.HeartbeatIntervalSeconds != int(agentv1.MinimumHeartbeatInterval.Seconds()) {
+		t.Fatalf("center heartbeat interval = %d, want %d", firstSession.HeartbeatIntervalSeconds, int(agentv1.MinimumHeartbeatInterval.Seconds()))
+	}
 	heartbeat, err := agentv1.NewEnvelope(agentv1.MessageAgentHeartbeat, agentv1.Heartbeat{
 		SessionID: firstSession.SessionID, AgentVersion: "0.1.1", ObservedAt: time.Now().UTC(),
 	})

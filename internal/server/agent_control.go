@@ -19,7 +19,10 @@ import (
 	"github.com/Relayward/relayward/internal/store"
 )
 
-const agentHandshakeTimeout = 20 * time.Second
+const (
+	agentHandshakeTimeout         = 20 * time.Second
+	agentControlHeartbeatInterval = agentv1.MinimumHeartbeatInterval
+)
 
 type agentSession struct {
 	id         string
@@ -142,10 +145,14 @@ func (server *Server) connectAgent(w http.ResponseWriter, request *http.Request)
 		return
 	}
 	server.agentSessions.activate(node.ID, sessionID, connection)
+	if server.networkDiagnostics != nil {
+		server.networkDiagnostics.Activate(node.ID, sessionID)
+		defer server.networkDiagnostics.Deactivate(node.ID, sessionID)
+	}
 	defer server.agentSessions.deactivate(node.ID, sessionID)
 
 	centerHello, err := agentv1.NewEnvelope(agentv1.MessageCenterHello, agentv1.CenterHello{
-		SessionID: sessionID, HeartbeatIntervalSeconds: int(agentv1.DefaultHeartbeatInterval.Seconds()),
+		SessionID: sessionID, HeartbeatIntervalSeconds: int(agentControlHeartbeatInterval.Seconds()),
 		ServerTime: time.Now().UTC(),
 	})
 	if err != nil || writeAgentEnvelope(connection, centerHello) != nil {
@@ -191,6 +198,9 @@ func (server *Server) handleAgentHeartbeat(ctx context.Context, connection *webs
 	})
 	if err != nil {
 		return false
+	}
+	if server.networkDiagnostics != nil {
+		server.networkDiagnostics.Update(nodeID, sessionID, heartbeat.PluginListeners)
 	}
 
 	ackPayload := agentv1.HeartbeatAck{MessageID: envelope.ID, ServerTime: receivedAt}

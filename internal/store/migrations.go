@@ -82,6 +82,59 @@ CREATE TABLE node_registration_tokens (
 );
 CREATE INDEX node_registration_tokens_expiry_idx ON node_registration_tokens(expires_at);
 
+CREATE TABLE node_public_addresses (
+    node_id TEXT NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+    family TEXT NOT NULL CHECK (family IN ('ipv4', 'ipv6')),
+    address TEXT NOT NULL,
+    observed_at_ns INTEGER NOT NULL,
+    received_at INTEGER NOT NULL,
+    PRIMARY KEY (node_id, family)
+);
+
+CREATE TABLE dns_provider_connections (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE COLLATE NOCASE,
+    provider TEXT NOT NULL CHECK (provider IN ('cloudflare')),
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+
+CREATE TABLE node_endpoints (
+    id TEXT PRIMARY KEY,
+    node_id TEXT NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+    display_name TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK (kind IN ('direct', 'nat', 'domain', 'managed_ddns')),
+    enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
+    source_family TEXT NOT NULL DEFAULT '' CHECK (source_family IN ('', 'ipv4', 'ipv6')),
+    address TEXT NOT NULL DEFAULT '',
+    public_port_overrides_json TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(public_port_overrides_json)),
+    dns_provider_connection_id TEXT REFERENCES dns_provider_connections(id) ON DELETE RESTRICT,
+    zone_name TEXT NOT NULL DEFAULT '',
+    record_name TEXT NOT NULL DEFAULT '',
+    ttl INTEGER NOT NULL DEFAULT 1 CHECK (ttl = 1 OR ttl BETWEEN 60 AND 86400),
+    proxied INTEGER NOT NULL DEFAULT 0 CHECK (proxied IN (0, 1)),
+    sync_status TEXT NOT NULL DEFAULT 'not_applicable'
+        CHECK (sync_status IN ('not_applicable', 'pending', 'synced', 'failed')),
+    actual_address TEXT NOT NULL DEFAULT '',
+    sync_error TEXT NOT NULL DEFAULT '',
+    synced_at INTEGER,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    UNIQUE (node_id, display_name COLLATE NOCASE),
+    CHECK (
+        (kind = 'direct' AND source_family IN ('ipv4', 'ipv6') AND address = ''
+            AND dns_provider_connection_id IS NULL AND zone_name = '' AND record_name = '' AND sync_status = 'not_applicable')
+        OR (kind = 'nat' AND source_family = '' AND address <> ''
+            AND dns_provider_connection_id IS NULL AND zone_name = '' AND record_name = '' AND sync_status = 'not_applicable')
+        OR (kind = 'domain' AND source_family = '' AND address <> ''
+            AND dns_provider_connection_id IS NULL AND zone_name = '' AND record_name = '' AND sync_status = 'not_applicable')
+        OR (kind = 'managed_ddns' AND source_family IN ('ipv4', 'ipv6') AND address = ''
+            AND dns_provider_connection_id IS NOT NULL AND zone_name <> '' AND record_name <> '' AND sync_status <> 'not_applicable')
+    )
+);
+CREATE INDEX node_endpoints_node_idx ON node_endpoints(node_id, enabled, id);
+CREATE INDEX node_endpoints_ddns_idx ON node_endpoints(kind, enabled, sync_status);
+
 CREATE TABLE users (
     id TEXT PRIMARY KEY,
     display_name TEXT NOT NULL UNIQUE COLLATE NOCASE,
@@ -340,6 +393,13 @@ AFTER DELETE ON plugin_installations
 BEGIN
     DELETE FROM secrets
     WHERE owner_type = 'plugin_installation' AND owner_id = OLD.plugin_id;
+END;
+
+CREATE TRIGGER dns_provider_connection_secret_cleanup
+AFTER DELETE ON dns_provider_connections
+BEGIN
+    DELETE FROM secrets
+    WHERE owner_type = 'dns_provider_connection' AND owner_id = OLD.id;
 END;
 `,
 	},

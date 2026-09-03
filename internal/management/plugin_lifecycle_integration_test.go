@@ -24,6 +24,7 @@ import (
 
 	"github.com/Relayward/relayward/internal/eventstore"
 	"github.com/Relayward/relayward/internal/githubrelease"
+	"github.com/Relayward/relayward/internal/networkdiagnostics"
 	"github.com/Relayward/relayward/internal/pluginartifact"
 	"github.com/Relayward/relayward/internal/pluginruntime"
 	"github.com/Relayward/relayward/internal/store"
@@ -69,7 +70,11 @@ func TestPluginLifecycleRunsRealReleaseAndRestoresAfterBadUpgrade(t *testing.T) 
 		t.Fatal(err)
 	}
 	defer events.Close()
-	runtime, err := pluginruntime.New(service.store, artifacts, events, service, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	diagnostics, err := networkdiagnostics.New(service.store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime, err := pluginruntime.New(service.store, artifacts, events, service, diagnostics, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatal(err)
 	}

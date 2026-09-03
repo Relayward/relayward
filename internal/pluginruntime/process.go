@@ -90,7 +90,8 @@ func (supervisor *Supervisor) startProcess(ctx context.Context, version store.Pl
 	}
 	hostServer := grpc.NewServer(grpc.MaxRecvMsgSize(maximumGRPCMessage), grpc.MaxSendMsgSize(maximumGRPCMessage))
 	centerpluginv1.RegisterPluginHostServer(hostServer, newHostService(
-		supervisor.database, supervisor.events, supervisor.nodePlugins, version.PluginID, version.Version, permissions,
+		supervisor.database, supervisor.events, supervisor.nodePlugins, supervisor.diagnostics,
+		version.PluginID, version.Version, permissions,
 	))
 	go func() { _ = hostServer.Serve(hostListener) }()
 

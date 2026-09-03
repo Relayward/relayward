@@ -14,6 +14,8 @@ import (
 	centerpluginv1 "github.com/Relayward/relayward-sdk/centerplugin/v1"
 	"github.com/Relayward/relayward-sdk/contract"
 	"github.com/Relayward/relayward-sdk/manifest"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/Relayward/relayward/internal/githubrelease"
 	"github.com/Relayward/relayward/internal/pluginartifact"
@@ -428,7 +430,18 @@ func (service *Service) InvokePluginUI(ctx context.Context, pluginID, method str
 	}
 	response, err := service.pluginRuntime.InvokeUI(ctx, pluginID, method, raw)
 	if err != nil {
-		return nil, fmt.Errorf("%w: plugin UI RPC failed", ErrUpstreamUnavailable)
+		switch status.Code(err) {
+		case codes.InvalidArgument, codes.OutOfRange:
+			return nil, invalid("body", "was rejected by the plugin")
+		case codes.ResourceExhausted:
+			return nil, invalid("body", "exceeds plugin limits")
+		case codes.Aborted, codes.AlreadyExists, codes.FailedPrecondition:
+			return nil, store.ErrStateConflict
+		case codes.NotFound:
+			return nil, store.ErrNotFound
+		default:
+			return nil, fmt.Errorf("%w: plugin UI RPC failed", ErrUpstreamUnavailable)
+		}
 	}
 	return response, nil
 }
@@ -470,9 +483,10 @@ func (service *Service) inspectPluginRelease(ctx context.Context, input PluginRe
 		return githubrelease.Release{}, "", nil, translateGitHubReleaseError(err)
 	}
 	for _, permission := range release.Manifest.Permissions {
-		if permission.Name != centerpluginv1.PermissionEventsRead && permission.Name != centerpluginv1.PermissionEventsWrite &&
-			permission.Name != centerpluginv1.PermissionNodeConfigure && permission.Name != centerpluginv1.PermissionNodesRead &&
-			permission.Name != centerpluginv1.PermissionServicesWrite {
+		if permission.Name != centerpluginv1.PermissionAuthorizationsRead && permission.Name != centerpluginv1.PermissionEventsRead &&
+			permission.Name != centerpluginv1.PermissionEventsWrite && permission.Name != centerpluginv1.PermissionNodeConfigure &&
+			permission.Name != centerpluginv1.PermissionNodeDiagnose && permission.Name != centerpluginv1.PermissionNodesRead &&
+			permission.Name != centerpluginv1.PermissionPortDiagnose && permission.Name != centerpluginv1.PermissionServicesWrite {
 			return githubrelease.Release{}, "", nil, invalid("repository", "release requests an unsupported permission: "+permission.Name)
 		}
 		if permission.Name == centerpluginv1.PermissionEventsRead && release.Manifest.Kind != manifest.KindFeature {

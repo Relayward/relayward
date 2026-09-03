@@ -42,19 +42,22 @@ SELECT count(*), min(version), max(version) FROM schema_migrations`).Scan(&count
 	}
 	assertSchemaObjects(t, second.db, "table", []string{
 		"administrators", "sessions", "recovery_codes", "secrets", "nodes",
-		"node_registration_tokens", "users", "authorizations", "plugin_installations",
+		"node_registration_tokens", "node_public_addresses", "dns_provider_connections", "node_endpoints",
+		"users", "authorizations", "plugin_installations",
 		"plugin_versions", "node_plugin_instances", "plugin_services", "service_bindings",
 		"agent_commands", "node_policy_state", "traffic_periods", "authorization_policy_status",
 		"announcements", "subscription_render_cache", "audit_log", "system_settings",
 	})
 	assertSchemaObjects(t, second.db, "index", []string{
 		"sessions_expiry_idx", "sessions_id_idx", "node_registration_tokens_expiry_idx",
+		"node_endpoints_node_idx", "node_endpoints_ddns_idx",
 		"node_plugin_instances_plugin_idx", "agent_commands_dispatch_idx",
 		"agent_commands_one_pending_update_idx", "agent_commands_one_pending_plugin_reconcile_idx",
 		"agent_commands_one_pending_policy_reconcile_idx", "audit_log_occurred_idx",
 	})
 	assertSchemaObjects(t, second.db, "trigger", []string{
 		"agent_command_secret_cleanup", "node_plugin_secret_cleanup", "plugin_installation_secret_cleanup",
+		"dns_provider_connection_secret_cleanup",
 	})
 	assertTableColumns(t, second.db, "sessions", []string{"id", "user_agent"})
 	assertTableColumns(t, second.db, "nodes", []string{

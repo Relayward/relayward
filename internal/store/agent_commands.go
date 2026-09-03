@@ -44,10 +44,81 @@ const (
 )
 
 func (store *Store) CreateAgentCommand(ctx context.Context, commandID, nodeID string, request agentv1.Command, now time.Time) (AgentCommand, error) {
-	if request.Kind == agentv1.CommandPluginReconcile {
-		return AgentCommand{}, errors.New("plugin reconcile commands must use encrypted storage")
+	if request.Kind == agentv1.CommandPluginReconcile || request.Kind == agentv1.CommandPluginDiagnose {
+		return AgentCommand{}, errors.New("plugin commands containing private data must use encrypted storage")
 	}
 	return store.createAgentCommand(ctx, commandID, nodeID, request, now)
+}
+
+func (store *Store) CreateEncryptedPluginDiagnoseCommand(ctx context.Context, commandID, nodeID, pluginID string,
+	request agentv1.Command, ciphertext []byte, now time.Time,
+) (AgentCommand, error) {
+	diagnostic, err := agentv1.DecodePluginDiagnoseCommand(request)
+	if err != nil {
+		return AgentCommand{}, fmt.Errorf("validate plugin diagnostic command: %w", err)
+	}
+	if diagnostic.PluginID != pluginID || len(ciphertext) == 0 {
+		return AgentCommand{}, ErrConflict
+	}
+	if err := protocol.ValidateIdempotencyKey(commandID); err != nil {
+		return AgentCommand{}, fmt.Errorf("validate Agent command ID: %w", err)
+	}
+	digest, err := agentv1.CommandDigest(request)
+	if err != nil {
+		return AgentCommand{}, fmt.Errorf("digest plugin diagnostic command: %w", err)
+	}
+	metadata, err := json.Marshal(map[string]string{"plugin_id": pluginID, "name": diagnostic.Name})
+	if err != nil {
+		return AgentCommand{}, fmt.Errorf("encode plugin diagnostic metadata: %w", err)
+	}
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		return AgentCommand{}, fmt.Errorf("begin plugin diagnostic command: %w", err)
+	}
+	defer tx.Rollback()
+	var actualState, health string
+	if err := tx.QueryRowContext(ctx, `
+SELECT actual_state, health FROM node_plugin_instances WHERE node_id = ? AND plugin_id = ?`, nodeID, pluginID).Scan(&actualState, &health); errors.Is(err, sql.ErrNoRows) {
+		return AgentCommand{}, ErrNotFound
+	} else if err != nil {
+		return AgentCommand{}, fmt.Errorf("read diagnostic plugin state: %w", err)
+	}
+	if actualState != agentv1.PluginStateRunning || health != agentv1.PluginHealthHealthy {
+		return AgentCommand{}, ErrStateConflict
+	}
+	result, err := tx.ExecContext(ctx, `
+INSERT INTO agent_commands(
+    id, node_id, kind, request_json, request_sha256, request_encrypted, scope_key,
+    expires_at, created_at, updated_at
+) VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?)
+ON CONFLICT DO NOTHING`, commandID, nodeID, request.Kind, string(metadata), digest, pluginID,
+		unixTime(request.ExpiresAt), unixTime(now), unixTime(now))
+	if err != nil {
+		return AgentCommand{}, fmt.Errorf("insert plugin diagnostic command: %w", err)
+	}
+	inserted, err := result.RowsAffected()
+	if err != nil {
+		return AgentCommand{}, fmt.Errorf("read plugin diagnostic command insertion: %w", err)
+	}
+	if inserted != 1 {
+		return AgentCommand{}, ErrConflict
+	}
+	if _, err := tx.ExecContext(ctx, `
+INSERT INTO secrets(owner_type, owner_id, name, ciphertext, updated_at)
+VALUES (?, ?, ?, ?, ?)`, AgentCommandSecretOwnerType, commandID, AgentCommandRequestSecret, ciphertext, unixTime(now)); err != nil {
+		return AgentCommand{}, fmt.Errorf("store encrypted plugin diagnostic command: %w", err)
+	}
+	if err := appendAuditTx(ctx, tx, AuditEntry{
+		OccurredAt: now, ActorType: "plugin", ActorID: pluginID, Action: "node.plugin_diagnose.request",
+		TargetType: "node", TargetID: nodeID, Outcome: "success",
+		Metadata: map[string]any{"command_id": commandID, "plugin_id": pluginID, "name": diagnostic.Name},
+	}); err != nil {
+		return AgentCommand{}, err
+	}
+	if err := commit(tx, "plugin diagnostic command"); err != nil {
+		return AgentCommand{}, err
+	}
+	return store.AgentCommandByID(ctx, commandID)
 }
 
 func (store *Store) createAgentCommand(ctx context.Context, commandID, nodeID string, request agentv1.Command, now time.Time) (AgentCommand, error) {
@@ -371,6 +442,25 @@ WHERE agent_commands.id = ? AND agent_commands.node_id = ? AND nodes.credential_
 		}
 		if err := updateNodePluginReconcileResultTx(ctx, tx, nodeID, reconcile, result, now); err != nil {
 			return err
+		}
+	} else if kind == agentv1.CommandPluginDiagnose {
+		diagnostic, err := agentv1.DecodePluginDiagnoseCommand(request)
+		if err != nil {
+			return fmt.Errorf("validate completed plugin diagnostic command: %w", err)
+		}
+		if diagnostic.PluginID != scopeKey {
+			return ErrConflict
+		}
+		if result.Status == agentv1.CommandStatusSucceeded {
+			if _, err := agentv1.DecodePluginDiagnoseOutput(result.Output); err != nil {
+				return fmt.Errorf("validate plugin diagnostic result: %w", err)
+			}
+		}
+		auditAction = "node.plugin_diagnose.complete"
+		auditTargetType = "node"
+		auditTargetID = nodeID
+		auditMetadata = map[string]any{
+			"command_id": result.CommandID, "plugin_id": diagnostic.PluginID, "name": diagnostic.Name,
 		}
 	} else if kind == agentv1.CommandPolicyReconcile {
 		reconcile, err := agentv1.DecodePolicyReconcileCommand(request)

@@ -4,6 +4,7 @@ import {
   BadgeCheck,
   CircleAlert,
   CircleUser,
+  Cloud,
   EllipsisVertical,
   LayoutDashboard,
   LogOut,
@@ -98,8 +99,9 @@ const coreNavigation: NavigationGroupDefinition[] = [
     pluginGroup: "resources",
     items: [
       { view: "nodes", label: "Nodes", icon: Server, order: 100 },
-      { view: "users", label: "Users", icon: Users, order: 200 },
-      { view: "authorizations", label: "Authorizations", icon: BadgeCheck, order: 300 },
+      { view: "ddns", label: "DDNS", icon: Cloud, order: 200 },
+      { view: "users", label: "Users", icon: Users, order: 300 },
+      { view: "authorizations", label: "Authorizations", icon: BadgeCheck, order: 400 },
     ],
   },
   {

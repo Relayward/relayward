@@ -4,6 +4,10 @@ export interface PluginPermissionPresentation {
 }
 
 const kernelPermissionMessages: Readonly<Record<string, PluginPermissionPresentation>> = {
+  "core.authorizations.read": {
+    title: "Read node authorizations",
+    description: "View authorization identifiers, enabled state, and bound services on a managed node.",
+  },
   "core.events.read": {
     title: "Read standard events",
     description: "Consume standard events, including source IP and destination data when available.",
@@ -15,6 +19,14 @@ const kernelPermissionMessages: Readonly<Record<string, PluginPermissionPresenta
   "core.node_plugins.configure": {
     title: "Configure managed node plugins",
     description: "Read and publish this plugin's configuration on managed nodes.",
+  },
+  "core.network_diagnostics.read": {
+    title: "Diagnose node ports",
+    description: "Read local listener status and test configured subscription endpoint ports without changing firewall rules.",
+  },
+  "core.node_plugins.diagnose": {
+    title: "Invoke node plugin diagnostics",
+    description: "Run bounded diagnostics exposed by this plugin on managed nodes.",
   },
   "core.nodes.read": {
     title: "Read managed nodes",

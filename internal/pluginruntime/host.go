@@ -12,6 +12,7 @@ import (
 	agentv1 "github.com/Relayward/relayward-sdk/agent/v1"
 	centerpluginv1 "github.com/Relayward/relayward-sdk/centerplugin/v1"
 	"github.com/Relayward/relayward/internal/eventstore"
+	"github.com/Relayward/relayward/internal/networkdiagnostics"
 	"github.com/Relayward/relayward/internal/secretbox"
 	"github.com/Relayward/relayward/internal/store"
 )
@@ -21,21 +22,111 @@ type hostService struct {
 	database    database
 	events      eventPublisher
 	nodePlugins nodePluginManager
+	diagnostics portDiagnoser
 	pluginID    string
 	version     string
 	permissions map[string]struct{}
 	now         func() time.Time
 }
 
-func newHostService(database database, events eventPublisher, nodePlugins nodePluginManager, pluginID, version string, permissions []string) *hostService {
+func newHostService(database database, events eventPublisher, nodePlugins nodePluginManager, diagnostics portDiagnoser,
+	pluginID, version string, permissions []string,
+) *hostService {
 	approved := make(map[string]struct{}, len(permissions))
 	for _, permission := range permissions {
 		approved[permission] = struct{}{}
 	}
 	return &hostService{
-		database: database, events: events, nodePlugins: nodePlugins, pluginID: pluginID, version: version,
+		database: database, events: events, nodePlugins: nodePlugins, diagnostics: diagnostics, pluginID: pluginID, version: version,
 		permissions: approved, now: func() time.Time { return time.Now().UTC() },
 	}
+}
+
+func (service *hostService) DiagnoseNodePorts(ctx context.Context,
+	request *centerpluginv1.DiagnoseNodePortsRequest,
+) (*centerpluginv1.DiagnoseNodePortsResponse, error) {
+	if _, approved := service.permissions[centerpluginv1.PermissionPortDiagnose]; !approved {
+		return nil, status.Error(codes.PermissionDenied, "core.network_diagnostics.read permission is required")
+	}
+	if err := centerpluginv1.ValidateDiagnoseNodePortsRequest(request); err != nil {
+		return nil, status.Error(codes.InvalidArgument, "invalid node port diagnostic request")
+	}
+	if service.diagnostics == nil {
+		return nil, status.Error(codes.Unavailable, "network diagnostics are unavailable")
+	}
+	response, err := service.diagnostics.Diagnose(ctx, service.pluginID, request)
+	if err != nil {
+		switch {
+		case errors.Is(err, store.ErrNotFound), errors.Is(err, networkdiagnostics.ErrUnknownService):
+			return nil, status.Error(codes.FailedPrecondition, "network diagnostic references unavailable node state")
+		case errors.Is(err, networkdiagnostics.ErrTooManyProbes):
+			return nil, status.Error(codes.ResourceExhausted, "network diagnostic contains too many public probes")
+		default:
+			return nil, status.Error(codes.Internal, "network diagnostics are unavailable")
+		}
+	}
+	if err := centerpluginv1.ValidateDiagnoseNodePortsResponse(request, response); err != nil {
+		return nil, status.Error(codes.Internal, "network diagnostic result is invalid")
+	}
+	return response, nil
+}
+
+func (service *hostService) ListNodeAuthorizations(ctx context.Context,
+	request *centerpluginv1.ListNodeAuthorizationsRequest,
+) (*centerpluginv1.ListNodeAuthorizationsResponse, error) {
+	if _, approved := service.permissions[centerpluginv1.PermissionAuthorizationsRead]; !approved {
+		return nil, status.Error(codes.PermissionDenied, "core.authorizations.read permission is required")
+	}
+	if err := centerpluginv1.ValidateListNodeAuthorizationsRequest(request); err != nil {
+		return nil, status.Error(codes.InvalidArgument, "invalid node authorization request")
+	}
+	values, err := service.database.ListPluginNodeAuthorizations(ctx, request.NodeId, service.pluginID)
+	if err != nil {
+		return nil, status.Error(codes.Internal, "node authorizations are unavailable")
+	}
+	response := &centerpluginv1.ListNodeAuthorizationsResponse{Authorizations: make([]*centerpluginv1.NodeAuthorization, len(values))}
+	for index, value := range values {
+		response.Authorizations[index] = &centerpluginv1.NodeAuthorization{
+			Id: value.ID, UserIdentifier: value.UserIdentifier, Enabled: value.Enabled,
+			ServiceIds: append([]string(nil), value.ServiceIDs...),
+		}
+	}
+	if err := centerpluginv1.ValidateListNodeAuthorizationsResponse(request, response); err != nil {
+		return nil, status.Error(codes.Internal, "stored node authorizations are invalid")
+	}
+	return response, nil
+}
+
+func (service *hostService) DiagnoseNodePlugin(ctx context.Context,
+	request *centerpluginv1.DiagnoseNodePluginRequest,
+) (*centerpluginv1.DiagnoseNodePluginResponse, error) {
+	if _, approved := service.permissions[centerpluginv1.PermissionNodeDiagnose]; !approved {
+		return nil, status.Error(codes.PermissionDenied, "core.node_plugins.diagnose permission is required")
+	}
+	if err := centerpluginv1.ValidateDiagnoseNodePluginRequest(request); err != nil {
+		return nil, status.Error(codes.InvalidArgument, "invalid node plugin diagnostic request")
+	}
+	if service.nodePlugins == nil {
+		return nil, status.Error(codes.Unavailable, "node plugin diagnostics are unavailable")
+	}
+	raw, err := service.nodePlugins.DiagnoseNodePlugin(ctx, request.NodeId, service.pluginID, request.Name, append(json.RawMessage(nil), request.Json...))
+	if err != nil {
+		switch {
+		case errors.Is(err, context.Canceled):
+			return nil, status.Error(codes.Canceled, "node plugin diagnostic was canceled")
+		case errors.Is(err, context.DeadlineExceeded):
+			return nil, status.Error(codes.DeadlineExceeded, "node plugin diagnostic timed out")
+		case errors.Is(err, store.ErrNotFound), errors.Is(err, store.ErrStateConflict):
+			return nil, status.Error(codes.FailedPrecondition, "node plugin is unavailable")
+		default:
+			return nil, status.Error(codes.Internal, "node plugin diagnostic failed")
+		}
+	}
+	response := &centerpluginv1.DiagnoseNodePluginResponse{Json: append([]byte(nil), raw...)}
+	if err := centerpluginv1.ValidateDiagnoseNodePluginResponse(request, response); err != nil {
+		return nil, status.Error(codes.Internal, "node plugin diagnostic result is invalid")
+	}
+	return response, nil
 }
 
 func (service *hostService) GetNodePluginConfiguration(ctx context.Context,

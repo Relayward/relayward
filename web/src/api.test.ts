@@ -2,13 +2,18 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   APIError,
+  createDDNSRecord,
+  createDNSProviderConnection,
+  createNodeEndpoint,
   createPluginUISession,
   getAgentUpdateAvailability,
   getSystemSettings,
   getLatestAgentUpdate,
   getNode,
   listAdministratorSessions,
+  listDDNSRecords,
   listNodeCommands,
+  listNodeEndpoints,
   listPluginReleaseVersions,
   reconcileNodePlugin,
   requestAgentUpdate,
@@ -145,6 +150,67 @@ describe("Node credential API", () => {
     expect(path).toBe("/api/v1/nodes/node%2Fid/agent-credential");
     expect(init?.method).toBe("DELETE");
     expect(headers.get("X-CSRF-Token")).toBe("csrf-token");
+  });
+});
+
+describe("Node endpoint API", () => {
+  it("loads endpoints for an encoded node and creates an endpoint with CSRF protection", async () => {
+    const endpoint = { id: "endpoint-1", node_id: "node/id", display_name: "IPv4", kind: "direct" };
+    const fetchMock = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(jsonResponse({ items: [endpoint] }))
+      .mockResolvedValueOnce(jsonResponse(endpoint, 201));
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("document", { cookie: "relayward_csrf=csrf-token" });
+
+    await expect(listNodeEndpoints("node/id")).resolves.toEqual([endpoint]);
+    const input = {
+      display_name: "IPv4", kind: "direct" as const, enabled: true, source_family: "ipv4" as const,
+      address: "", public_port_overrides: { "io.relayward.test": { "vless-main": 45142 } },
+    };
+    await expect(createNodeEndpoint("node/id", input)).resolves.toEqual(endpoint);
+    expect(fetchMock.mock.calls[0][0]).toBe("/api/v1/nodes/node%2Fid/endpoints");
+    const [path, init] = fetchMock.mock.calls[1];
+    expect(path).toBe("/api/v1/nodes/node%2Fid/endpoints");
+    expect(init?.method).toBe("POST");
+    expect(init?.body).toBe(JSON.stringify(input));
+    expect(new Headers(init?.headers).get("X-CSRF-Token")).toBe("csrf-token");
+  });
+
+  it("sends a Cloudflare token only in the request body", async () => {
+    const connection = { id: "connection-1", name: "Cloudflare", provider: "cloudflare", has_token: true };
+    const fetchMock = vi.fn<typeof fetch>(async () => jsonResponse(connection, 201));
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("document", { cookie: "relayward_csrf=csrf-token" });
+
+    await expect(createDNSProviderConnection({ name: "Cloudflare", provider: "cloudflare", api_token: "secret-token" }))
+      .resolves.toEqual(connection);
+    const [path, init] = fetchMock.mock.calls[0];
+    expect(path).toBe("/api/v1/dns-provider-connections");
+    expect(String(path)).not.toContain("secret-token");
+    expect(init?.body).toBe(JSON.stringify({ name: "Cloudflare", provider: "cloudflare", api_token: "secret-token" }));
+  });
+
+  it("manages DDNS records through the global resource API", async () => {
+    const record = { id: "record/id", node_id: "node-1", node_name: "Edge", kind: "managed_ddns" };
+    const fetchMock = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(jsonResponse({ items: [record] }))
+      .mockResolvedValueOnce(jsonResponse(record, 201));
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("document", { cookie: "relayward_csrf=csrf-token" });
+
+    await expect(listDDNSRecords()).resolves.toEqual([record]);
+    const input = {
+      node_id: "node-1", display_name: "IPv4", enabled: true, source_family: "ipv4" as const,
+      public_port_overrides: {}, dns_provider_connection_id: "connection-1", zone_name: "example.com",
+      record_name: "edge.example.com", ttl: 300, proxied: false,
+    };
+    await expect(createDDNSRecord(input)).resolves.toEqual(record);
+    expect(fetchMock.mock.calls[0][0]).toBe("/api/v1/ddns-records");
+    const [path, init] = fetchMock.mock.calls[1];
+    expect(path).toBe("/api/v1/ddns-records");
+    expect(init?.method).toBe("POST");
+    expect(init?.body).toBe(JSON.stringify(input));
+    expect(new Headers(init?.headers).get("X-CSRF-Token")).toBe("csrf-token");
   });
 });
 

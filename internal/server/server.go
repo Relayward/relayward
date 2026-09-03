@@ -18,6 +18,7 @@ import (
 	"github.com/Relayward/relayward/internal/auth"
 	"github.com/Relayward/relayward/internal/eventstore"
 	"github.com/Relayward/relayward/internal/management"
+	"github.com/Relayward/relayward/internal/networkdiagnostics"
 	"github.com/Relayward/relayward/internal/secretbox"
 	"github.com/Relayward/relayward/internal/store"
 )
@@ -40,20 +41,22 @@ type Options struct {
 	PolicyCoordinator interface {
 		ReconcileNode(context.Context, string) (bool, error)
 	}
+	NetworkDiagnostics *networkdiagnostics.Service
 }
 
 type Server struct {
-	version           string
-	store             *store.Store
-	eventStore        *eventstore.Store
-	auth              *auth.Service
-	management        *management.Service
-	secrets           *secretbox.Manager
-	logger            *slog.Logger
-	webAssets         fs.FS
-	loginLimiter      *attemptLimiter
-	agentSessions     *agentSessionHub
-	policyCoordinator interface {
+	version            string
+	store              *store.Store
+	eventStore         *eventstore.Store
+	auth               *auth.Service
+	management         *management.Service
+	secrets            *secretbox.Manager
+	logger             *slog.Logger
+	webAssets          fs.FS
+	loginLimiter       *attemptLimiter
+	agentSessions      *agentSessionHub
+	networkDiagnostics *networkdiagnostics.Service
+	policyCoordinator  interface {
 		ReconcileNode(context.Context, string) (bool, error)
 	}
 }
@@ -66,17 +69,18 @@ type systemInfo struct {
 
 func New(options Options) http.Handler {
 	server := &Server{
-		version:           options.Version,
-		store:             options.Store,
-		eventStore:        options.EventStore,
-		auth:              options.Auth,
-		management:        options.Management,
-		secrets:           options.Secrets,
-		logger:            options.Logger,
-		webAssets:         options.WebAssets,
-		loginLimiter:      newAttemptLimiter(5, 5*time.Minute),
-		agentSessions:     newAgentSessionHub(),
-		policyCoordinator: options.PolicyCoordinator,
+		version:            options.Version,
+		store:              options.Store,
+		eventStore:         options.EventStore,
+		auth:               options.Auth,
+		management:         options.Management,
+		secrets:            options.Secrets,
+		logger:             options.Logger,
+		webAssets:          options.WebAssets,
+		loginLimiter:       newAttemptLimiter(5, 5*time.Minute),
+		agentSessions:      newAgentSessionHub(),
+		networkDiagnostics: options.NetworkDiagnostics,
+		policyCoordinator:  options.PolicyCoordinator,
 	}
 	if server.logger == nil {
 		server.logger = slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -108,6 +112,19 @@ func New(options Options) http.Handler {
 	mux.HandleFunc("DELETE /api/v1/nodes/{node_id}", server.withAuthentication(server.withCSRF(server.deleteNode)))
 	mux.HandleFunc("DELETE /api/v1/nodes/{node_id}/agent-credential", server.withAuthentication(server.withCSRF(server.revokeNodeCredential)))
 	mux.HandleFunc("POST /api/v1/nodes/{node_id}/registration-tokens", server.withAuthentication(server.withCSRF(server.createNodeRegistrationToken)))
+	mux.HandleFunc("GET /api/v1/nodes/{node_id}/public-addresses", server.withAuthentication(server.listNodePublicAddresses))
+	mux.HandleFunc("GET /api/v1/nodes/{node_id}/endpoints", server.withAuthentication(server.listNodeEndpoints))
+	mux.HandleFunc("POST /api/v1/nodes/{node_id}/endpoints", server.withAuthentication(server.withCSRF(server.createNodeEndpoint)))
+	mux.HandleFunc("PUT /api/v1/nodes/{node_id}/endpoints/{endpoint_id}", server.withAuthentication(server.withCSRF(server.updateNodeEndpoint)))
+	mux.HandleFunc("DELETE /api/v1/nodes/{node_id}/endpoints/{endpoint_id}", server.withAuthentication(server.withCSRF(server.deleteNodeEndpoint)))
+	mux.HandleFunc("GET /api/v1/dns-provider-connections", server.withAuthentication(server.listDNSProviderConnections))
+	mux.HandleFunc("POST /api/v1/dns-provider-connections", server.withAuthentication(server.withCSRF(server.createDNSProviderConnection)))
+	mux.HandleFunc("PUT /api/v1/dns-provider-connections/{connection_id}", server.withAuthentication(server.withCSRF(server.updateDNSProviderConnection)))
+	mux.HandleFunc("DELETE /api/v1/dns-provider-connections/{connection_id}", server.withAuthentication(server.withCSRF(server.deleteDNSProviderConnection)))
+	mux.HandleFunc("GET /api/v1/ddns-records", server.withAuthentication(server.listDDNSRecords))
+	mux.HandleFunc("POST /api/v1/ddns-records", server.withAuthentication(server.withCSRF(server.createDDNSRecord)))
+	mux.HandleFunc("PUT /api/v1/ddns-records/{record_id}", server.withAuthentication(server.withCSRF(server.updateDDNSRecord)))
+	mux.HandleFunc("DELETE /api/v1/ddns-records/{record_id}", server.withAuthentication(server.withCSRF(server.deleteDDNSRecord)))
 	mux.HandleFunc("POST /api/v1/nodes/{node_id}/agent-updates", server.withAuthentication(server.withCSRF(server.requestAgentUpdate)))
 	mux.HandleFunc("GET /api/v1/nodes/{node_id}/agent-updates/latest", server.withAuthentication(server.latestAgentUpdate))
 	mux.HandleFunc("GET /api/v1/nodes/{node_id}/agent-updates/availability", server.withAuthentication(server.agentUpdateAvailability))

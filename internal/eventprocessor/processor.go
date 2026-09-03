@@ -18,6 +18,7 @@ const (
 	TrafficConsumerID = "standard.traffic.v1"
 	PolicyConsumerID  = "standard.policy-status.v1"
 	AccessConsumerID  = "standard.access.v1"
+	NetworkConsumerID = "standard.network.v1"
 
 	defaultInterval        = 5 * time.Second
 	defaultBatchSize       = 200
@@ -25,7 +26,7 @@ const (
 	consumerRetryDelay     = 30 * time.Second
 )
 
-var ConsumerIDs = []string{TrafficConsumerID, PolicyConsumerID, AccessConsumerID}
+var ConsumerIDs = []string{TrafficConsumerID, PolicyConsumerID, AccessConsumerID, NetworkConsumerID}
 
 type Processor struct {
 	events   *eventstore.Store
@@ -214,7 +215,7 @@ func (processor *Processor) consumerIDs(ctx context.Context) ([]string, error) {
 
 func isStandardConsumer(consumerID string) bool {
 	switch consumerID {
-	case TrafficConsumerID, PolicyConsumerID, AccessConsumerID:
+	case TrafficConsumerID, PolicyConsumerID, AccessConsumerID, NetworkConsumerID:
 		return true
 	default:
 		return false
@@ -260,6 +261,15 @@ func (processor *Processor) processEvent(ctx context.Context, consumerID string,
 			return nil
 		}
 		return processor.events.StoreAccessEvent(ctx, source, value)
+	case NetworkConsumerID:
+		if source.Event.Kind != agentv1.EventPublicAddresses {
+			return nil
+		}
+		value, err := agentv1.DecodePublicAddressesEvent(source.Event.Payload)
+		if err != nil {
+			return err
+		}
+		return processor.business.RecordNodePublicAddresses(ctx, source.NodeID, value, source.Event.ObservedAt, source.ReceivedAt)
 	default:
 		return fmt.Errorf("unknown consumer %q", consumerID)
 	}

@@ -83,10 +83,10 @@ export function SettingsView() {
 
           <TabsContent value="defaults">
             <Card>
-              <CardHeader>
+              <CardHeader className="max-sm:has-data-[slot=card-action]:grid-cols-1">
                 <CardTitle className="flex items-center gap-2"><Settings2 className="size-4" />{t("Control plane defaults")}</CardTitle>
                 <CardDescription>{t("Defaults used for new sessions and authorization schedules.")}</CardDescription>
-                {value ? <CardAction><StatusBadge tone="muted">{t("Updated {time}", { time: formatDateTime(value.updated_at) })}</StatusBadge></CardAction> : null}
+                {value ? <CardAction className="max-sm:col-start-1 max-sm:row-start-3 max-sm:row-span-1 max-sm:min-w-0 max-sm:max-w-full max-sm:justify-self-start"><StatusBadge className="max-w-full" tone="muted">{t("Updated {time}", { time: formatDateTime(value.updated_at) })}</StatusBadge></CardAction> : null}
               </CardHeader>
               <CardContent className="grid gap-5 md:grid-cols-2">
                 <SettingField id="settings-timezone" label={t("Default timezone")} description={t("Used when creating a new authorization.")}>

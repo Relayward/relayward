@@ -27,6 +27,46 @@ type Authorization struct {
 	UpdatedAt             time.Time
 }
 
+type PluginNodeAuthorization struct {
+	ID             string
+	UserIdentifier string
+	Enabled        bool
+	ServiceIDs     []string
+}
+
+func (store *Store) ListPluginNodeAuthorizations(ctx context.Context, nodeID, pluginID string) ([]PluginNodeAuthorization, error) {
+	rows, err := store.db.QueryContext(ctx, `
+SELECT a.id, u.display_name, a.enabled, COALESCE(b.service_id, '')
+FROM authorizations a
+JOIN users u ON u.id = a.user_id
+LEFT JOIN service_bindings b
+  ON b.authorization_id = a.id AND b.plugin_id = ? AND b.enabled = 1
+WHERE a.node_id = ?
+ORDER BY a.id, b.service_id`, pluginID, nodeID)
+	if err != nil {
+		return nil, fmt.Errorf("list plugin node authorizations: %w", err)
+	}
+	defer rows.Close()
+	values := make([]PluginNodeAuthorization, 0)
+	for rows.Next() {
+		var id, identifier, serviceID string
+		var enabled bool
+		if err := rows.Scan(&id, &identifier, &enabled, &serviceID); err != nil {
+			return nil, fmt.Errorf("scan plugin node authorization: %w", err)
+		}
+		if len(values) == 0 || values[len(values)-1].ID != id {
+			values = append(values, PluginNodeAuthorization{ID: id, UserIdentifier: identifier, Enabled: enabled})
+		}
+		if serviceID != "" {
+			values[len(values)-1].ServiceIDs = append(values[len(values)-1].ServiceIDs, serviceID)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate plugin node authorizations: %w", err)
+	}
+	return values, nil
+}
+
 func (store *Store) ListAuthorizations(ctx context.Context, userID, nodeID string) ([]Authorization, error) {
 	query := `
 SELECT id, user_id, node_id, enabled, traffic_limit_bytes, reset_kind, reset_value, timezone,

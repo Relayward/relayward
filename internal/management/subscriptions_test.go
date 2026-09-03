@@ -17,8 +17,9 @@ import (
 )
 
 type subscriptionRuntimeStub struct {
-	calls int
-	err   error
+	calls       int
+	err         error
+	lastRequest *centerpluginv1.RenderSubscriptionRequest
 }
 
 func (*subscriptionRuntimeStub) Switch(context.Context, store.PluginVersion) (bool, error) {
@@ -36,6 +37,7 @@ func (runtime *subscriptionRuntimeStub) RenderSubscription(_ context.Context, _ 
 	request *centerpluginv1.RenderSubscriptionRequest,
 ) (*centerpluginv1.RenderSubscriptionResponse, error) {
 	runtime.calls++
+	runtime.lastRequest = request
 	if runtime.err != nil {
 		return nil, runtime.err
 	}
@@ -108,10 +110,26 @@ func TestSubscriptionRenderingCacheAndInputIsolation(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	endpoint, err := service.CreateNodeEndpoint(ctx, node.ID, NodeEndpointInput{
+		DisplayName: "Public IPv4", Kind: "nat", Enabled: true, Address: "edge.example.com",
+		PublicPortOverrides: store.PublicPortOverrides{
+			pluginManifest.ID:    {"main": 8443},
+			"io.relayward.other": {"main": 9443},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	base64Result, err := service.RenderSubscription(ctx, created.SubscriptionToken, store.SubscriptionFormatBase64)
 	if err != nil || base64Result.Cached || runtime.calls != 1 {
 		t.Fatalf("first RenderSubscription() = %+v, calls=%d, error=%v", base64Result, runtime.calls, err)
+	}
+	if runtime.lastRequest == nil || len(runtime.lastRequest.Endpoints) != 1 ||
+		runtime.lastRequest.Endpoints[0].EndpointId != endpoint.Endpoint.ID ||
+		runtime.lastRequest.Endpoints[0].Address != "edge.example.com" ||
+		runtime.lastRequest.Endpoints[0].PublicPortOverrides["main"] != 8443 {
+		t.Fatalf("subscription plugin request = %+v", runtime.lastRequest)
 	}
 	decoded, err := base64.StdEncoding.DecodeString(strings.TrimSpace(string(base64Result.Content)))
 	if err != nil || string(decoded) != "relayward-test://credential@edge.example.com:443#Edge" {
@@ -152,6 +170,37 @@ func TestSubscriptionRenderingCacheAndInputIsolation(t *testing.T) {
 	}
 	if _, err := service.RenderSubscription(ctx, created.SubscriptionToken, store.SubscriptionFormatBase64); !errors.Is(err, ErrSubscriptionInactive) {
 		t.Fatalf("disabled RenderSubscription() error = %v", err)
+	}
+}
+
+func TestSubscriptionInputDigestIncludesEndpoints(t *testing.T) {
+	snapshot := store.SubscriptionSnapshot{
+		Authorization: store.Authorization{
+			ID: "10000000-0000-4000-8000-000000000001", NodeID: "20000000-0000-4000-8000-000000000002",
+			UpdatedAt: time.Date(2026, time.August, 30, 10, 0, 0, 0, time.UTC),
+		},
+		Endpoints: []store.SubscriptionEndpoint{{
+			ID: "30000000-0000-4000-8000-000000000003", DisplayName: "IPv4", Kind: "direct",
+			Address: "203.0.113.50", PublicPortOverrides: store.PublicPortOverrides{"io.relayward.test": {"vless-main": 443}},
+		}},
+	}
+	first, err := subscriptionInputDigest(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot.Endpoints[0].Address = "203.0.113.51"
+	second, err := subscriptionInputDigest(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot.Endpoints[0].Address = "203.0.113.50"
+	snapshot.Endpoints[0].PublicPortOverrides["io.relayward.test"]["vless-main"] = 8443
+	third, err := subscriptionInputDigest(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first == second || first == third || second == third {
+		t.Fatalf("endpoint digests did not change: %q %q %q", first, second, third)
 	}
 }
 

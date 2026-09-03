@@ -43,6 +43,15 @@ type SubscriptionSnapshot struct {
 	TrafficUsedBytes *uint64
 	Announcement     *string
 	Services         []SubscriptionService
+	Endpoints        []SubscriptionEndpoint
+}
+
+type SubscriptionEndpoint struct {
+	ID                  string
+	DisplayName         string
+	Kind                string
+	Address             string
+	PublicPortOverrides PublicPortOverrides
 }
 
 type SubscriptionRenderCache struct {
@@ -181,6 +190,55 @@ ORDER BY bindings.plugin_id, bindings.service_id`, snapshot.Authorization.NodeID
 	}
 	if err := rows.Err(); err != nil {
 		return SubscriptionSnapshot{}, fmt.Errorf("iterate subscription services: %w", err)
+	}
+	endpointRows, err := tx.QueryContext(ctx, `
+SELECT endpoints.id, endpoints.display_name, endpoints.kind, endpoints.address,
+       endpoints.source_family, endpoints.public_port_overrides_json,
+       endpoints.record_name, endpoints.sync_status, addresses.address
+FROM node_endpoints endpoints
+LEFT JOIN node_public_addresses addresses
+  ON addresses.node_id = endpoints.node_id AND addresses.family = endpoints.source_family
+WHERE endpoints.node_id = ? AND endpoints.enabled = 1
+ORDER BY endpoints.id`, snapshot.Authorization.NodeID)
+	if err != nil {
+		return SubscriptionSnapshot{}, fmt.Errorf("read subscription endpoints: %w", err)
+	}
+	snapshot.Endpoints = make([]SubscriptionEndpoint, 0)
+	for endpointRows.Next() {
+		var endpoint SubscriptionEndpoint
+		var configuredAddress, sourceFamily, recordName, syncStatus string
+		var observedAddress sql.NullString
+		var ports []byte
+		if err := endpointRows.Scan(&endpoint.ID, &endpoint.DisplayName, &endpoint.Kind, &configuredAddress,
+			&sourceFamily, &ports, &recordName, &syncStatus, &observedAddress); err != nil {
+			endpointRows.Close()
+			return SubscriptionSnapshot{}, fmt.Errorf("scan subscription endpoint: %w", err)
+		}
+		switch {
+		case endpoint.Kind == "direct" && observedAddress.Valid:
+			endpoint.Address = observedAddress.String
+		case endpoint.Kind == "nat", endpoint.Kind == "domain":
+			endpoint.Address = configuredAddress
+		case endpoint.Kind == "managed_ddns" && syncStatus == "synced":
+			endpoint.Address = recordName
+		}
+		if endpoint.Address == "" {
+			continue
+		}
+		if err := json.Unmarshal(ports, &endpoint.PublicPortOverrides); err != nil {
+			endpointRows.Close()
+			return SubscriptionSnapshot{}, fmt.Errorf("decode subscription endpoint port overrides: %w", err)
+		}
+		if endpoint.PublicPortOverrides == nil {
+			endpoint.PublicPortOverrides = PublicPortOverrides{}
+		}
+		snapshot.Endpoints = append(snapshot.Endpoints, endpoint)
+	}
+	if err := endpointRows.Close(); err != nil {
+		return SubscriptionSnapshot{}, fmt.Errorf("close subscription endpoints: %w", err)
+	}
+	if err := endpointRows.Err(); err != nil {
+		return SubscriptionSnapshot{}, fmt.Errorf("iterate subscription endpoints: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
 		return SubscriptionSnapshot{}, fmt.Errorf("commit subscription snapshot read: %w", err)

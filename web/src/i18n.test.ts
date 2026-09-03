@@ -38,8 +38,11 @@ describe("message translation", () => {
   });
 
   it("translates kernel permission copy", () => {
+    expect(translateMessage("zh-CN", "Read node authorizations")).toBe("读取节点授权");
     expect(translateMessage("zh-CN", "Configure managed node plugins")).toBe("配置受管节点插件");
     expect(translateMessage("zh-CN", "Read and publish this plugin's configuration on managed nodes."))
       .toBe("读取并下发此插件在受管节点上的配置。");
+    expect(translateMessage("zh-CN", "Diagnose node ports")).toBe("诊断节点端口");
+    expect(translateMessage("zh-CN", "Invoke node plugin diagnostics")).toBe("调用节点插件诊断");
   });
 });

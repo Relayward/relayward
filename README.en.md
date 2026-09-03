@@ -16,7 +16,8 @@ Relayward is under active development. Current releases target self-hosted Linux
 - Node records, one-time Agent enrollment, outbound-only control connections, and online-state management
 - Reliable command and event delivery, policy reconciliation, Agent updates, and rollback coordination
 - Per-user, per-node policy configuration and delivery for quotas, expiry, reset periods, and soft source-IP limits
-- Plugin service catalogs, authorization service bindings, and a unified subscription entry point
+- Plugin service catalogs, authorization service bindings, a unified subscription entry point, and endpoint-expanded client entries
+- Direct, NAT, and domain endpoints with centrally managed Cloudflare DDNS records
 - Plugin release inspection, permission approval, artifact verification, process supervision, upgrade rollback, and sandboxed administration pages
 - Simplified Chinese and English administration interface with light and dark themes
 - SQLite state, encrypted secrets, audit history, hot events, and compressed event archives
@@ -48,7 +49,7 @@ The center manages only generic node, policy, service, and plugin state. It does
 | Center | Linux AMD64, Docker Engine, Docker Compose v2, curl |
 | Center access | A reachable HTTP address, or a domain name and an HTTPS reverse proxy with WebSocket support |
 | Nodes | Linux AMD64 running Debian/systemd or Alpine/OpenRC |
-| Network | Nodes require HTTP(S) access to the center and HTTPS access to GitHub Releases and runtime release hosts |
+| Network | Nodes require HTTP(S) access to the center and HTTPS access to GitHub Releases, runtime release hosts, and `api4.ipify.org`/`api6.ipify.org` |
 
 The example deployment binds Relayward to `127.0.0.1:8080` by default. For direct HTTP access, set `RELAYWARD_BIND_ADDRESS` in `.env` to a host address reachable by clients. HTTP does not encrypt login credentials, subscription tokens, or Agent data in transit.
 
@@ -135,7 +136,15 @@ To install a plugin, open **Plugins**, select **Install plugin**, and enter its 
 
 Current official runtime plugins are listed under [Related Projects](#related-projects). Protocols, configuration fields, service ports, subscription formats, and acceptance criteria belong to each plugin and are documented in its repository.
 
-### 6. Create Access
+### 6. Configure Subscription Endpoints
+
+Open **Subscription endpoints** in the node details. The Agent observes public IPv4 and IPv6 when it starts and every 10 minutes afterward; each successfully observed address can be published as a separate direct endpoint. For a NAT node, enter its fixed public IP or domain. When a domain is maintained externally, add it as a domain endpoint.
+
+To let Relayward update DNS, open the center-level **DDNS** page. Add a Cloudflare connection under **DNS provider connections**; its API Token needs at least `Zone:Read` and `DNS:Edit` for the target zone, and its resource scope should be restricted to the zones actually used. Then create a **Managed record** and select its node, address family, connection, zone, and record name. Relayward checks pending records every minute and creates or updates the matching A or AAAA record after the node's public address changes. Cloudflare credentials are stored centrally and can be reused across nodes; node details only show associated records and synchronization state.
+
+A node may publish multiple endpoints. Every authorized service expands across all available endpoints as separate client entries. If NAT or port forwarding exposes a different public port from the runtime listening port, configure a public-port override for that plugin and service on the endpoint.
+
+### 7. Create Access
 
 1. Open **Users** and create a user.
 2. Open **Authorizations** and add an authorization for that user and node.
@@ -152,6 +161,7 @@ After deployment, verify all of the following:
 - `docker compose exec relayward relayward healthcheck` succeeds.
 - The administration page is reachable at the selected HTTP or HTTPS address; HTTP access displays the unencrypted-transport warning.
 - The node reports online and shows its Agent version.
+- Node details show the observed public addresses and at least one available subscription endpoint is configured.
 - Installed center plugins report an active and healthy state.
 - The authorization reports active after policy delivery.
 

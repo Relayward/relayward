@@ -129,7 +129,8 @@ func (service *Service) renderSubscriptionSnapshot(ctx context.Context, snapshot
 		pluginID := snapshot.Services[start].PluginID
 		request := &centerpluginv1.RenderSubscriptionRequest{
 			AuthorizationId: snapshot.Authorization.ID, NodeId: snapshot.Authorization.NodeID,
-			Services: make([]*centerpluginv1.SubscriptionServiceBinding, end-start),
+			Services:  make([]*centerpluginv1.SubscriptionServiceBinding, end-start),
+			Endpoints: make([]*centerpluginv1.SubscriptionEndpoint, len(snapshot.Endpoints)),
 		}
 		for index, bound := range snapshot.Services[start:end] {
 			if bound.PluginState != "active" || bound.PluginHealth != "healthy" ||
@@ -138,6 +139,19 @@ func (service *Service) renderSubscriptionSnapshot(ctx context.Context, snapshot
 			}
 			request.Services[index] = &centerpluginv1.SubscriptionServiceBinding{
 				ServiceId: bound.ServiceID, DisplayName: bound.DisplayName,
+			}
+		}
+		for index, endpoint := range snapshot.Endpoints {
+			ports := make(map[string]uint32)
+			pluginPorts := endpoint.PublicPortOverrides[pluginID]
+			for _, bound := range snapshot.Services[start:end] {
+				if port, exists := pluginPorts[bound.ServiceID]; exists {
+					ports[bound.ServiceID] = uint32(port)
+				}
+			}
+			request.Endpoints[index] = &centerpluginv1.SubscriptionEndpoint{
+				EndpointId: endpoint.ID, DisplayName: endpoint.DisplayName, Kind: endpoint.Kind,
+				Address: endpoint.Address, PublicPortOverrides: ports,
 			}
 		}
 		response, err := service.pluginRuntime.RenderSubscription(ctx, pluginID, request)
@@ -172,11 +186,19 @@ func subscriptionInputDigest(snapshot store.SubscriptionSnapshot) (string, error
 		NodeGeneration       uint64   `json:"node_generation"`
 		NodeConfigurationSHA string   `json:"node_configuration_sha256"`
 	}
+	type endpointInput struct {
+		ID                  string                    `json:"id"`
+		DisplayName         string                    `json:"display_name"`
+		Kind                string                    `json:"kind"`
+		Address             string                    `json:"address"`
+		PublicPortOverrides store.PublicPortOverrides `json:"public_port_overrides"`
+	}
 	input := struct {
-		AuthorizationID        string         `json:"authorization_id"`
-		AuthorizationUpdatedAt time.Time      `json:"authorization_updated_at"`
-		NodeID                 string         `json:"node_id"`
-		Services               []serviceInput `json:"services"`
+		AuthorizationID        string          `json:"authorization_id"`
+		AuthorizationUpdatedAt time.Time       `json:"authorization_updated_at"`
+		NodeID                 string          `json:"node_id"`
+		Services               []serviceInput  `json:"services"`
+		Endpoints              []endpointInput `json:"endpoints"`
 	}{
 		AuthorizationID: snapshot.Authorization.ID, AuthorizationUpdatedAt: snapshot.Authorization.UpdatedAt,
 		NodeID: snapshot.Authorization.NodeID,
@@ -189,6 +211,11 @@ func subscriptionInputDigest(snapshot store.SubscriptionSnapshot) (string, error
 			PluginVersion: value.PluginVersion, NodeDesiredState: value.NodeDesiredState,
 			NodeGeneration: value.NodeGeneration, NodeConfigurationSHA: value.NodeConfigurationSHA,
 		}
+	}
+	input.Endpoints = make([]endpointInput, len(snapshot.Endpoints))
+	for index, value := range snapshot.Endpoints {
+		input.Endpoints[index] = endpointInput{ID: value.ID, DisplayName: value.DisplayName, Kind: value.Kind,
+			Address: value.Address, PublicPortOverrides: value.PublicPortOverrides}
 	}
 	raw, err := json.Marshal(input)
 	if err != nil {

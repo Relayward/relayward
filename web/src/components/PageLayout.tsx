@@ -31,7 +31,7 @@ export function PageHeader({ id, eyebrow, title, description, actions }: {
   return (
     <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
       <div className="min-w-0 space-y-2">
-        {eyebrow ? <p className="m-0 text-sm font-medium text-muted-foreground">{eyebrow}</p> : null}
+        {eyebrow ? <p className="m-0 text-sm font-medium text-primary-strong">{eyebrow}</p> : null}
         <h1 className="m-0 text-2xl font-bold tracking-tight" id={id}>{title}</h1>
         {description ? <p className="m-0 max-w-3xl text-sm text-muted-foreground">{description}</p> : null}
       </div>
@@ -60,10 +60,10 @@ export function SummaryItem({ label, value, note, icon, tone = "default" }: {
 }) {
   const toneClass = {
     default: "text-muted-foreground",
-    primary: "text-foreground",
-    success: "text-success-strong",
-    warning: "text-warning-strong",
-    danger: "text-destructive",
+    primary: "border-primary/20 bg-primary-soft text-primary-strong",
+    success: "border-success/20 bg-success-soft text-success-strong",
+    warning: "border-warning/20 bg-warning-soft text-warning-strong",
+    danger: "border-destructive/20 bg-destructive-soft text-destructive",
   }[tone]
 
   return (
@@ -85,17 +85,17 @@ export function StatusBadge({ children, tone = "muted", dot = true, className }:
   className?: string
 }) {
   const toneClass = {
-    success: "text-success-strong",
-    warning: "text-warning-strong",
-    danger: "text-destructive",
-    info: "text-foreground",
+    success: "border-success/20 bg-success-soft text-success-strong",
+    warning: "border-warning/20 bg-warning-soft text-warning-strong",
+    danger: "border-destructive/20 bg-destructive-soft text-destructive",
+    info: "border-primary/20 bg-primary-soft text-primary-strong",
     muted: "text-muted-foreground",
   }[tone]
   const dotClass = {
     success: "bg-success",
     warning: "bg-warning",
     danger: "bg-destructive",
-    info: "bg-foreground",
+    info: "bg-primary",
     muted: "bg-muted-foreground",
   }[tone]
 

@@ -20,6 +20,7 @@ import { Skeleton } from "./ui/skeleton";
 const AnnouncementView = lazy(() => import("./AnnouncementView").then((module) => ({ default: module.AnnouncementView })));
 const AuditView = lazy(() => import("./AuditView").then((module) => ({ default: module.AuditView })));
 const AuthorizationsView = lazy(() => import("./AuthorizationView").then((module) => ({ default: module.AuthorizationsView })));
+const DDNSView = lazy(() => import("./DDNSView").then((module) => ({ default: module.DDNSView })));
 const NodeDetailsView = lazy(() => import("./NodeDetailsView").then((module) => ({ default: module.NodeDetailsView })));
 const NodesView = lazy(() => import("./ResourceViews").then((module) => ({ default: module.NodesView })));
 const OverviewView = lazy(() => import("./OverviewView").then((module) => ({ default: module.OverviewView })));
@@ -172,11 +173,12 @@ function ViewContent({ view, nodeID, session, system, onViewChange, onOpenNode, 
 }) {
   const { t } = useI18n();
   if (nodeID !== undefined) {
-    return <NodeDetailsView nodeID={nodeID} pluginPages={pluginNodePages} onBack={onBackFromNode} onDeleted={onNodeDeleted} onNavigate={onViewChange} />;
+    return <NodeDetailsView nodeID={nodeID} pluginPages={pluginNodePages} onBack={onBackFromNode} onDeleted={onNodeDeleted} onOpenDDNS={() => onViewChange("ddns")} onNavigate={onViewChange} />;
   }
   switch (view) {
     case "system": return <OverviewView system={system} session={session} onNavigate={(target) => onViewChange(target)} />;
     case "nodes": return <NodesView onOpenNode={onOpenNode} />;
+    case "ddns": return <DDNSView />;
     case "plugins": return <PluginsView installations={plugins} loading={pluginsLoading} loadError={pluginsError} onReload={onReloadPlugins} onInstallationsChange={onPluginsChange} />;
     case "users": return <UsersView />;
     case "authorizations": return <AuthorizationsView />;

@@ -217,10 +217,10 @@ function OverviewMetric({ label, value, badge, healthy, footer, detail }: {
       <CardHeader>
         <CardDescription>{label}</CardDescription>
         <CardTitle className="text-2xl font-semibold tabular-nums @[250px]/card:text-3xl">{value}</CardTitle>
-        <CardAction><Badge variant="outline"><Icon />{badge}</Badge></CardAction>
+        <CardAction><Badge variant="outline" className={healthy ? "border-success/20 bg-success-soft text-success-strong" : "border-warning/20 bg-warning-soft text-warning-strong"}><Icon />{badge}</Badge></CardAction>
       </CardHeader>
       <CardFooter className="flex-col items-start gap-1.5 text-sm">
-        <div className="line-clamp-1 flex gap-2 font-medium">{footer}<Icon className="size-4" /></div>
+        <div className={healthy ? "line-clamp-1 flex gap-2 font-medium text-success-strong" : "line-clamp-1 flex gap-2 font-medium text-warning-strong"}>{footer}<Icon className="size-4" /></div>
         <div className="text-muted-foreground">{detail}</div>
       </CardFooter>
     </Card>
@@ -245,14 +245,14 @@ function AttentionCard({ items, loaded, onNavigate, t }: {
       <CardContent className="space-y-3">
         {items.map((item) => (
           <div className="flex p-3 rounded-lg border gap-2" key={item.key}>
-            <div className="flex items-center justify-center w-8 h-8 rounded-full bg-primary/10 text-primary font-semibold text-sm"><AlertTriangle className="h-4 w-4" /></div>
+            <div className={item.tone === "danger" ? "flex size-8 shrink-0 items-center justify-center rounded-full bg-destructive-soft text-destructive" : "flex size-8 shrink-0 items-center justify-center rounded-full bg-warning-soft text-warning-strong"}><AlertTriangle className="h-4 w-4" /></div>
             <div className="flex min-w-0 flex-1 items-center flex-wrap justify-between gap-1">
               <div className="flex min-w-0 items-center space-x-3"><div className="min-w-0 flex-1"><p className="text-sm font-medium truncate">{item.title}</p><p className="text-xs text-muted-foreground truncate">{item.detail}</p></div></div>
-              <div className="flex items-center space-x-3"><Badge variant={item.tone === "danger" ? "destructive" : "secondary"}>{t(item.tone === "danger" ? "Failure" : "Pending")}</Badge><Button variant="ghost" size="sm" className="h-8 cursor-pointer" onClick={() => onNavigate(item.target)} type="button">{t("View")}</Button></div>
+              <div className="flex items-center space-x-3"><Badge variant={item.tone === "danger" ? "destructive" : "outline"} className={item.tone === "danger" ? undefined : "border-warning/20 bg-warning-soft text-warning-strong"}>{t(item.tone === "danger" ? "Failure" : "Pending")}</Badge><Button variant="ghost" size="sm" className="h-8 cursor-pointer" onClick={() => onNavigate(item.target)} type="button">{t("View")}</Button></div>
             </div>
           </div>
         ))}
-        {loaded && items.length === 0 ? <div className="flex p-3 rounded-lg border gap-2"><div className="flex items-center justify-center w-8 h-8 rounded-full bg-primary/10 text-primary font-semibold text-sm"><CheckCircle2 className="h-4 w-4" /></div><div className="flex flex-1 items-center"><p className="text-sm font-medium">{t("No operational problems detected.")}</p></div></div> : null}
+        {loaded && items.length === 0 ? <div className="flex p-3 rounded-lg border gap-2"><div className="flex size-8 shrink-0 items-center justify-center rounded-full bg-success-soft text-success-strong"><CheckCircle2 className="h-4 w-4" /></div><div className="flex flex-1 items-center"><p className="text-sm font-medium">{t("No operational problems detected.")}</p></div></div> : null}
         {!loaded ? <div className="flex p-3 rounded-lg border gap-2"><p className="text-sm text-muted-foreground">{t("Loading...")}</p></div> : null}
       </CardContent>
     </Card>
@@ -282,7 +282,7 @@ function RecentChangesCard({ entries, loaded, names, onNavigate, t, formatDateTi
             <div className="flex items-center justify-center w-8 h-8 rounded-full bg-primary/10 text-primary font-semibold text-sm"><Server className="h-4 w-4" /></div>
             <div className="flex min-w-0 flex-1 items-center flex-wrap justify-between gap-1">
               <div className="flex min-w-0 items-center space-x-3"><div className="min-w-0 flex-1"><p className="text-sm font-medium truncate">{auditActionLabel(entry.action, t)}</p><p className="text-xs text-muted-foreground truncate">{auditTarget(entry, names, t)}</p></div></div>
-              <div className="flex items-center space-x-3"><Badge variant={entry.outcome === "success" ? "secondary" : "destructive"}>{t(entry.outcome === "success" ? "Success" : "Failure")}</Badge><div className="text-right"><p className="text-xs text-muted-foreground">{formatDateTime(entry.occurred_at)}</p></div></div>
+              <div className="flex items-center space-x-3"><Badge variant={entry.outcome === "success" ? "outline" : "destructive"} className={entry.outcome === "success" ? "border-success/20 bg-success-soft text-success-strong" : undefined}>{t(entry.outcome === "success" ? "Success" : "Failure")}</Badge><div className="text-right"><p className="text-xs text-muted-foreground">{formatDateTime(entry.occurred_at)}</p></div></div>
             </div>
           </div>
         ))}
@@ -309,7 +309,7 @@ function PolicyState({ node, t }: { node: Node; t: Translate }) {
 }
 
 function StateBadge({ healthy, children }: { healthy: boolean; children: string }) {
-  return <Badge variant="outline" className="text-muted-foreground px-1.5">{healthy ? <CheckCircle2 className="text-green-500 dark:text-green-400" /> : <AlertTriangle />}{children}</Badge>;
+  return <Badge variant="outline" className={healthy ? "border-success/20 bg-success-soft px-1.5 text-success-strong" : "border-warning/20 bg-warning-soft px-1.5 text-warning-strong"}>{healthy ? <CheckCircle2 /> : <AlertTriangle />}{children}</Badge>;
 }
 
 export function buildOperationalIssues(data: OverviewData | undefined, secretsAvailable: boolean, now: Date, t: Translate, formatDateTime: (value: string | Date) => string): OverviewIssue[] {

@@ -76,6 +76,82 @@ export interface NodeRegistrationToken {
   expires_at: string;
 }
 
+export type NodePublicAddressFamily = "ipv4" | "ipv6";
+export type NodeEndpointKind = "direct" | "nat" | "domain" | "managed_ddns";
+
+export interface NodePublicAddress {
+  family: NodePublicAddressFamily;
+  address: string;
+  observed_at: string;
+  received_at: string;
+}
+
+export interface NodeEndpoint {
+  id: string;
+  node_id: string;
+  display_name: string;
+  kind: NodeEndpointKind;
+  enabled: boolean;
+  source_family: "" | NodePublicAddressFamily;
+  address: string;
+  resolved_address: string;
+  available: boolean;
+  public_port_overrides: Record<string, Record<string, number>>;
+  dns_provider_connection_id: string | null;
+  zone_name: string;
+  record_name: string;
+  ttl: number;
+  proxied: boolean;
+  sync_status: "not_applicable" | "pending" | "synced" | "failed";
+  actual_address: string;
+  sync_error: string;
+  synced_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface NodeEndpointInput {
+  display_name: string;
+  kind: Exclude<NodeEndpointKind, "managed_ddns">;
+  enabled: boolean;
+  source_family: "" | NodePublicAddressFamily;
+  address: string;
+  public_port_overrides: Record<string, Record<string, number>>;
+}
+
+export interface DDNSRecord extends NodeEndpoint {
+  kind: "managed_ddns";
+  node_name: string;
+}
+
+export interface DDNSRecordInput {
+  node_id: string;
+  display_name: string;
+  enabled: boolean;
+  source_family: NodePublicAddressFamily;
+  public_port_overrides: Record<string, Record<string, number>>;
+  dns_provider_connection_id: string | null;
+  zone_name: string;
+  record_name: string;
+  ttl: number;
+  proxied: boolean;
+}
+
+export interface DNSProviderConnection {
+  id: string;
+  name: string;
+  provider: "cloudflare";
+  has_token: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DNSProviderConnectionInput {
+  name: string;
+  provider: "cloudflare";
+  api_token?: string;
+}
+
 export interface AgentUpdate {
   id: string;
   node_id: string;
@@ -552,6 +628,64 @@ export async function revokeNodeCredential(id: string): Promise<Node> {
 
 export async function createNodeRegistrationToken(id: string): Promise<NodeRegistrationToken> {
   return request(`/api/v1/nodes/${encodeURIComponent(id)}/registration-tokens`, { method: "POST" });
+}
+
+export async function listNodePublicAddresses(id: string): Promise<NodePublicAddress[]> {
+  const response = await request<{ items: NodePublicAddress[] }>(`/api/v1/nodes/${encodeURIComponent(id)}/public-addresses`);
+  return response.items;
+}
+
+export async function listNodeEndpoints(id: string): Promise<NodeEndpoint[]> {
+  const response = await request<{ items: NodeEndpoint[] }>(`/api/v1/nodes/${encodeURIComponent(id)}/endpoints`);
+  return response.items;
+}
+
+export async function createNodeEndpoint(nodeID: string, input: NodeEndpointInput): Promise<NodeEndpoint> {
+  return request(`/api/v1/nodes/${encodeURIComponent(nodeID)}/endpoints`, { method: "POST", body: JSON.stringify(input) });
+}
+
+export async function updateNodeEndpoint(nodeID: string, endpointID: string, input: NodeEndpointInput): Promise<NodeEndpoint> {
+  return request(`/api/v1/nodes/${encodeURIComponent(nodeID)}/endpoints/${encodeURIComponent(endpointID)}`, {
+    method: "PUT", body: JSON.stringify(input),
+  });
+}
+
+export async function deleteNodeEndpoint(nodeID: string, endpointID: string): Promise<void> {
+  return request(`/api/v1/nodes/${encodeURIComponent(nodeID)}/endpoints/${encodeURIComponent(endpointID)}`, { method: "DELETE" });
+}
+
+export async function listDNSProviderConnections(): Promise<DNSProviderConnection[]> {
+  const response = await request<{ items: DNSProviderConnection[] }>("/api/v1/dns-provider-connections");
+  return response.items;
+}
+
+export async function createDNSProviderConnection(input: DNSProviderConnectionInput): Promise<DNSProviderConnection> {
+  return request("/api/v1/dns-provider-connections", { method: "POST", body: JSON.stringify(input) });
+}
+
+export async function updateDNSProviderConnection(id: string, input: DNSProviderConnectionInput): Promise<DNSProviderConnection> {
+  return request(`/api/v1/dns-provider-connections/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify(input) });
+}
+
+export async function deleteDNSProviderConnection(id: string): Promise<void> {
+  return request(`/api/v1/dns-provider-connections/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
+export async function listDDNSRecords(): Promise<DDNSRecord[]> {
+  const response = await request<{ items: DDNSRecord[] }>("/api/v1/ddns-records");
+  return response.items;
+}
+
+export async function createDDNSRecord(input: DDNSRecordInput): Promise<DDNSRecord> {
+  return request("/api/v1/ddns-records", { method: "POST", body: JSON.stringify(input) });
+}
+
+export async function updateDDNSRecord(id: string, input: DDNSRecordInput): Promise<DDNSRecord> {
+  return request(`/api/v1/ddns-records/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify(input) });
+}
+
+export async function deleteDDNSRecord(id: string): Promise<void> {
+  return request(`/api/v1/ddns-records/${encodeURIComponent(id)}`, { method: "DELETE" });
 }
 
 export async function requestAgentUpdate(id: string, version: string): Promise<AgentUpdate> {

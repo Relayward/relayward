@@ -30,6 +30,7 @@ type database interface {
 	PluginInstallationByID(context.Context, string) (store.PluginInstallation, error)
 	PluginVersionByID(context.Context, string, string) (store.PluginVersion, error)
 	ListNodes(context.Context) ([]store.Node, error)
+	ListPluginNodeAuthorizations(context.Context, string, string) ([]store.PluginNodeAuthorization, error)
 	ReplacePluginServices(context.Context, string, string, []store.PluginService, time.Time) error
 	RecordPluginRuntimeStatus(context.Context, string, string, string, uint64, *protocol.Problem, time.Time) error
 }
@@ -47,6 +48,11 @@ type eventPublisher interface {
 type nodePluginManager interface {
 	NodePluginConfiguration(context.Context, string, string) (store.NodePluginInstance, json.RawMessage, error)
 	ConfigureNodePlugin(context.Context, string, string, string, uint64, json.RawMessage) (store.NodePluginInstance, error)
+	DiagnoseNodePlugin(context.Context, string, string, string, json.RawMessage) (json.RawMessage, error)
+}
+
+type portDiagnoser interface {
+	Diagnose(context.Context, string, *centerpluginv1.DiagnoseNodePortsRequest) (*centerpluginv1.DiagnoseNodePortsResponse, error)
 }
 
 type Supervisor struct {
@@ -54,6 +60,7 @@ type Supervisor struct {
 	artifacts   artifactStore
 	events      eventPublisher
 	nodePlugins nodePluginManager
+	diagnostics portDiagnoser
 	logger      *slog.Logger
 
 	mu             sync.Mutex
@@ -73,15 +80,17 @@ type pluginActor struct {
 	crashStreak  uint
 }
 
-func New(database database, artifacts artifactStore, events eventPublisher, nodePlugins nodePluginManager, logger *slog.Logger) (*Supervisor, error) {
-	if database == nil || artifacts == nil || events == nil || nodePlugins == nil {
-		return nil, errors.New("plugin runtime database, artifact store, event store, and node plugin manager are required")
+func New(database database, artifacts artifactStore, events eventPublisher, nodePlugins nodePluginManager,
+	diagnostics portDiagnoser, logger *slog.Logger,
+) (*Supervisor, error) {
+	if database == nil || artifacts == nil || events == nil || nodePlugins == nil || diagnostics == nil {
+		return nil, errors.New("plugin runtime database, artifact store, event store, node plugin manager, and network diagnostics are required")
 	}
 	if logger == nil {
 		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
 	return &Supervisor{
-		database: database, artifacts: artifacts, events: events, nodePlugins: nodePlugins, logger: logger,
+		database: database, artifacts: artifacts, events: events, nodePlugins: nodePlugins, diagnostics: diagnostics, logger: logger,
 		actors: make(map[string]*pluginActor), healthInterval: defaultHealthInterval,
 	}, nil
 }

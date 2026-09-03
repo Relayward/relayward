@@ -1,7 +1,7 @@
 import type { Locale } from "./i18n";
 import type { PluginInstallation, PluginNavigationGroup, PluginNavigationIcon } from "./api";
 
-export type CoreAdminView = "system" | "nodes" | "plugins" | "users" | "authorizations" | "events" | "announcement" | "audit" | "security" | "settings";
+export type CoreAdminView = "system" | "nodes" | "ddns" | "plugins" | "users" | "authorizations" | "events" | "announcement" | "audit" | "security" | "settings";
 export type PluginAdminView = `plugin:${string}`;
 export type AdminView = CoreAdminView | PluginAdminView;
 
@@ -63,7 +63,7 @@ export function adminHistoryState(value: unknown): AdminHistoryState {
 }
 
 function isAdminView(value: unknown): value is AdminView {
-  return value === "system" || value === "nodes" || value === "plugins" || value === "users" ||
+  return value === "system" || value === "nodes" || value === "ddns" || value === "plugins" || value === "users" ||
     value === "authorizations" || value === "events" || value === "announcement" || value === "audit" ||
     value === "security" || value === "settings" || (typeof value === "string" && value.startsWith("plugin:") && value.length > 7);
 }

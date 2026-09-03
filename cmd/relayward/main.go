@@ -19,11 +19,13 @@ import (
 	"github.com/Relayward/relayward/internal/agentrelease"
 	"github.com/Relayward/relayward/internal/auth"
 	"github.com/Relayward/relayward/internal/buildinfo"
+	"github.com/Relayward/relayward/internal/ddns"
 	"github.com/Relayward/relayward/internal/developmentrelease"
 	"github.com/Relayward/relayward/internal/eventprocessor"
 	"github.com/Relayward/relayward/internal/eventstore"
 	"github.com/Relayward/relayward/internal/githubrelease"
 	"github.com/Relayward/relayward/internal/management"
+	"github.com/Relayward/relayward/internal/networkdiagnostics"
 	"github.com/Relayward/relayward/internal/pluginartifact"
 	"github.com/Relayward/relayward/internal/pluginruntime"
 	"github.com/Relayward/relayward/internal/policycoordinator"
@@ -173,6 +175,14 @@ func serve(args []string, logger *slog.Logger) error {
 		return err
 	}
 	manager := management.NewService(database, secrets)
+	networkDiagnostics, err := networkdiagnostics.New(database)
+	if err != nil {
+		return err
+	}
+	ddnsReconciler, err := ddns.New(database, secrets, logger)
+	if err != nil {
+		return err
+	}
 	policies, err := policycoordinator.New(database, logger)
 	if err != nil {
 		return err
@@ -181,7 +191,7 @@ func serve(args []string, logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	pluginSupervisor, err := pluginruntime.New(database, artifacts, events, manager, logger)
+	pluginSupervisor, err := pluginruntime.New(database, artifacts, events, manager, networkDiagnostics, logger)
 	if err != nil {
 		return err
 	}
@@ -246,6 +256,11 @@ func serve(args []string, logger *slog.Logger) error {
 			"version", developmentReleases.Release().Manifest.Version)
 	}
 	go func() {
+		if err := ddnsReconciler.Run(signalContext); err != nil && signalContext.Err() == nil {
+			logger.Error("DDNS reconciler stopped", "error", err)
+		}
+	}()
+	go func() {
 		if err := policies.Run(signalContext); err != nil && signalContext.Err() == nil {
 			logger.Error("policy coordinator stopped", "error", err)
 		}
@@ -263,15 +278,16 @@ func serve(args []string, logger *slog.Logger) error {
 	httpServer := &http.Server{
 		Addr: *listen,
 		Handler: server.New(server.Options{
-			Version:           buildinfo.Version,
-			Store:             database,
-			EventStore:        events,
-			Auth:              authentication,
-			Management:        manager,
-			Secrets:           secrets,
-			Logger:            logger,
-			WebAssets:         os.DirFS(absoluteWebDir),
-			PolicyCoordinator: policies,
+			Version:            buildinfo.Version,
+			Store:              database,
+			EventStore:         events,
+			Auth:               authentication,
+			Management:         manager,
+			Secrets:            secrets,
+			Logger:             logger,
+			WebAssets:          os.DirFS(absoluteWebDir),
+			PolicyCoordinator:  policies,
+			NetworkDiagnostics: networkDiagnostics,
 		}),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
