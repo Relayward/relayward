@@ -122,8 +122,9 @@ Relayward 是面向长期运行和重复操作的轻量级运维产品。开发�
 
 ### 颜色与层级
 
-- 使用模板原始的中性色主题和 `background`、`foreground`、`card`、`popover`、`primary`、`secondary`、`muted`、`accent`、`destructive`、`border`、`input`、`ring`、`sidebar` 等语义 token。
-- 主操作沿用模板的 neutral primary，不另外覆盖为品牌色。绿色仅表示成功、在线或已执行，警告使用琥珀色，危险和删除使用 destructive。颜色必须同时配合文字、图标或状态标签，不能作为唯一信息来源。
+- 页面背景、Card、浮层、正文和分隔层级沿用模板的中性色；通过 `background`、`foreground`、`card`、`popover`、`secondary`、`muted`、`border`、`input` 和 `sidebar` 等语义 token 保持安静、稳定的工作区。
+- 蓝色是唯一的主交互色，通过 `brand`、`primary`、`primary-soft`、`ring`、`accent` 和对应的 `sidebar` token 表示主要操作、链接、当前导航、选中 Tab 和键盘焦点。不得按节点、用户、插件或页面另设模块色，也不得大面积铺设蓝色背景。
+- 绿色仅表示成功、在线、健康或已执行；琥珀色仅表示等待、警告或未完成；红色仅表示失败、离线、阻断和破坏性操作。状态色不得代替主交互色，颜色必须同时配合文字、图标或状态标签，不能作为唯一信息来源。
 - Card、浮层、弹窗和工作区层级沿用模板原始边框与阴影，不按页面单独重新定义。
 
 ### 排版与间距
