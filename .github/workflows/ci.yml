@@ -2,8 +2,6 @@ name: CI
 
 on:
   push:
-    branches:
-      - main
     paths-ignore:
       - "**/*.md"
       - "docs/**"
@@ -17,6 +15,7 @@ on:
       - ".env.example"
       - ".gitignore"
       - "compose.yaml"
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -34,7 +33,7 @@ jobs:
         with:
           go-version: 1.26.x
           cache: true
-      - run: go test ./...
+      - run: go test -race ./...
       - run: go vet ./...
       - run: GOOS=linux GOARCH=amd64 go build -trimpath -o /tmp/relayward ./cmd/relayward
 
