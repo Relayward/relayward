@@ -168,12 +168,25 @@ func (server *Server) updateAuthorization(w http.ResponseWriter, request *http.R
 		server.resourceError(w, request, err, "Authorization")
 		return
 	}
+	if err := server.reconcileNode(request.Context(), value.NodeID); err != nil {
+		server.internalError(w, request, err)
+		return
+	}
 	writeJSON(w, http.StatusOK, authorizationView(value))
 }
 
 func (server *Server) deleteAuthorization(w http.ResponseWriter, request *http.Request, _ auth.Authenticated) {
-	if err := server.management.DeleteAuthorization(request.Context(), request.PathValue("authorization_id")); err != nil {
+	value, err := server.management.Authorization(request.Context(), request.PathValue("authorization_id"))
+	if err != nil {
 		server.resourceError(w, request, err, "Authorization")
+		return
+	}
+	if err := server.management.DeleteAuthorization(request.Context(), value.ID); err != nil {
+		server.resourceError(w, request, err, "Authorization")
+		return
+	}
+	if err := server.reconcileNode(request.Context(), value.NodeID); err != nil {
+		server.internalError(w, request, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -344,14 +357,18 @@ func (server *Server) deleteServiceBinding(w http.ResponseWriter, request *http.
 }
 
 func (server *Server) reconcileAuthorizationNode(ctx context.Context, authorizationID string) error {
-	if server.policyCoordinator == nil {
-		return nil
-	}
 	authorization, err := server.management.Authorization(ctx, authorizationID)
 	if err != nil {
 		return err
 	}
-	_, err = server.policyCoordinator.ReconcileNode(ctx, authorization.NodeID)
+	return server.reconcileNode(ctx, authorization.NodeID)
+}
+
+func (server *Server) reconcileNode(ctx context.Context, nodeID string) error {
+	if server.policyCoordinator == nil {
+		return nil
+	}
+	_, err := server.policyCoordinator.ReconcileNode(ctx, nodeID)
 	return err
 }
 

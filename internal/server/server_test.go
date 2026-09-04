@@ -587,6 +587,46 @@ func TestAuthorizationBindingAndAuditHTTPFlow(t *testing.T) {
 	}
 }
 
+func TestAuthorizationUpdateAndDeleteReconcileNodePolicy(t *testing.T) {
+	coordinator := &recordingPolicyCoordinator{}
+	handler, _, _ := newTestHandlerConfiguredWithCoordinator(t, nil, nil, coordinator)
+	sessionCookie, csrfCookie := setupCookies(t, handler)
+	headers := map[string]string{"Content-Type": "application/json", "X-CSRF-Token": csrfCookie.Value}
+
+	nodeRequest := performRequest(handler, http.MethodPost, "/api/v1/nodes", []byte(`{"name":"Edge"}`), headers, sessionCookie)
+	var node nodeResponse
+	decodeResponse(t, nodeRequest, &node)
+	userRequest := performRequest(handler, http.MethodPost, "/api/v1/users",
+		[]byte(`{"display_name":"Alice","email":null,"telegram":null,"note":""}`), headers, sessionCookie)
+	var user userResponse
+	decodeResponse(t, userRequest, &user)
+	body := fmt.Sprintf(`{
+      "user_id":%q,"node_id":%q,"enabled":true,"traffic_limit_bytes":null,
+      "reset":{"kind":"never","value":null,"timezone":"UTC","period_anchor":null},
+      "expires_at":null,"soft_ip_limit":null,"activity_window_seconds":600,"block_duration_seconds":1800
+    }`, user.ID, node.ID)
+	createdResponse := performRequest(handler, http.MethodPost, "/api/v1/authorizations", []byte(body), headers, sessionCookie)
+	var created struct {
+		Authorization authorizationResponse `json:"authorization"`
+	}
+	decodeResponse(t, createdResponse, &created)
+
+	disabledBody := strings.Replace(body, `"enabled":true`, `"enabled":false`, 1)
+	updated := performRequest(handler, http.MethodPut, "/api/v1/authorizations/"+created.Authorization.ID,
+		[]byte(disabledBody), headers, sessionCookie)
+	if updated.Code != http.StatusOK {
+		t.Fatalf("update authorization status = %d, body = %s", updated.Code, updated.Body.String())
+	}
+	deleted := performRequest(handler, http.MethodDelete, "/api/v1/authorizations/"+created.Authorization.ID,
+		nil, headers, sessionCookie)
+	if deleted.Code != http.StatusNoContent {
+		t.Fatalf("delete authorization status = %d, body = %s", deleted.Code, deleted.Body.String())
+	}
+	if len(coordinator.nodeIDs) != 2 || coordinator.nodeIDs[0] != node.ID || coordinator.nodeIDs[1] != node.ID {
+		t.Fatalf("reconciled nodes = %v, want [%s %s]", coordinator.nodeIDs, node.ID, node.ID)
+	}
+}
+
 func TestRecentAccessEventsHTTPFlow(t *testing.T) {
 	handler, _, events := newTestHandlerWithEventStore(t)
 	unauthenticated := performRequest(handler, http.MethodGet, "/api/v1/events/access", nil, nil)
@@ -1063,6 +1103,23 @@ func newTestHandlerWithOptions(t *testing.T, assets fs.FS) (http.Handler, *store
 }
 
 func newTestHandlerConfigured(t *testing.T, assets fs.FS, configure func(*management.Service)) (http.Handler, *store.Store, *eventstore.Store) {
+	return newTestHandlerConfiguredWithCoordinator(t, assets, configure, nil)
+}
+
+type recordingPolicyCoordinator struct {
+	nodeIDs []string
+}
+
+func (coordinator *recordingPolicyCoordinator) ReconcileNode(_ context.Context, nodeID string) (bool, error) {
+	coordinator.nodeIDs = append(coordinator.nodeIDs, nodeID)
+	return true, nil
+}
+
+func newTestHandlerConfiguredWithCoordinator(t *testing.T, assets fs.FS, configure func(*management.Service),
+	coordinator interface {
+		ReconcileNode(context.Context, string) (bool, error)
+	},
+) (http.Handler, *store.Store, *eventstore.Store) {
 	t.Helper()
 	directory := t.TempDir()
 	database, err := store.Open(context.Background(), filepath.Join(directory, "relayward.db"))
@@ -1090,7 +1147,7 @@ func newTestHandlerConfigured(t *testing.T, assets fs.FS, configure func(*manage
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	return New(Options{
 		Version: "test", Store: database, EventStore: events, Auth: authentication,
-		Management: manager, Secrets: secrets, Logger: logger, WebAssets: assets,
+		Management: manager, Secrets: secrets, Logger: logger, WebAssets: assets, PolicyCoordinator: coordinator,
 	}), database, events
 }
 
