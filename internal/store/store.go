@@ -44,6 +44,7 @@ func Open(ctx context.Context, path string) (*Store, error) {
 	query.Add("_pragma", "foreign_keys(1)")
 	query.Add("_pragma", "journal_mode(WAL)")
 	query.Add("_pragma", "synchronous(NORMAL)")
+	query.Add("_txlock", "immediate")
 	dsn.RawQuery = query.Encode()
 
 	db, err := sql.Open("sqlite", dsn.String())

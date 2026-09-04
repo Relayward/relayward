@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"net/url"
 	"os"
 	"path/filepath"
 	"testing"
@@ -100,6 +101,60 @@ SELECT dflt_value FROM pragma_table_info('plugin_services') WHERE name = 'capabi
 func TestOpenRejectsEmptyPath(t *testing.T) {
 	if _, err := Open(context.Background(), ""); err == nil {
 		t.Fatal("Open() error = nil, want path error")
+	}
+}
+
+func TestOpenSerializesReadThenWriteTransactions(t *testing.T) {
+	ctx := t.Context()
+	path := filepath.Join(t.TempDir(), "relayward.db")
+	database, err := Open(ctx, path)
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	defer database.Close()
+
+	competingDSN := url.URL{Scheme: "file", Path: path}
+	query := competingDSN.Query()
+	query.Add("_pragma", "busy_timeout(50)")
+	query.Add("_pragma", "journal_mode(WAL)")
+	competingDSN.RawQuery = query.Encode()
+	competing, err := sql.Open("sqlite", competingDSN.String())
+	if err != nil {
+		t.Fatalf("open competing connection: %v", err)
+	}
+	defer competing.Close()
+	if err := competing.PingContext(ctx); err != nil {
+		t.Fatalf("ping competing connection: %v", err)
+	}
+
+	tx, err := database.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatalf("begin read-then-write transaction: %v", err)
+	}
+	defer tx.Rollback()
+	var users int
+	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM users`).Scan(&users); err != nil {
+		t.Fatalf("read before write: %v", err)
+	}
+	if _, err := competing.ExecContext(ctx, `
+INSERT INTO users(id, display_name, note, created_at, updated_at)
+VALUES ('competing-user', 'Competing user', '', 1, 1)`); err == nil {
+		t.Fatal("competing writer was not serialized behind the active transaction")
+	}
+	if _, err := tx.ExecContext(ctx, `
+INSERT INTO users(id, display_name, note, created_at, updated_at)
+VALUES ('primary-user', 'Primary user', '', 1, 1)`); err != nil {
+		t.Fatalf("write after read: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("commit read-then-write transaction: %v", err)
+	}
+
+	if err := database.db.QueryRowContext(ctx, `SELECT count(*) FROM users WHERE id = 'primary-user'`).Scan(&users); err != nil {
+		t.Fatalf("query committed user: %v", err)
+	}
+	if users != 1 {
+		t.Fatalf("committed user count = %d, want 1", users)
 	}
 }
 
