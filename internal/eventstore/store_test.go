@@ -219,7 +219,7 @@ func TestStoreAccessEventDeduplicatesPluginSourceIdentity(t *testing.T) {
 		SourceStreamID: testStreamID, SourceEventID: "runtime-event-1", PluginID: "runtime.test",
 		ServiceID: "main", AuthorizationID: "30000000-0000-4000-8000-000000000003",
 		SourceIP: "192.0.2.10", Destination: "example.com", DestinationPort: 443,
-		Network: "tcp", Protocol: "tls", Action: agentv1.AccessActionAccepted,
+		Network: "tcp", Protocol: "tls", Action: agentv1.AccessActionAccepted, ObservationKind: agentv1.ObservationConnection,
 	}
 	event, err := agentv1.NewEvent(testNodeID, testStreamID, 1, agentv1.EventAccess, now, access)
 	if err != nil {
